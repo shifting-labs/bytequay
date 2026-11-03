@@ -1672,6 +1672,32 @@ class TestCiAutofixService
     }
 
     @Test
+    void canMessageAnswersWhileAnAdvanceHoldsTheRun()
+            throws Exception
+    {
+        CiAutofixRun run = service.start(startCommand("message-during-advance"));
+        when(turnService.get(turnId)).thenReturn(terminalTurn(TurnState.COMPLETED, Optional.empty()));
+        CiAutofixRun advanced = service.advance(run.id());
+        CountDownLatch inspecting = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            inspecting.countDown();
+            assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+            return CiGitInspection.ready(FIXED_HEAD, "fingerprint", ImmutableList.of("src/Main.java"), ImmutableList.of("Fix feature"));
+        }).when(gitService).inspectAgentResult(any());
+        when(gitService.push(any())).thenReturn(CiPushResult.failed(CiPushResult.Outcome.UNCERTAIN, "wait"));
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var advancing = executor.submit(() -> service.advance(advanced.id()));
+            assertThat(inspecting.await(5, TimeUnit.SECONDS)).isTrue();
+            // A task read asks this while advancing waits on GitHub; it must not wait for that advance.
+            assertThat(executor.submit(() -> service.canMessage(advanced)).get(2, TimeUnit.SECONDS)).isFalse();
+            release.countDown();
+            advancing.get();
+        }
+    }
+
+    @Test
     void cancelsIdempotentlyAndSignalsAnActiveTurn()
     {
         doThrow(new AgentConflictException("Task has an active turn"))

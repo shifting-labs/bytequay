@@ -442,13 +442,11 @@ public class CiAutofixService
     /** Whether the run permits a reply or live steering without renewing authority. */
     public boolean canMessage(CiAutofixRun run)
     {
-        if (run.status() == Status.FINISHED) {
-            return false;
-        }
-        return withLock(advanceLocks.get(run.id()), () -> canMessageLocked(get(run.id())));
+        // No advance lock: advancing holds it across GitHub calls, and every task read asks this. Sending checks again under the lock.
+        return run.status() != Status.FINISHED && permitsMessage(get(run.id()));
     }
 
-    private boolean canMessageLocked(CiAutofixRun run)
+    private boolean permitsMessage(CiAutofixRun run)
     {
         if (run.status() == Status.FINISHED || !ownership.authorized(run)
                 || run.pushJournal().isPresent() || run.rerunJournal().isPresent() || run.agentTaskId().isEmpty()
@@ -691,7 +689,7 @@ public class CiAutofixService
             delivery = previous.orElseThrow();
         }
         else {
-            if (!run.currentTurnId().filter(target.toString()::equals).isPresent() || run.status() != Status.ACTIVE || !canMessageLocked(run)) {
+            if (!run.currentTurnId().filter(target.toString()::equals).isPresent() || run.status() != Status.ACTIVE || !permitsMessage(run)) {
                 throw new CiAutofixConflictException("This CI turn is no longer accepting steering input; refresh before sending another message");
             }
             requireOpenTask(run);
