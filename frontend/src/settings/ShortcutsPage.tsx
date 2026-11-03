@@ -49,6 +49,7 @@ const SCOPED_SHORTCUTS: { title: string; rows: { label: string; keys: string; de
     { label: 'Show call hierarchy', keys: '⌃⌥H', detail: 'With the IDEA keymap.' },
     { label: 'Find a symbol / file', keys: '⌘O / ⇧⌘O', detail: 'With the IDEA keymap.' },
     { label: 'Find a symbol in this file', keys: '⌘F12', detail: 'With the IDEA keymap.' },
+    { label: 'Back / forward to a code location', keys: '⌥⌘← / ⌥⌘→', detail: 'With the IDEA keymap.' },
   ] },
   { title: 'Jira and Mail', rows: [
     { label: 'Focus Jira search', keys: '/', detail: 'On the Jira list, outside a text field.' },

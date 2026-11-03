@@ -338,8 +338,9 @@ explore**. It opens a local editor and starts no agent.
 - Select a file in the left tree to preview it; double-click to keep its tab open.
 - Scroll the file tree horizontally to read long names. **Locate current file**
   switches to **All files**, expands its folders, and brings it into view.
-- **⌘B** jumps to a definition, **⌥F7** finds usages, and **⌃⌥H** shows callers
-  with the IDEA keymap.
+- **⌘B** jumps to a definition, **⌥F7** finds usages, **⌃⌥H** shows callers,
+  and **⌥⌘←** / **⌥⌘→** go back and forward between code locations with the
+  IDEA keymap.
 - Edit and save files, then use a test’s play button to run it. **Run** shows
   results and output; **Terminal** opens a shell in the task’s working copy.
 - **Blame** shows line authorship; **Git history** shows commits and changes.

@@ -70,6 +70,11 @@ const ideaKeys = [
     { key: 'cmd+o', command: 'workbench.action.showAllSymbols' },
     { key: 'cmd+shift+o', command: 'workbench.action.quickOpen' },
     { key: 'cmd+f12', command: 'workbench.action.gotoSymbol' },
+    // VS Code switches tabs with these; ⇧⌘[ and ⇧⌘] still do.
+    { key: 'cmd+alt+left', command: '-workbench.action.previousEditor' },
+    { key: 'cmd+alt+right', command: '-workbench.action.nextEditor' },
+    { key: 'cmd+alt+left', command: 'workbench.action.navigateBack' },
+    { key: 'cmd+alt+right', command: 'workbench.action.navigateForward' },
 ];
 
 export function resolveIdeTheme(preference: string): string {
