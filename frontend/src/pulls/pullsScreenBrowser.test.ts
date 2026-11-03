@@ -31,6 +31,8 @@ it.each([
     'runMergeWhenReady()', 'schedules and cancels during CI while direct merge stays blocked', {}],
   ['opens distinct development and review tasks and finishes creation after leaving the PR',
     'runAssignedPrActions()', 'Open distinct development and review task conversations', {}],
+  ['starts a review of only the chosen commits',
+    'runStartChosenCommits()', 'Start review covers the chosen commits', {}],
   ['shows the Epic of a PR as a card on wide pages and a link on narrow ones',
     'runPullRequestEpic()', 'Show the Epic of a PR beside or inside the page', {}],
   ['allows watched PRs to open Tears of time before a review or task exists',

@@ -381,6 +381,8 @@ Watch the repository and pick a ready Review model first.
 
 1. Choose **WorkBench → Summary → Start review**, or **Review changes** in a
    task. If the task's agent is working, the review starts when it finishes.
+   To review only some commits, pick them in **Commits** first. **Review
+   again** later covers the whole pull request.
 2. Read **What changed** and the findings. **Ask reviewer** opens a private
    discussion.
 3. **Add to my review** turns a finding into a comment you publish with **Submit

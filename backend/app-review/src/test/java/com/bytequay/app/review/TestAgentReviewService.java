@@ -181,6 +181,9 @@ class TestAgentReviewService
     private static final int NUMBER = 7;
     private static final String HEAD = "a1b2c3d4e5f0123456789abcdef0123456789abc";
     private static final String NEW_HEAD = "b2c3d4e5f60123456789abcdef0123456789abcd";
+    /** The commits before {@link #HEAD} in a three-commit pull request. */
+    private static final String FIRST_COMMIT = "c3d4e5f60123456789abcdef0123456789abcdef";
+    private static final String SECOND_COMMIT = "d4e5f60123456789abcdef0123456789abcdef01";
     private static final String BASE_SHA = "1111111111111111111111111111111111111111";
     private static final String MERGE_BASE = "2222222222222222222222222222222222222222";
     private static final Path REPOSITORY = Path.of("/tmp/bytequay/owner-repo");
@@ -228,6 +231,69 @@ class TestAgentReviewService
         assertThat(fixture.store.listOpenReviews()).isEmpty();
         verify(fixture.tasks, never()).create(any(CreateAgentTaskCommand.class));
         verify(fixture.turns, never()).start(any());
+    }
+
+    @Test
+    void chosenCommitsScopeTheFirstRunAndReviewAgainCoversTheWholeChange()
+    {
+        threeCommits(fixture);
+
+        String reviewId = fixture.service.start(WORKSPACE, REPO, NUMBER, ImmutableList.of(FIRST_COMMIT, SECOND_COMMIT)).review().id();
+
+        ReviewRun chosen = fixture.store.listRuns(reviewId).getLast();
+        assertThat(chosen.scope()).isEqualTo(ReviewRun.Scope.COMMITS);
+        assertThat(chosen.headSha()).isEqualTo(HEAD);
+        assertThat(chosen.commits()).extracting(ReviewCommit::sha).containsExactly(FIRST_COMMIT, SECOND_COMMIT);
+
+        completeCleanReview(fixture, beginValidation(fixture, chosen));
+        fixture.service.reconcile(reviewId);
+        assertThat(fixture.store.findRun(chosen.id()).orElseThrow().state()).isEqualTo(ReviewRun.State.ACCEPTED);
+        fixture.service.update(reviewId);
+
+        ReviewRun whole = fixture.store.listRuns(reviewId).getLast();
+        assertThat(whole.id()).isNotEqualTo(chosen.id());
+        assertThat(whole.state()).isEqualTo(ReviewRun.State.RUNNING);
+        assertThat(whole.scope()).isEqualTo(ReviewRun.Scope.FULL);
+        assertThat(whole.commits()).extracting(ReviewCommit::sha).containsExactly(FIRST_COMMIT, SECOND_COMMIT, HEAD);
+    }
+
+    @Test
+    void resumingAFailedChosenCommitsRunKeepsTheChoice()
+    {
+        threeCommits(fixture);
+        String reviewId = fixture.service.start(WORKSPACE, REPO, NUMBER, ImmutableList.of(SECOND_COMMIT)).review().id();
+        ReviewRun chosen = fixture.store.listRuns(reviewId).getLast();
+        fixture.store.updateRun(chosen.ended(ReviewRun.State.FAILED, Optional.of("Investigation interrupted"), NOW));
+        when(fixture.turns.get(TURN_ONE)).thenReturn(settledTurn(TURN_ONE, TurnState.FAILED, Optional.of("Investigation interrupted")));
+
+        fixture.service.resume(reviewId);
+
+        ReviewRun retry = fixture.store.listRuns(reviewId).getLast();
+        assertThat(retry.id()).isNotEqualTo(chosen.id());
+        assertThat(retry.scope()).isEqualTo(ReviewRun.Scope.COMMITS);
+        assertThat(retry.commits()).extracting(ReviewCommit::sha).containsExactly(SECOND_COMMIT);
+    }
+
+    @Test
+    void chosenCommitsMustBeConsecutiveCommitsOfThePullRequest()
+    {
+        threeCommits(fixture);
+
+        assertThatThrownBy(() -> fixture.service.start(WORKSPACE, REPO, NUMBER, ImmutableList.of(FIRST_COMMIT, HEAD)))
+                .isInstanceOf(ReviewConflictException.class).hasMessageContaining("not consecutive commits");
+
+        assertThat(fixture.store.listOpenReviews()).isEmpty();
+        verify(fixture.tasks, never()).create(any(CreateAgentTaskCommand.class));
+    }
+
+    @Test
+    void choosingEveryCommitReviewsTheWholeChange()
+    {
+        threeCommits(fixture);
+
+        String reviewId = fixture.service.start(WORKSPACE, REPO, NUMBER, ImmutableList.of(FIRST_COMMIT, SECOND_COMMIT, HEAD)).review().id();
+
+        assertThat(fixture.store.listRuns(reviewId).getLast().scope()).isEqualTo(ReviewRun.Scope.FULL);
     }
 
     @ParameterizedTest
@@ -3552,6 +3618,13 @@ class TestAgentReviewService
     }
 
     /** The hosting provider and the fetched pull request ref both report the given head. */
+    private static void threeCommits(Fixture fixture)
+    {
+        when(fixture.git.run(REPOSITORY, "log", "--reverse", "--format=%H%x1f%an%x1f%s", MERGE_BASE + ".." + HEAD)).thenReturn(ok(
+                FIRST_COMMIT + FIELD + "Alice" + FIELD + "Add the parser\n" + SECOND_COMMIT + FIELD + "Alice" + FIELD + "Reset the parser\n"
+                        + HEAD + FIELD + "Alice" + FIELD + "Fix the parser\n"));
+    }
+
     private static void pushHead(Fixture fixture, String head)
     {
         when(fixture.pullRequests.findHeadSha(fixture.route)).thenReturn(Optional.of(head));

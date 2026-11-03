@@ -487,7 +487,7 @@ function splitCommitMessage(message: string | null): { subject: string; body: st
   return { subject: firstLine.trim() || 'Untitled commit', body: rest.join('\n').replace(/^\s*\n/, '').trimEnd() };
 }
 
-function CommitPicker({ commits, range, onChange }: {
+export function CommitPicker({ commits, range, onChange }: {
   commits: DiffCommitDto[];
   range: CommitRange;
   onChange: (range: CommitRange) => void;

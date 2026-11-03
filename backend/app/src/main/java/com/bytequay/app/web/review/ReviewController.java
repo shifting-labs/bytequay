@@ -146,7 +146,7 @@ public class ReviewController
         checkText(request.repo(), "repo");
         int number = required(request.number(), "number");
         pullRequests.prepareRead(request.workspaceId(), request.repo(), number);
-        return ReviewHttpModels.review(reviews.start(request.workspaceId(), request.repo(), number));
+        return ReviewHttpModels.review(reviews.start(request.workspaceId(), request.repo(), number, request.commits().orElse(ImmutableList.of())));
     }
 
     @PostMapping("/worktree")

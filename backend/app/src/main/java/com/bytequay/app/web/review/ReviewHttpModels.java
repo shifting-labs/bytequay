@@ -325,7 +325,8 @@ final class ReviewHttpModels
 
     record PublishResponse(DraftResponse draft, List<String> publishedItemIds, Optional<String> uncertainReason) {}
 
-    record StartRequest(String workspaceId, String repo, Integer number) {}
+    /** A review start; {@code commits} are the consecutive commits, oldest first, its first run covers, and absent or empty means the whole pull request. */
+    record StartRequest(String workspaceId, String repo, Integer number, Optional<List<String>> commits) {}
 
     record StopRuntimeRequest(String generation) {}
 

@@ -1410,7 +1410,7 @@ public class ReviewTools
                 .filter(run -> run.state() == ReviewRun.State.ACCEPTED && run.headSha().equals(head)
                         && run.coverage().filter(coverage -> coverage.complete() && coverage.omissions().isEmpty()).isPresent())
                 .reduce((first, last) -> last));
-        if (call.run().scope() == ReviewRun.Scope.FULL || previous.isEmpty()) {
+        if (call.run().scope() == ReviewRun.Scope.FULL || call.run().scope() == ReviewRun.Scope.INCREMENTAL && previous.isEmpty()) {
             return call.run().diff().stream().map(DiffFile::filename).collect(toImmutableList());
         }
         return requiredScopeFiles(git, workspaces.requireReadyRepository(call.review().workspaceId()).repository(), call.run(), previous);
@@ -2081,6 +2081,11 @@ public class ReviewTools
 
     static List<String> requiredScopeFiles(GitCommandRunner git, Path repository, ReviewRun run, Optional<ReviewRun> previous)
     {
+        if (run.scope() == ReviewRun.Scope.COMMITS) {
+            // A path a later commit took back out of the change has nothing left to review at the head.
+            Set<String> chosen = ImmutableSet.copyOf(scopeChanged(git, repository, run.commits().getFirst().sha() + "^", run.commits().getLast().sha()));
+            return run.diff().stream().map(DiffFile::filename).filter(chosen::contains).collect(toImmutableList());
+        }
         if (run.scope() == ReviewRun.Scope.FULL || previous.isEmpty()) {
             return run.diff().stream().map(DiffFile::filename).collect(toImmutableList());
         }

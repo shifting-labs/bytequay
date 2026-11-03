@@ -37,11 +37,13 @@ import type {
   AgentPendingApprovalDto,
   AgentRuntimeStopImpactDto,
   Bridge,
+  DiffCommitDto,
   ModelProviderDto,
   PullRequestDetailDto,
   PullRequestViewer,
 } from '../../types';
 import { useNow } from '../../useNow';
+import { CommitPicker, type CommitRange } from '../PullChanges';
 import { workspaceRoute } from '../../workspaces/model';
 import MarkdownBody from '../MarkdownBody';
 import { errorMessage } from '../../errorMessage';
@@ -502,11 +504,27 @@ export default function AgentReviewTab({
     return () => cancelAnimationFrame(frame);
   }, [focusFindingId]);
 
+  // Start review offers the pull request's commits, so the first run can cover only some of them.
+  const startRepo = review === null ? detail?.repo : review.runs.length === 0 && review.number !== null && !review.sourceTaskId && !review.replay ? review.repo : undefined;
+  const startNumber = review === null ? detail?.number : review.number ?? undefined;
+  const [startCommits, setStartCommits] = useState<DiffCommitDto[]>([]);
+  const [commitRange, setCommitRange] = useState<CommitRange>(null);
+  useEffect(() => {
+    if (startRepo === undefined || startNumber === undefined) return;
+    let live = true;
+    void window.bridge.fetchPrDiffCommits(startRepo, startNumber)
+      .then(commits => { if (live) setStartCommits(commits); })
+      .catch(() => { if (live) setStartCommits([]); });
+    return () => { live = false; };
+  }, [startRepo, startNumber]);
+  const chosenCommits = commitRange === null ? undefined : startCommits.slice(commitRange.start, commitRange.end + 1).map(commit => commit.sha);
+  const commitPicker = startRepo !== undefined && <CommitPicker commits={startCommits} range={commitRange} onChange={setCommitRange} />;
+
   const start = () => {
     if (workspaceId === undefined || detail === null || !availability.review) return;
     setStarting(true);
     setError(null);
-    void window.bridge.startAgentReview(workspaceId, detail.repo, detail.number)
+    void window.bridge.startAgentReview(workspaceId, detail.repo, detail.number, chosenCommits)
       .then(updated => { onReviewChange(updated); recordReviewAttentionAction(updated, 'prompt'); })
       .catch(failure => setError(errorMessage(failure)))
       .finally(() => setStarting(false));
@@ -584,12 +602,15 @@ export default function AgentReviewTab({
           task. Nothing is posted — you decide what, if anything, becomes a comment.
         </p>
         <div className="agr-empty__actions">
+          {commitPicker}
           <button type="button" className="agr-action is-primary" disabled={starting} onClick={start}>
             {starting ? 'Starting…' : 'Start review'}
           </button>
           <span className="agr-empty__scope">
-            {detail.changedFiles} {detail.changedFiles === 1 ? 'file' : 'files'}
-            {commits > 0 ? `, ${commits} ${commits === 1 ? 'commit' : 'commits'}` : ''}
+            {chosenCommits !== undefined ? `${chosenCommits.length} of ${plural(startCommits.length, 'commit')}` : <>
+              {detail.changedFiles} {detail.changedFiles === 1 ? 'file' : 'files'}
+              {commits > 0 ? `, ${commits} ${commits === 1 ? 'commit' : 'commits'}` : ''}
+            </>}
           </span>
         </div>
         {error !== null && <div className="agr-error" role="alert">{error}</div>}
@@ -621,6 +642,12 @@ export default function AgentReviewTab({
       && ((result.id === currentRun?.id && currentRun.state === 'ACCEPTED') || result.turnIds.length === 0)) {
       setUpdateNotice({ reviewId: updated.id, runId: result.id, reused: result.id !== currentRun?.id });
     }
+  }, 'update');
+
+  // Only Start carries chosen commits; on a prepared working copy it starts this open review's first run.
+  const reviewChosen = (commits: string[], number: number) => run_(async () => {
+    onReviewChange(await window.bridge.startAgentReview(review.workspaceId, review.repo, number, commits));
+    recordReviewAttentionAction(review, 'prompt');
   }, 'update');
 
   const message = (delivery: 'TURN' | 'STEER' | 'QUEUE') => run_(async current => {
@@ -788,11 +815,13 @@ export default function AgentReviewTab({
                   {resuming ? 'Starting…' : status.status === 'failed' ? 'Resume review' : 'Resume'}
                 </button>
               )}
-              {!running && review.state === 'OPEN' && status?.status !== 'waiting' && (
+              {!running && review.state === 'OPEN' && status?.status !== 'waiting' && <>
+                {commitPicker}
                 <button type="button" className="agr-action" disabled={busy || recovery || localRun} aria-busy={pendingAction === 'update'}
-                  title={localRunReason ?? 'Review the latest changes'} onClick={() => { void update(); }}>
+                  title={localRunReason ?? 'Review the latest changes'}
+                  onClick={() => { void (chosenCommits === undefined || startNumber === undefined ? update() : reviewChosen(chosenCommits, startNumber)); }}>
                   {pendingAction === 'update' ? 'Checking…' : review.runs.length === 0 ? 'Start review' : 'Review again'}</button>
-              )}
+              </>}
               {!running && review.state === 'OPEN' && (
                 <button type="button" className="agr-action is-quiet" disabled={busy || recovery || localRun}
                   title={localRunReason ?? 'Completes the task and cleans the worktree; the summary, findings and discussion stay'}

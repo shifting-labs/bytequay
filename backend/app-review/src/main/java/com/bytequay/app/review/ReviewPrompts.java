@@ -151,6 +151,8 @@ final class ReviewPrompts
         String assignment = switch (step.kind()) {
             case EXPLAIN -> throw new IllegalStateException("Explanation assignment was already handled");
             case INVESTIGATE -> "Read scope for frozen commits, requiredReviewFiles and previousReviewedHead; focus an incremental review on changed behavior. "
+                    + "A commits review covers only the user's chosen scope.commits: review what they change as it stands at the frozen head, "
+                    + "and read the rest of the change only as context. "
                     + "Read origin for development or replay context, and PR or timeline context when available. "
                     + "Treat source requests as intent to assess against the code, not proof or authorization to implement them. "
                     + "Read kind findings for existing claims, then target=findingId for each carried OPEN claim and include it as a numbered candidate. "

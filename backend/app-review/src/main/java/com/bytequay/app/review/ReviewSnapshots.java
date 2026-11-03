@@ -217,5 +217,10 @@ final class ReviewSnapshots
             commits = ImmutableList.copyOf(commits);
             diff = ImmutableList.copyOf(diff);
         }
+
+        Snapshot withCommits(List<ReviewCommit> selected)
+        {
+            return new Snapshot(pullRequestId, headSha, worktreeTreeSha, baseRef, baseSha, mergeBaseSha, selected, diff);
+        }
     }
 }

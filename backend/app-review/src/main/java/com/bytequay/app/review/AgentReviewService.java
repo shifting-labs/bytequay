@@ -69,6 +69,7 @@ import com.bytequay.core.review.AgentReviewStore;
 import com.bytequay.core.review.ReviewAnchor;
 import com.bytequay.core.review.ReviewCandidate;
 import com.bytequay.core.review.ReviewCandidateValidation;
+import com.bytequay.core.review.ReviewCommit;
 import com.bytequay.core.review.ReviewConflictException;
 import com.bytequay.core.review.ReviewDraftStore;
 import com.bytequay.core.review.ReviewFinding;
@@ -267,13 +268,13 @@ public class AgentReviewService
                 String head = browse.require(snapshots.sourceCheckout(source), "rev-parse", "--verify", "HEAD^{commit}").strip();
                 OptionalLong pullRequestId = snapshots.sourceDetail(workspace, number).stream().mapToLong(PullRequestDetail::id).findFirst();
                 AgentReviewProjection waiting = createReview(workspace, selection, head, pullRequestId, title, number, Optional.of(sourceTaskId), Optional.empty(), false,
-                        Optional.empty());
+                        Optional.empty(), ImmutableList.of());
                 // The developer may have settled before the watch began, leaving no event to start it.
                 observer.reconcileLater(waiting.review().id());
                 return waiting;
             }
             Snapshot snapshot = localSnapshot(source, workspace, number);
-            return createReview(workspace, selection, snapshot, title, number, Optional.of(sourceTaskId), Optional.empty(), true);
+            return createReview(workspace, selection, snapshot, title, number, Optional.of(sourceTaskId), Optional.empty(), true, ImmutableList.of());
         });
     }
 
@@ -288,19 +289,29 @@ public class AgentReviewService
         return store.listReviews(workspaceId).stream().filter(review -> review.replay().isEmpty()).map(review -> projection(review, false)).collect(toImmutableList());
     }
 
-    /** Starts a review, or returns the open one: one review per workspace and pull request. */
+    /** Starts a review of the whole pull request, or returns the open one: one review per workspace and pull request. */
     public AgentReviewProjection start(String workspaceId, String repo, int number)
     {
-        return prepare(workspaceId, repo, number, true);
+        return start(workspaceId, repo, number, ImmutableList.of());
+    }
+
+    /**
+     * Starts a review, or returns the open one.
+     *
+     * @param commits consecutive pull request commits, oldest first, that the first run covers; empty for the whole pull request
+     */
+    public AgentReviewProjection start(String workspaceId, String repo, int number, List<String> commits)
+    {
+        return prepare(workspaceId, repo, number, true, commits);
     }
 
     /** Prepares the PR working copy for exploration without starting an agent review. */
     public AgentReviewProjection prepare(String workspaceId, String repo, int number)
     {
-        return prepare(workspaceId, repo, number, false);
+        return prepare(workspaceId, repo, number, false, ImmutableList.of());
     }
 
-    private AgentReviewProjection prepare(String workspaceId, String repo, int number, boolean startReview)
+    private AgentReviewProjection prepare(String workspaceId, String repo, int number, boolean startReview, List<String> commits)
     {
         String repository = normalize(repo);
         Lock lock = startLocks.get(workspaceId + "/" + repository + "#" + number);
@@ -313,7 +324,7 @@ public class AgentReviewService
             Optional<AgentReview> existing = store.findOpenReview(workspaceId, repository, number);
             if (existing.isPresent()) {
                 String reviewId = existing.orElseThrow().id();
-                return withLock(locks.lock(reviewId), () -> startReview && store.listRuns(reviewId).isEmpty() ? resume(reviewId) : projection(reviewId));
+                return withLock(locks.lock(reviewId), () -> startReview && store.listRuns(reviewId).isEmpty() ? resume(reviewId, commits) : projection(reviewId));
             }
             ModelSelection selection = selectModel(workspaceId);
             if (startReview) {
@@ -321,7 +332,7 @@ public class AgentReviewService
             }
             Snapshot snapshot = snapshots.pullRequest(workspace, repository, number);
             return createReview(workspace, selection, snapshot, "Review " + repository + "#" + number, OptionalInt.of(number),
-                    Optional.empty(), Optional.empty(), startReview);
+                    Optional.empty(), Optional.empty(), startReview, selectCommits(snapshot, commits));
         });
     }
 
@@ -357,19 +368,19 @@ public class AgentReviewService
         WorkflowAgentTasks.requireReady(drivers, selection.laneId(), AgentPermissionPolicy.AUTO);
         Snapshot snapshot = snapshots.replay(workspace.repository(), start.headSha(), start.baseRef(), start.mergeBaseSha());
         String title = "Replay review #" + replay.number() + (replay.memory() ? " · with memory" : " · without memory");
-        return createReview(workspace, selection, snapshot, title, OptionalInt.empty(), Optional.empty(), Optional.of(replay), true);
+        return createReview(workspace, selection, snapshot, title, OptionalInt.empty(), Optional.empty(), Optional.of(replay), true, ImmutableList.of());
     }
 
     private AgentReviewProjection createReview(WorkspaceRepositoryContext workspace, ModelSelection selection, Snapshot snapshot, String title,
-            OptionalInt number, Optional<String> sourceTaskId, Optional<AgentReview.Replay> replay, boolean startReview)
+            OptionalInt number, Optional<String> sourceTaskId, Optional<AgentReview.Replay> replay, boolean startReview, List<ReviewCommit> selected)
     {
         return createReview(workspace, selection, snapshot.headSha(), snapshot.pullRequestId(), title, number, sourceTaskId, replay, !startReview,
-                startReview ? Optional.of(snapshot) : Optional.empty());
+                startReview ? Optional.of(snapshot) : Optional.empty(), selected);
     }
 
     /** A paused review only prepares its working copy; an unpaused one without a first run waits for its developer. */
     private AgentReviewProjection createReview(WorkspaceRepositoryContext workspace, ModelSelection selection, String headSha, OptionalLong pullRequestId, String title,
-            OptionalInt number, Optional<String> sourceTaskId, Optional<AgentReview.Replay> replay, boolean paused, Optional<Snapshot> firstRun)
+            OptionalInt number, Optional<String> sourceTaskId, Optional<AgentReview.Replay> replay, boolean paused, Optional<Snapshot> firstRun, List<ReviewCommit> selected)
     {
         TaskId taskId = TaskId.random();
         String branch = TaskBranches.generate(taskId, hosting.captureRead(workspace.workspaceId()).login(), title);
@@ -384,7 +395,7 @@ public class AgentReviewService
                     pullRequestId, task.id().toString(), sourceTaskId, AgentReview.State.OPEN, paused, Optional.empty(), Optional.of(headSha),
                     Optional.of(headSha), 0, now, now, Optional.empty(), replay));
             observer.watch(review);
-            firstRun.ifPresent(snapshot -> startRun(review, snapshot, workspace, 1, Optional.empty(), ImmutableList.of()));
+            firstRun.ifPresent(snapshot -> startRun(review, snapshot, workspace, 1, Optional.empty(), ImmutableList.of(), selected));
             return projection(review.id());
         });
     }
@@ -427,6 +438,11 @@ public class AgentReviewService
     /** Lifts the pause and starts a run for the newest observed head when nothing is running. */
     public AgentReviewProjection resume(String reviewId)
     {
+        return resume(reviewId, ImmutableList.of());
+    }
+
+    private AgentReviewProjection resume(String reviewId, List<String> commits)
+    {
         return withLock(locks.lock(reviewId), () -> {
             AgentReview review = requireOpen(reviewId);
             requireNoLocalRun(tasks.get(TaskId.valueOf(review.taskId())));
@@ -445,7 +461,7 @@ public class AgentReviewService
             }
             Optional<ReviewRun> latest = latestFindingsRun(store.listRuns(reviewId));
             boolean retry = latest.map(run -> run.state() != ReviewRun.State.ACCEPTED && !run.active()).orElse(true);
-            followHead(review, retry);
+            followHead(review, retry, commits);
             return projection(reviewId);
         });
     }
@@ -973,7 +989,7 @@ public class AgentReviewService
                 return null;
             }
             try {
-                followHead(stored.orElseThrow(), true);
+                followHead(stored.orElseThrow(), true, ImmutableList.of());
             }
             catch (RuntimeException failure) {
                 // The developer started again first; its next settling retries. Anything else waits for the user's Start review.
@@ -1493,7 +1509,7 @@ public class AgentReviewService
      * A head that carries the change the last accepted review read gets that review instead of another pass.
      * Synchronization and experiment cleanup hold the same mutation claim as ordinary task writers.
      */
-    private void followHead(AgentReview review, boolean retry)
+    private void followHead(AgentReview review, boolean retry, List<String> commits)
     {
         List<ReviewRun> runs = store.listRuns(review.id());
         Optional<ReviewRun> latest = latestFindingsRun(runs);
@@ -1514,8 +1530,13 @@ public class AgentReviewService
         Snapshot snapshot = review.replay().isPresent() ? ReviewSnapshots.frozen(runs.getFirst()) : review.sourceTaskId()
                 .map(ignored -> localSnapshot(sourceTask(review), workspace, review.number()))
                 .orElseGet(() -> snapshots.pullRequest(workspace, review.repo(), review.number().orElseThrow()));
+        // A retry at the same head keeps its commit selection; any other run covers the whole change.
+        List<ReviewCommit> selected = !commits.isEmpty() ? selectCommits(snapshot, commits) : latest
+                .filter(run -> retry && run.scope() == ReviewRun.Scope.COMMITS && run.headSha().equals(snapshot.headSha()))
+                .map(ReviewRun::commits).orElse(ImmutableList.of());
         // The base tip only locates the merge base; it moves with every unrelated base-branch commit, so it is not part of the reviewed scope.
-        boolean changed = latest.map(run -> !run.headSha().equals(snapshot.headSha())
+        // A commit selection read only part of its head, so the whole change is still unreviewed.
+        boolean changed = latest.map(run -> run.scope() == ReviewRun.Scope.COMMITS || !run.headSha().equals(snapshot.headSha())
                 || !run.worktreeTreeSha().equals(snapshot.worktreeTreeSha())
                 || !run.baseRef().equals(snapshot.baseRef())
                 || !run.mergeBaseSha().equals(snapshot.mergeBaseSha())).orElse(true);
@@ -1529,7 +1550,7 @@ public class AgentReviewService
             store.updateReview(review.withObservedHead(snapshot.headSha(), Instant.now(clock)));
         }
         Optional<ReviewRun> previous = runs.stream()
-                .filter(run -> !run.explanationOnly() && run.state() == ReviewRun.State.ACCEPTED
+                .filter(run -> !run.explanationOnly() && run.scope() != ReviewRun.Scope.COMMITS && run.state() == ReviewRun.State.ACCEPTED
                         && run.coverage().filter(coverage -> coverage.complete() && coverage.omissions().isEmpty()).isPresent())
                 .reduce((first, second) -> second);
         // Decided before the worktree moves, while the reviewed head is still the one checked out.
@@ -1549,7 +1570,7 @@ public class AgentReviewService
             carry(store.findReview(review.id()).orElseThrow(), snapshot, runs.size() + 1, previous.orElseThrow(), carried.orElseThrow());
             return;
         }
-        startRun(store.findReview(review.id()).orElseThrow(), snapshot, workspace, runs.size() + 1, previous, findings);
+        startRun(store.findReview(review.id()).orElseThrow(), snapshot, workspace, runs.size() + 1, previous, findings, selected);
     }
 
     /**
@@ -1650,15 +1671,18 @@ public class AgentReviewService
                 "The review worktree could not be moved to %s: %s", ReviewPrompts.shortSha(headSha), moved.output().strip());
     }
 
-    private void startRun(AgentReview review, Snapshot snapshot, WorkspaceRepositoryContext workspace, int ordinal, Optional<ReviewRun> previous, List<ReviewFinding> findings)
+    /** Starts a commits review when commits are chosen, else a full or incremental one. */
+    private void startRun(AgentReview review, Snapshot snapshot, WorkspaceRepositoryContext workspace, int ordinal, Optional<ReviewRun> previous, List<ReviewFinding> findings,
+            List<ReviewCommit> selected)
     {
         Instant now = Instant.now(clock);
-        boolean incremental = review.sourceTaskId().isEmpty() && previous.isPresent()
+        boolean incremental = selected.isEmpty() && review.sourceTaskId().isEmpty() && previous.isPresent()
                 && !previous.orElseThrow().headSha().equals(snapshot.headSha())
                 && previous.orElseThrow().baseRef().equals(snapshot.baseRef())
                 && previous.orElseThrow().mergeBaseSha().equals(snapshot.mergeBaseSha())
                 && git.run(workspace.repository(), "merge-base", "--is-ancestor", previous.orElseThrow().headSha(), snapshot.headSha()).successful();
-        ReviewRun run = insertRun(review, snapshot, ordinal, incremental ? ReviewRun.Scope.INCREMENTAL : ReviewRun.Scope.FULL,
+        ReviewRun run = insertRun(review, selected.isEmpty() ? snapshot : snapshot.withCommits(selected), ordinal,
+                !selected.isEmpty() ? ReviewRun.Scope.COMMITS : incremental ? ReviewRun.Scope.INCREMENTAL : ReviewRun.Scope.FULL,
                 previous.map(ReviewRun::sourceRevision), ReviewStep.initial());
         AgentTurn turn;
         try {
@@ -1870,6 +1894,21 @@ public class AgentReviewService
     static String normalize(String repo)
     {
         return requireNonNull(repo, "repo is null").toLowerCase(Locale.ROOT);
+    }
+
+    /** The chosen pull request commits; empty when none or all are chosen, which reviews the whole change. */
+    private static List<ReviewCommit> selectCommits(Snapshot snapshot, List<String> shas)
+    {
+        List<String> all = snapshot.commits().stream().map(ReviewCommit::sha).collect(toImmutableList());
+        if (shas.isEmpty() || shas.equals(all)) {
+            return ImmutableList.of();
+        }
+        int first = all.indexOf(shas.getFirst());
+        if (first < 0 || first + shas.size() > all.size() || !all.subList(first, first + shas.size()).equals(shas)) {
+            // The picker loaded before a force push, or the selection skips a commit.
+            throw new ReviewConflictException("The chosen commits are not consecutive commits of this pull request; choose them again");
+        }
+        return snapshot.commits().subList(first, first + shas.size());
     }
 
     enum CompletionAction

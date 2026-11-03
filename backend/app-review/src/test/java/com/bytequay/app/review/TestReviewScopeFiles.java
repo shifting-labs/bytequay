@@ -16,6 +16,7 @@ package com.bytequay.app.review;
 import com.bytequay.app.git.GitTestSupport;
 import com.bytequay.app.git.command.GitCommandRunner;
 import com.bytequay.core.domain.DiffFile;
+import com.bytequay.core.review.ReviewCommit;
 import com.bytequay.core.review.ReviewInvalidRequestException;
 import com.bytequay.core.review.ReviewRun;
 import com.google.common.collect.ImmutableList;
@@ -82,6 +83,27 @@ class TestReviewScopeFiles
     }
 
     @Test
+    void commitsScopeRequiresTheChosenCommitsPathsThatRemainInTheChange()
+            throws IOException
+    {
+        initRepository(repository);
+        Files.writeString(repository.resolve("a.txt"), "a\n");
+        Files.writeString(repository.resolve("b.txt"), "b\n");
+        String base = commit("Base source");
+        Files.writeString(repository.resolve("a.txt"), "a1\n");
+        commit("Change a");
+        Files.writeString(repository.resolve("b.txt"), "b1\n");
+        Files.writeString(repository.resolve("scratch.txt"), "temporary\n");
+        String chosen = commit("Change b");
+        Files.delete(repository.resolve("scratch.txt"));
+        String head = commit("Drop scratch");
+        ReviewRun run = run(ReviewRun.Scope.COMMITS, base, head, ImmutableList.of(new DiffFile("a.txt", "modified", 1, 1, null), new DiffFile("b.txt", "modified", 1, 1, null)),
+                ImmutableList.of(new ReviewCommit(chosen, "Change b", "Developer")));
+
+        assertThat(ReviewTools.requiredScopeFiles(GIT, repository, run, Optional.empty())).containsExactly("b.txt");
+    }
+
+    @Test
     void coverageFallbackDoesNotRequireGit()
     {
         GitCommandRunner git = mock(GitCommandRunner.class);
@@ -112,7 +134,12 @@ class TestReviewScopeFiles
 
     private static ReviewRun run(ReviewRun.Scope scope, String base, String head, List<DiffFile> diff)
     {
-        return new ReviewRun("run-" + head, "review", 1, scope, "main", base, base, head, Optional.empty(), Optional.empty(), ImmutableList.of(), diff,
+        return run(scope, base, head, diff, ImmutableList.of());
+    }
+
+    private static ReviewRun run(ReviewRun.Scope scope, String base, String head, List<DiffFile> diff, List<ReviewCommit> commits)
+    {
+        return new ReviewRun("run-" + head, "review", 1, scope, "main", base, base, head, Optional.empty(), Optional.empty(), commits, diff,
                 ImmutableList.of(), ReviewRun.State.RUNNING, Optional.empty(), Optional.empty(), Optional.empty(), ImmutableList.of(), false,
                 ImmutableMap.of(), ImmutableMap.of(), Optional.empty(), 0, Instant.EPOCH, Instant.EPOCH, Optional.empty());
     }

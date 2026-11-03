@@ -311,8 +311,13 @@ export function reviewElapsed(review: AgentReviewDto, now: number): string | nul
   return formatDuration(Math.max(0, now - started));
 }
 
-/** What a run covers, as "Full review · master → 6466c90". */
+/** What a run covers, as "Full review · master → 6466c90", or "Chosen commits · 1a2b3c4 → 5d6e7f8" for a commit selection. */
 export function reviewScope(run: ReviewRunDto): string {
+  if (run.scope === 'COMMITS') {
+    const first = shortSha(run.commits[0]?.sha ?? '');
+    const last = shortSha(run.commits.at(-1)?.sha ?? '');
+    return `Chosen commits · ${first === last ? first : `${first} → ${last}`}`;
+  }
   return `${run.scope === 'FULL' ? 'Full review' : 'Incremental review'} · ${run.priorHeadSha === null ? run.baseRef : shortSha(run.priorHeadSha)} → ${shortSha(run.headSha)}`;
 }
 
@@ -536,7 +541,7 @@ export function reviewRequests(review: AgentReviewDto): ReviewRequest[] {
     const explaining = run !== undefined && isExplanationRun(run);
     return {
       action: explaining ? 'Refresh explanation' : followUp ? (named === undefined ? 'Follow-up review' : step?.retry ? named.retry : named.action)
-        : incremental ? 'Review new commits' : review.number === null ? 'Review changes' : 'Review pull request',
+        : incremental ? 'Review new commits' : run?.scope === 'COMMITS' ? 'Review chosen commits' : review.number === null ? 'Review changes' : 'Review pull request',
       generated: true,
       icon: named?.icon,
       topic: review.number !== null ? `${review.repo}#${review.number}` : `${review.repo} · ${review.replay ? 'Past change' : 'Local changes'}`,

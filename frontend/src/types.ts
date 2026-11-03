@@ -2283,8 +2283,11 @@ export type Bridge = LabBridge & WorkItemBridge & JiraBridge & GoogleBridge & Ar
   listAgentReviewsIfChanged: (workspaceId: string, etag: string | null) => Promise<{ etag: string | null; reviews: AgentReviewDto[] | null }>;
   /** The open Agent review of a pull request, or null when it has none. */
   findAgentReview: (workspaceId: string, repo: string, number: number) => Promise<AgentReviewDto | null>;
-  /** Starts a private review, or returns the open one: one review per workspace and pull request. */
-  startAgentReview: (workspaceId: string, repo: string, number: number) => Promise<AgentReviewDto>;
+  /**
+   * Starts a private review, or returns the open one: one review per workspace and pull request. `commits` are the
+   * consecutive commits, oldest first, the first run covers; omitted for the whole pull request.
+   */
+  startAgentReview: (workspaceId: string, repo: string, number: number, commits?: string[]) => Promise<AgentReviewDto>;
   prepareReviewWorktree: (workspaceId: string, repo: string, number: number) => Promise<AgentReviewDto>;
   findTaskAgentReview: (workspaceId: string, taskId: string) => Promise<AgentReviewDto | null>;
   startTaskAgentReview: (workspaceId: string, taskId: string) => Promise<AgentReviewDto>;

@@ -198,7 +198,9 @@ public record ReviewRun(
     public enum Scope
     {
         FULL,
-        INCREMENTAL
+        INCREMENTAL,
+        /** Only the consecutive commits the user chose, judged at the frozen head; they are the run's commits. */
+        COMMITS
     }
 
     public enum State

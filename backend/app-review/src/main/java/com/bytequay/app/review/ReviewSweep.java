@@ -225,6 +225,9 @@ public class ReviewSweep
                 + "\nRead Git objects only; the working files may hold another agent's temporary experiments. Use git diff " + run.mergeBaseSha() + " " + run.sourceRevision()
                 + "; git log --format=fuller " + run.mergeBaseSha() + ".." + run.headSha() + "; git show " + run.sourceRevision() + ":<path>.\nChanged files:\n"
                 + run.diff().stream().map(file -> file.filename()).collect(Collectors.joining("\n"))
+                + (run.scope() == ReviewRun.Scope.COMMITS ? "\nThe user chose to review only commits " + run.commits().getFirst().sha()
+                        + " through " + run.commits().getLast().sha() + ": list leads only about what they change (git diff "
+                        + run.commits().getFirst().sha() + "^ " + run.commits().getLast().sha() + "), as it stands at the frozen head. The rest is context." : "")
                 + review.replay().map(replay -> "\nReplay cutoff: " + replay.cutoff()
                         + ". Do not read PR discussion, reviews, later commits or branches, and do not fetch.").orElse("");
         ReviewTool context = ReviewContextPages.tool(ImmutableMap.of(

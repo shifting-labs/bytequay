@@ -109,7 +109,9 @@
 .agr-empty__icon { color: var(--fg-dim); }
 .agr-empty__title { margin-top: 10px; font-size: 16px; font-weight: 600; }
 .agr-empty p { margin: 6px auto 0; max-width: 520px; color: var(--fg-muted); font-size: 13.5px; line-height: 1.55; }
-.agr-empty__actions { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.agr-empty__actions { position: relative; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+/* The row, not the picker, contains its menu, as the Changes toolbar does, so the menu has the row's width. */
+.agr-empty__actions .pull-commit-picker__menu { text-align: left; }
 .agr-empty__actions .agr-action { padding: 7px 16px; font-size: 14px; }
 .agr-empty__scope { color: var(--fg-muted); font-size: 12.5px; }
 .agr-empty__note {
@@ -203,7 +205,8 @@
 .agr-commit__more[aria-expanded="true"] { background: light-dark(#d0d7de, var(--dark-hover)); }
 
 .agr-review { display: flex; min-width: 0; flex-direction: column; padding-top: 12px; }
-.agr-review__head { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: 8px; }
+.agr-review__head { position: relative; display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: 8px; }
+.agr-review__head .pull-commit-picker > summary { min-height: 26px; padding: 2px 10px; font-size: 12px; }
 .agr-task-review > .agr-review__head { padding-top: 12px; }
 .agr-review__head > h2 { margin: 0; font-size: inherit; font-weight: 600; }
 .agr-review__note { color: var(--fg-muted); font-size: 12px; }

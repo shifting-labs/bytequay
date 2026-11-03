@@ -56,7 +56,8 @@ export type ReviewStepDto = {
 export type ReviewRunDto = {
   id: string;
   ordinal: number;
-  scope: 'FULL' | 'INCREMENTAL';
+  /** COMMITS covers only the run's commits, which the user chose at Start review. */
+  scope: 'FULL' | 'INCREMENTAL' | 'COMMITS';
   baseRef: string;
   baseSha: string;
   mergeBaseSha: string;
@@ -388,7 +389,7 @@ function parseRun(value: unknown): ReviewRunDto {
   return {
     id: text(run.id, 'run id'),
     ordinal: count(run.ordinal, 'run ordinal'),
-    scope: oneOf(run.scope, ['FULL', 'INCREMENTAL'] as const, 'run scope'),
+    scope: oneOf(run.scope, ['FULL', 'INCREMENTAL', 'COMMITS'] as const, 'run scope'),
     baseRef: text(run.baseRef, 'base branch'),
     baseSha: text(run.baseSha, 'base sha'),
     mergeBaseSha: text(run.mergeBaseSha, 'merge base sha'),

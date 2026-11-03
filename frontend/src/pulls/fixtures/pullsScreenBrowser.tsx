@@ -21,6 +21,7 @@ import type { AgentStreamMessage, AgentTaskDto, Bridge, DiffCommitDto, DiffFileD
 import { SUMMARY_REQUEST, type TaskDiscussionDto } from '../../agents/discussions/contracts';
 import PullOverview, { requestPullComment } from '../PullOverview';
 import PullRequestTaskActions from '../PullRequestTaskActions';
+import AgentReviewTab from '../agent-review/AgentReviewTab';
 import { PullRequestEpicCard, PullRequestEpicLink, usePullRequestEpic } from '../PullRequestEpic';
 import PullsScreen, { MergeDialog, remotePullRequest, ReviewDialog } from '../PullsScreen';
 import ReviewTaskScreen from '../../agents/ReviewTaskScreen';
@@ -1344,6 +1345,42 @@ export async function runCheckLogs(): Promise<string> {
   }
   finally {
     dispose();
+  }
+}
+
+export async function runStartChosenCommits(): Promise<string> {
+  const { host, root, dispose } = createFixtureRoot();
+  const commit = (letter: string, message: string): DiffCommitDto => ({ sha: letter.repeat(40), parentSha: null, message, author: 'Alice', authoredAt: null });
+  const started: Array<string[] | undefined> = [];
+  const original = window.bridge;
+  window.bridge = { ...original,
+    fetchPrDiffCommits: async () => [commit('a', 'Add the parser'), commit('b', 'Reset the parser'), commit('c', 'Fix the parser')],
+    startAgentReview: async (_workspaceId, _repo, _number, commits) => { started.push(commits); return reviewFixture(); },
+  };
+  try {
+    flushSync(() => root.render(<AgentReviewTab detail={prDetail({})} workspaceId="workspace" viewer={null} review={null} onReviewChange={() => {}}
+      onNavigateToChanges={() => {}} focusFindingId={null} />));
+    await until(() => host.querySelector('.pull-commit-picker') !== null, 'Start review offers the pull request commits');
+    const start = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Start review');
+    assert(start !== undefined, 'Missing Start review');
+    const picker = host.querySelector<HTMLDetailsElement>('details.pull-commit-picker');
+    assert(picker !== null, 'Missing commit picker');
+    picker.open = true;
+    host.querySelector<HTMLInputElement>('input[aria-label^="Select bbbbbbb"]')?.click();
+    await settle();
+    assert(host.querySelector('.agr-empty__scope')?.textContent === '1 of 3 commits', 'The scope names the chosen commits');
+    start.click();
+    await until(() => started.length === 1 && !start.disabled, 'Start the review');
+    picker.open = true;
+    host.querySelector<HTMLButtonElement>('.pull-commit-picker__all')?.click();
+    await settle();
+    start.click();
+    await until(() => started.length === 2, 'Start the review again');
+    assert(JSON.stringify(started) === JSON.stringify([['b'.repeat(40)], undefined]), `Start sends only the chosen commits: ${JSON.stringify(started)}`);
+    return 'Start review covers the chosen commits';
+  }
+  finally {
+    dispose(); window.bridge = original;
   }
 }
 
