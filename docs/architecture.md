@@ -665,6 +665,11 @@ its standard macOS sockets. Containers and host bind mounts managed through that
 daemon are outside the provider's filesystem sandbox. Restricted sessions and
 cherry-pick sessions do not receive this socket allowance.
 
+The same sessions may reach macOS's certificate trust agent, which `gh` and
+other Go tools need to verify TLS inside the sandbox. The agent can fetch
+certificate data from any host, a path these sessions already have through
+their open network.
+
 Claude development and CI repair sessions run bare Maven commands outside the
 provider sandbox, because Maven cannot authenticate to the sandbox's network
 proxy. Auto mode still reviews each command, but the build, its plugins, and its

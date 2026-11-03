@@ -1554,6 +1554,9 @@ class TestPermissionBroker
                                     .isEqualTo((policy == AgentPermissionPolicy.AUTO && access == SessionAccess.FULL) || ciBuildNetwork
                                             ? objectMapper.valueToTree(true)
                                             : objectMapper.missingNode());
+                            // Without macOS's trust agent, gh fails every TLS check inside the sandbox.
+                            assertThat(settings.at("/sandbox/enableWeakerNetworkIsolation").asBoolean())
+                                    .isEqualTo((policy == AgentPermissionPolicy.AUTO && access == SessionAccess.FULL) || ciBuildNetwork);
                             boolean dockerAccess = access == SessionAccess.FULL && policy != AgentPermissionPolicy.CHERRY_PICK;
                             assertThat(settings.at("/sandbox/network/allowUnixSockets"))
                                     .isEqualTo(dockerAccess

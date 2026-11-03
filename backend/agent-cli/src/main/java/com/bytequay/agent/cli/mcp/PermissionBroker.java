@@ -1518,6 +1518,8 @@ public final class PermissionBroker
                 // Native Auto mode reviews retries first; unresolved requests use the permission callback.
                 allowUnsandboxedRetry,
                 unsandboxedMaven(scope) ? UNSANDBOXED_MAVEN : ImmutableList.of(),
+                // gh and other Go tools verify TLS through macOS's trust agent; an open network loses nothing by reaching it.
+                scope.buildNetwork(),
                 filesystem,
                 network);
         Optional<AutoMode> autoMode = Optional.empty();
@@ -1688,6 +1690,7 @@ public final class PermissionBroker
             boolean autoAllowBashIfSandboxed,
             boolean allowUnsandboxedCommands,
             List<String> excludedCommands,
+            boolean enableWeakerNetworkIsolation,
             SandboxFilesystem filesystem,
             SandboxNetwork network) {}
 
