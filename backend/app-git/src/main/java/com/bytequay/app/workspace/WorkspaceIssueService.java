@@ -76,6 +76,8 @@ public class WorkspaceIssueService
     private final Clock clock;
     private final AppSettingsStore settings;
     private final Striped<Lock> locks = Striped.lock(64);
+    // Separate stripes, so one issue's detail never queues behind a full sync that happens to share its stripe.
+    private final Striped<Lock> detailLocks = Striped.lock(64);
 
     public WorkspaceIssueService(
             WorkspaceStore workspaces,
@@ -250,21 +252,22 @@ public class WorkspaceIssueService
     {
         checkArgument(issueNumber > 0, "issueNumber must be positive");
         workspaces.findByHostingRepositoryId(repositoryId).filter(candidate -> workspaces.isWatched(candidate.id()))
-                .ifPresent(candidate -> WorkspaceOperationLocks.withLock(candidate.id(), () -> {
-                    Workspace workspace = requireWorkspace(workspaces, candidate.id());
-                    WorkspaceHostingRead route = hosting.captureRead(workspace.id());
+                .ifPresent(candidate -> {
+                    WorkspaceHostingRead route = hosting.captureRead(candidate.id());
                     Lock lock = locks.get(route.repository().id());
                     withLock(lock, () -> {
                         Optional<RepositoryIssue> issue = client(route).find(route.target(), issueNumber);
-                        if (issue.isPresent()) {
-                            issues.saveSyncPage(route.repository().id(), ImmutableList.of(issue.orElseThrow()));
-                        }
-                        else {
-                            issues.delete(route.repository().id(), issueNumber);
-                        }
+                        write(candidate.id(), () -> {
+                            if (issue.isPresent()) {
+                                issues.saveSyncPage(route.repository().id(), ImmutableList.of(issue.orElseThrow()));
+                            }
+                            else {
+                                issues.delete(route.repository().id(), issueNumber);
+                            }
+                        });
                         return null;
                     });
-                }));
+                });
     }
 
     /** Incremental open-card changes and closures; a completed cursor survives sleep and restarts. */
@@ -273,7 +276,7 @@ public class WorkspaceIssueService
         Set<String> refreshed = new HashSet<>();
         for (Workspace workspace : workspaces.findAll()) {
             try {
-                WorkspaceOperationLocks.withLock(workspace.id(), () -> refreshRecentIssuesLocked(workspace.id(), refreshed));
+                refreshRecentIssues(workspace.id(), refreshed);
             }
             catch (RuntimeException failure) {
                 if (isRateLimit(failure) || failure instanceof ResponseStatusException response && response.getStatusCode().value() == 401) {
@@ -284,7 +287,7 @@ public class WorkspaceIssueService
         }
     }
 
-    private void refreshRecentIssuesLocked(String workspaceId, Set<String> refreshed)
+    private void refreshRecentIssues(String workspaceId, Set<String> refreshed)
     {
         requireWorkspace(workspaces, workspaceId);
         WorkspaceHostingRead route = hosting.captureRead(workspaceId);
@@ -303,8 +306,10 @@ public class WorkspaceIssueService
             Instant since = checkpoint.map(at -> at.minus(Duration.ofMinutes(5))).orElse(startedAt.minus(Duration.ofHours(1)));
             for (int page = 1; ; page++) {
                 IssueSyncPage fetched = client(route).list(route.target(), Optional.of(since), page);
-                issues.saveSyncPage(route.repository().id(), fetched.openIssues());
-                fetched.closedNumbers().forEach(number -> issues.delete(route.repository().id(), number));
+                write(workspaceId, () -> {
+                    issues.saveSyncPage(route.repository().id(), fetched.openIssues());
+                    fetched.closedNumbers().forEach(number -> issues.delete(route.repository().id(), number));
+                });
                 if (!fetched.hasNext()) {
                     break;
                 }
@@ -340,37 +345,44 @@ public class WorkspaceIssueService
 
     public RepositoryIssuePage refreshIssues(String workspaceId)
     {
-        return WorkspaceOperationLocks.withLock(workspaceId, () -> {
-            Workspace workspace = requireWorkspace(workspaces, workspaceId);
-            WorkspaceHostingRead route = hosting.captureRead(workspaceId);
-            return refreshLocked(workspaceId, route.repository().id(), () -> {
-                refreshIssueRows(route);
-                return issues.findPage(route.repository().id(), workspace.monitoredRepository(), 0, 50);
-            });
+        Workspace workspace = requireWorkspace(workspaces, workspaceId);
+        WorkspaceHostingRead route = hosting.captureRead(workspaceId);
+        return refreshLocked(workspaceId, locks.get(route.repository().id()), () -> {
+            refreshIssueRows(workspaceId, route);
+            return issues.findPage(route.repository().id(), workspace.monitoredRepository(), 0, 50);
         });
     }
 
     public RepositoryIssueDetail refreshDetail(String workspaceId, int issueNumber)
     {
-        return WorkspaceOperationLocks.withLock(workspaceId, () -> {
-            requireWorkspace(workspaces, workspaceId);
-            checkArgument(issueNumber > 0, "issueNumber must be positive");
-            WorkspaceHostingRead route = hosting.captureRead(workspaceId);
-            return refreshLocked(workspaceId, route.repository().id() + ":" + issueNumber, () -> {
-                RepositoryIssueDetail fetched = client(route).detail(route.target(), issueNumber);
-                RepositoryIssueDetail detail = new RepositoryIssueDetail(
-                        route.repository().id(), issueNumber, fetched.timeline(), fetched.currentType(), fetched.availableTypes(),
-                        Optional.of(clock.instant()));
-                details.save(detail);
-                return details.find(route.repository().id(), issueNumber)
-                        .orElseThrow(() -> new IllegalStateException("Issue detail refresh was not persisted"));
-            });
+        requireWorkspace(workspaces, workspaceId);
+        checkArgument(issueNumber > 0, "issueNumber must be positive");
+        WorkspaceHostingRead route = hosting.captureRead(workspaceId);
+        return refreshLocked(workspaceId, detailLocks.get(route.repository().id() + ":" + issueNumber), () -> {
+            RepositoryIssueDetail fetched = client(route).detail(route.target(), issueNumber);
+            RepositoryIssueDetail detail = new RepositoryIssueDetail(
+                    route.repository().id(), issueNumber, fetched.timeline(), fetched.currentType(), fetched.availableTypes(),
+                    Optional.of(clock.instant()));
+            write(workspaceId, () -> details.save(detail));
+            return details.find(route.repository().id(), issueNumber)
+                    .orElseThrow(() -> new IllegalStateException("Issue detail refresh was not persisted"));
         });
     }
 
-    private <T> T refreshLocked(String workspaceId, Object key, Supplier<T> refresh)
+    /**
+     * Writes a refresh's result holding the workspace, so a deletion cannot interleave. The provider read before it stays unlocked:
+     * a large repository's full sync waits on it for minutes, and the workspace's other work must not wait with it.
+     */
+    private void write(String workspaceId, Runnable action)
     {
-        Lock lock = locks.get(key);
+        WorkspaceOperationLocks.withLock(workspaceId, () -> {
+            requireWorkspace(workspaces, workspaceId);
+            action.run();
+        });
+    }
+
+    private <T> T refreshLocked(String workspaceId, Lock lock, Supplier<T> refresh)
+    {
         return withLock(lock, () -> {
             try {
                 return refresh.get();
@@ -381,19 +393,19 @@ public class WorkspaceIssueService
         });
     }
 
-    private void refreshIssueRows(WorkspaceHostingRead route)
+    private void refreshIssueRows(String workspaceId, WorkspaceHostingRead route)
     {
         Set<Long> open = new HashSet<>();
         for (int page = 1; ; page++) {
             IssueSyncPage fetched = client(route).list(route.target(), Optional.empty(), page);
-            issues.saveSyncPage(route.repository().id(), fetched.openIssues());
+            write(workspaceId, () -> issues.saveSyncPage(route.repository().id(), fetched.openIssues()));
             fetched.openIssues().forEach(issue -> open.add(issue.id()));
             if (!fetched.hasNext()) {
                 break;
             }
             checkState(page != MAX_SYNC_PAGES, "Issue refresh exceeded 5000 rows");
         }
-        issues.completeSync(route.repository().id(), open, clock.instant());
+        write(workspaceId, () -> issues.completeSync(route.repository().id(), open, clock.instant()));
     }
 
     private RuntimeException refreshFailure(String workspaceId, RuntimeException failure)

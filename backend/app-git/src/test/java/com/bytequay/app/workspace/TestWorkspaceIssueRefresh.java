@@ -108,7 +108,35 @@ class TestWorkspaceIssueRefresh
     }
 
     @Test
-    void deletionCannotAcquireWorkspaceWhileIssueRefreshWritesItsCache()
+    void issueDetailLoadsWhileAFullSyncWaitsOnTheProvider()
+            throws Exception
+    {
+        workspaces.put("direct", workspace("direct", 100, DIRECT, Topology.DIRECT));
+        CountDownLatch fetching = new CountDownLatch(1);
+        CountDownLatch finishFetch = new CountDownLatch(1);
+        when(gitHub.fetchOpenIssuesPage("token", DIRECT, 1)).thenAnswer(invocation -> {
+            fetching.countDown();
+            assertThat(finishFetch.await(30, TimeUnit.SECONDS)).isTrue();
+            return new GitHubRepoClient.IssuePage(ImmutableList.of(issue(1)), false);
+        });
+        RepositoryIssueDetail stored = new RepositoryIssueDetail(100, 7, ImmutableList.of(), null, ImmutableList.of(), Optional.of(NOW));
+        when(detailStore.find(100, 7)).thenReturn(Optional.of(stored));
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var sync = executor.submit(() -> service.refreshIssues("direct"));
+            try {
+                assertThat(fetching.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(executor.submit(() -> service.refreshDetail("direct", 7)).get(5, TimeUnit.SECONDS)).isSameAs(stored);
+            }
+            finally {
+                finishFetch.countDown();
+            }
+            sync.get(5, TimeUnit.SECONDS);
+        }
+        verify(issueStore).completeSync(100L, ImmutableSet.of(issue(1).id()), NOW);
+    }
+
+    @Test
+    void deletionDuringAFullSyncStopsItsWrites()
             throws Exception
     {
         workspaces.put("fork", workspace("fork", 300, UPSTREAM, Topology.FORK));
@@ -116,7 +144,7 @@ class TestWorkspaceIssueRefresh
         CountDownLatch finishFetch = new CountDownLatch(1);
         when(gitHub.fetchOpenIssuesPage("token", UPSTREAM, 1)).thenAnswer(invocation -> {
             fetching.countDown();
-            assertThat(finishFetch.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(finishFetch.await(30, TimeUnit.SECONDS)).isTrue();
             return new GitHubRepoClient.IssuePage(ImmutableList.of(issue(1)), false);
         });
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -124,18 +152,21 @@ class TestWorkspaceIssueRefresh
             try {
                 assertThat(fetching.await(5, TimeUnit.SECONDS)).isTrue();
                 var lock = WorkspaceOperationLocks.get("fork");
-                boolean acquired = lock.tryLock();
-                if (acquired) {
+                assertThat(lock.tryLock(5, TimeUnit.SECONDS)).isTrue();
+                try {
+                    workspaces.remove("fork");
+                }
+                finally {
                     lock.unlock();
                 }
-                assertThat(acquired).isFalse();
             }
             finally {
                 finishFetch.countDown();
             }
-            refresh.get(5, TimeUnit.SECONDS);
+            assertThatThrownBy(() -> refresh.get(5, TimeUnit.SECONDS)).hasCauseInstanceOf(WorkspaceException.class);
         }
-        verify(issueStore).completeSync(org.mockito.ArgumentMatchers.eq(300L), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(NOW));
+        verify(issueStore, never()).saveSyncPage(anyLong(), any());
+        verify(issueStore, never()).completeSync(anyLong(), any(), any());
     }
 
     @Test
