@@ -68,20 +68,29 @@ export function useWorkspaceAttention(workspaceId: string, repository: string, t
         setLogin(snapshot.login);
       }).catch(() => {});
     };
+    // A push keeps unchanged rows as the same objects; one that leaves this repository's rows alone needs no full re-read.
+    const repo = repository.toLowerCase();
+    let pushed: PullRequestDto[] | null = null;
+    const updated = (event: Event) => {
+      const rows = (event as CustomEvent<PullRequestDto[] | undefined>).detail?.filter(pr => pr.repo.toLowerCase() === repo) ?? null;
+      const previous = pushed;
+      pushed = rows;
+      if (rows === null || previous === null || rows.length !== previous.length || rows.some((pr, index) => pr !== previous[index])) reload();
+    };
     const handledChanged = () => setHandled(loadHandled());
     reload();
     const stopSync = window.bridge.onPullRequestsSynced(reload);
-    window.addEventListener('bytequay:pr-attention-updated', reload);
+    window.addEventListener('bytequay:pr-attention-updated', updated);
     window.addEventListener('bytequay:pr-monitor-changed', reload);
     window.addEventListener('bytequay:attention-handled-changed', handledChanged);
     return () => {
       active = false;
       stopSync();
-      window.removeEventListener('bytequay:pr-attention-updated', reload);
+      window.removeEventListener('bytequay:pr-attention-updated', updated);
       window.removeEventListener('bytequay:pr-monitor-changed', reload);
       window.removeEventListener('bytequay:attention-handled-changed', handledChanged);
     };
-  }, [cacheKey, workspaceId]);
+  }, [cacheKey, repository, workspaceId]);
   useEffect(() => {
     if (!login) return;
     let active = true;

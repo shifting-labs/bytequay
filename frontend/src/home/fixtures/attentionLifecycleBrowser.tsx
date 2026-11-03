@@ -496,10 +496,45 @@ async function latestSummary(): Promise<void> {
   finally { flushSync(() => root.unmount()); await settle(); host.remove(); }
 }
 
+async function workspacePushes(): Promise<void> {
+  let reads = 0;
+  const readCount = () => reads;
+  window.bridge = {
+    fetchWorkspaceHostingAttention: async () => { reads++; return { login: null, pullRequests: [] }; },
+    listJiraConnections: async (): ReturnType<Bridge['listJiraConnections']> => [],
+    listJiraAttention: async (): ReturnType<Bridge['listJiraAttention']> => [],
+    onPullRequestsSynced: () => noOp,
+  } as unknown as Bridge;
+  const mine = item(71).pr;
+  const other = item(72).pr;
+  assert(mine !== null && other !== null, 'Push fixtures are pull requests');
+  const push = (detail?: PullRequestDto[]) => window.dispatchEvent(new CustomEvent('bytequay:pr-attention-updated', { detail }));
+  function Workspace() {
+    useWorkspaceAttention('ws-1', 'octo/app', { items: [], tasks: [], readStartedAt: {}, activity: {}, refresh: noOp });
+    return null;
+  }
+  const host = document.createElement('div'); document.body.append(host);
+  const root = createRoot(host);
+  try {
+    flushSync(() => root.render(<Workspace />));
+    await settle();
+    push([mine, { ...other, repo: 'octo/lib' }]); await settle();
+    assert(readCount() === 2, `The first push re-reads the workspace once its rows are known: ${readCount()}`);
+    push([mine, { ...other, repo: 'octo/lib', ciStatus: 'FAILING' }]); await settle();
+    assert(readCount() === 2, `A push that changes only another repository's rows reads nothing: ${readCount()}`);
+    push([{ ...mine, ciStatus: 'FAILING' }]); await settle();
+    assert(readCount() === 3, `A changed row of this repository re-reads the workspace: ${readCount()}`);
+    push(); await settle();
+    assert(readCount() === 4, `A push without rows still re-reads the workspace: ${readCount()}`);
+  }
+  finally { flushSync(() => root.unmount()); await settle(); host.remove(); }
+}
+
 export async function run(): Promise<{ name: string; error?: string }[]> {
   return runScenarios([['viewed until close', viewing], ['successful action status', actions], ['canonical post-write snapshot', canonicalSnapshot],
     ['global pins', pinning], ['timed snoozes', snoozing], ['retained reminders', retainedReminder], ['hover cards', hoverCards],
-    ['latest summary wins', latestSummary], ['persistent own PRs', myPullRequests], ['quiet approved PRs', approvedPullRequests]]);
+    ['latest summary wins', latestSummary], ['workspace reads only its pushes', workspacePushes], ['persistent own PRs', myPullRequests],
+    ['quiet approved PRs', approvedPullRequests]]);
 }
 
 let preview: ReturnType<typeof mount> | null = null;

@@ -47,7 +47,7 @@ testBrowserScenarios([
   },
   {
     name: 'handles attention visits, actions, global pins and timed reminders in Chromium',
-    expected: 10, timeout: 30_000,
+    expected: 11, timeout: 30_000,
     fixture: {
       prefix: 'bytequay-attention-lifecycle-',
       entry: 'src/home/fixtures/attentionLifecycleBrowser.tsx',
