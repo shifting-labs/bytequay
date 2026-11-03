@@ -14,6 +14,7 @@
 package com.bytequay.app.service.rules;
 
 import com.bytequay.app.service.InMemoryAppSettingsStore;
+import com.bytequay.core.domain.RuleRun;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableList;
 import org.junit.jupiter.api.Test;
@@ -23,6 +24,9 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 
 import static com.bytequay.app.service.rules.TestRuleText.STORAGE_REVIEW;
+import static com.bytequay.core.domain.RuleRun.Verdict.AGREED;
+import static com.bytequay.core.domain.RuleRun.Verdict.DISAGREED;
+import static com.bytequay.core.domain.RuleRun.Verdict.PENDING;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -32,6 +36,7 @@ class TestAgentRuleService
     private static final Instant EDITED = SAVED.plusSeconds(3600);
 
     private final InMemoryAppSettingsStore store = new InMemoryAppSettingsStore();
+    private final InMemoryRuleRunStore runs = new InMemoryRuleRunStore();
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
 
     @Test
@@ -81,6 +86,27 @@ class TestAgentRuleService
     }
 
     @Test
+    void theRecordCountsOnlyRunsSinceItBegan()
+    {
+        AgentRuleService rules = service(SAVED);
+        String id = rules.add(STORAGE_REVIEW).getFirst().id();
+        RuleRun before = new RuleRun(id, "pr:1:head:1", "acme/warehouse#1", "Before", SAVED.minusSeconds(60), AGREED);
+        RuleRun agreed = new RuleRun(id, "pr:2:head:1", "acme/warehouse#2", "Agreed", SAVED.plusSeconds(60), AGREED);
+        RuleRun disagreed = new RuleRun(id, "pr:3:head:1", "acme/warehouse#3", "Disagreed", SAVED.plusSeconds(120), DISAGREED);
+        RuleRun pending = new RuleRun(id, "pr:4:head:1", "acme/warehouse#4", "Pending", SAVED.plusSeconds(180), PENDING);
+        for (RuleRun run : ImmutableList.of(before, agreed, disagreed, pending)) {
+            runs.save(run);
+        }
+
+        AgentRuleView view = rules.list().getFirst();
+        assertThat(view.runs()).isEqualTo(3);
+        assertThat(view.agreed()).isEqualTo(1);
+        assertThat(view.disagreed()).isEqualTo(1);
+        assertThat(rules.record(id)).containsExactly(pending, disagreed, agreed);
+        assertThatThrownBy(() -> rules.record("missing")).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Unknown rule");
+    }
+
+    @Test
     void keepsAtMostFiftyRules()
     {
         AgentRuleService rules = service(SAVED);
@@ -92,6 +118,6 @@ class TestAgentRuleService
 
     private AgentRuleService service(Instant now)
     {
-        return new AgentRuleService(store, mapper, Clock.fixed(now, ZoneOffset.UTC));
+        return new AgentRuleService(store, runs, mapper, Clock.fixed(now, ZoneOffset.UTC));
     }
 }

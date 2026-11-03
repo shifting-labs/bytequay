@@ -50,7 +50,8 @@
             ><a href="#claude-accounts">Claude Code accounts</a
             ><a href="#agent-tasks">Start an agent task</a
             ><a href="#delivery-and-ci">Delivery and CI</a
-            ><a href="#commits-and-backports">Cherry-pick and backport</a>
+            ><a href="#commits-and-backports">Cherry-pick and backport</a
+            ><a href="#rules">Rules</a>
           </nav>
         </aside>
         <article class="docs-content">
@@ -200,6 +201,38 @@
               closes the PR and deletes the work branch.
               <strong>Backport</strong> carries a PR down the line, one
               cherry-pick per repository.
+            </p>
+          </section>
+          <section id="rules">
+            <h2>Let rules watch your work</h2>
+            <p>
+              A rule names something that happens, such as a review requested
+              from you, and the work ByteQuay could do then. A new rule only
+              watches: it records what it would have done, and whether you then
+              did that work yourself.
+            </p>
+            <ol>
+              <li>
+                In <strong>Settings → Rules</strong>, choose <strong>Paste a
+                rule</strong>.
+              </li>
+              <li>
+                Between two <code>---</code> lines, name the event
+                (<code>when</code>), the work (<code>does</code>), and what you
+                do when you agree (<code>agrees-when</code>). Write the
+                instructions below them. The box shows an example.
+              </li>
+              <li>
+                Choose <strong>Check rule</strong> to see what it reads, then
+                <strong>Save rule</strong>. It starts in <strong>Observe</strong>.
+              </li>
+            </ol>
+            <p>
+              A rule’s row shows its record, such as <strong>12 runs · 83%
+              agree</strong>, and <strong>Edit</strong> lists each run. A run
+              agrees when you review the pull request, start a task, update the
+              branch, or open the backport in time. Records keep 30 days, and
+              changing the header starts a new one. The switch pauses a rule.
             </p>
           </section>
           <div class="doc-next">

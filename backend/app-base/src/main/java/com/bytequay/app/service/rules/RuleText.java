@@ -20,6 +20,7 @@ import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 
+import java.nio.file.FileSystems;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -29,6 +30,7 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
@@ -91,8 +93,20 @@ public final class RuleText
         repositories.forEach(repository -> checkArgument(REPOSITORY.matcher(repository).matches(), "Write repositories as owner/repo, not \"%s\"", repository));
         List<String> paths = values(header, "paths");
         checkArgument(paths.isEmpty() || event.pullRequest(), "\"paths\" only fits pull request events, not \"%s\"", event.key());
+        paths.forEach(path -> checkArgument(glob(path), "\"%s\" is not a path pattern such as src/storage/**", path));
         int withinDays = Optional.ofNullable(header.get("within")).map(RuleText::days).orElse(action == Action.BACKPORT ? 7 : 3);
         return new RuleDefinition(name, event, repositories, paths, values(header, "labels"), values(header, "authors"), action, agreement, withinDays, body);
+    }
+
+    private static boolean glob(String path)
+    {
+        try {
+            FileSystems.getDefault().getPathMatcher("glob:" + path);
+            return true;
+        }
+        catch (PatternSyntaxException failure) {
+            return false;
+        }
     }
 
     private static String required(Map<String, String> header, String key)

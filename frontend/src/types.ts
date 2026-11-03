@@ -1380,7 +1380,7 @@ export type AgentRuleDefinitionDto = {
   body: string;
 };
 
-/** A saved rule: the file text the user wrote, the mode its record has earned, and what the text says. */
+/** A saved rule: the file text the user wrote, the mode its record has earned, what the text says, and how its record counts so far. */
 export type AgentRuleDto = {
   id: string;
   text: string;
@@ -1388,6 +1388,19 @@ export type AgentRuleDto = {
   paused: boolean;
   recordSince: string;
   rule: AgentRuleDefinitionDto;
+  runs: number;
+  agreed: number;
+  disagreed: number;
+};
+
+export type AgentRuleVerdict = 'PENDING' | 'AGREED' | 'DISAGREED';
+
+/** One time a rule's event happened, and whether the user then did what the rule would have done. */
+export type AgentRuleRunDto = {
+  subject: string;
+  title: string;
+  occurredAt: string;
+  verdict: AgentRuleVerdict;
 };
 
 
@@ -2074,6 +2087,8 @@ export type Bridge = LabBridge & WorkItemBridge & JiraBridge & GoogleBridge & Ar
   updateAgentRule: (id: string, text: string) => Promise<AgentRuleDto[]>;
   pauseAgentRule: (id: string, paused: boolean) => Promise<AgentRuleDto[]>;
   removeAgentRule: (id: string) => Promise<AgentRuleDto[]>;
+  /** The rule's runs since its record began, newest first. */
+  getAgentRuleRuns: (id: string) => Promise<AgentRuleRunDto[]>;
   getQuietHours: () => Promise<QuietHoursDto>;
   saveQuietHours: (quietHours: QuietHoursDto) => Promise<QuietHoursDto>;
   getDevelopmentAutomation: () => Promise<DevelopmentAutomationDto>;

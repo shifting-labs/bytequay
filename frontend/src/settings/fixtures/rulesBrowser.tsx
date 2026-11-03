@@ -14,7 +14,7 @@
 import { useState } from 'react';
 import { flushSync } from 'react-dom';
 import { createFixtureRoot } from '../../fixtures/reactFixture';
-import type { AgentRuleDefinitionDto, AgentRuleDto } from '../../types';
+import type { AgentRuleDefinitionDto, AgentRuleDto, AgentRuleRunDto } from '../../types';
 import RulesPage from '../RulesPage';
 import { assert, changeInput, element, settle } from '../../fixtures/harness';
 import { errorMessage } from '../../errorMessage';
@@ -30,6 +30,13 @@ Review it for correctness first, then nits. Draft comments only.`;
 
 const NOT_A_RULE = 'Add a "does" line to the header';
 
+const RUNS: AgentRuleRunDto[] = [
+  { subject: 'acme/warehouse#4524', title: 'Cache block reads', occurredAt: '2026-11-04T09:00:00Z', verdict: 'PENDING' },
+  { subject: 'acme/warehouse#4523', title: 'Retry flaky uploads', occurredAt: '2026-11-03T16:00:00Z', verdict: 'DISAGREED' },
+  { subject: 'acme/warehouse#4522', title: 'Split the storage writer', occurredAt: '2026-11-03T12:00:00Z', verdict: 'AGREED' },
+  { subject: 'acme/warehouse#4521', title: 'Fix the page cache', occurredAt: '2026-11-03T10:00:00Z', verdict: 'AGREED' },
+];
+
 /** The backend's reading, reduced to what these scenarios use: a name line, and refusal without a "does" line. */
 function read(text: string): AgentRuleDefinitionDto {
   if (!text.includes('\ndoes:')) throw new Error(NOT_A_RULE);
@@ -40,7 +47,7 @@ function read(text: string): AgentRuleDefinitionDto {
 }
 
 function saved(id: string, text: string, paused = false): AgentRuleDto {
-  return { id, text, mode: 'OBSERVE', paused, recordSince: '2026-11-03T08:00:00Z', rule: read(text) };
+  return { id, text, mode: 'OBSERVE', paused, recordSince: '2026-11-03T08:00:00Z', rule: read(text), runs: 0, agreed: 0, disagreed: 0 };
 }
 
 /** The shell's own save wiring around the real page, with a backend that answers at once. */
@@ -52,6 +59,7 @@ function Harness({ initial }: { initial: AgentRuleDto[] }) {
       busy={false}
       error={null}
       onCheck={async text => read(text)}
+      onRecord={async id => (id === 'rule-1' ? RUNS : [])}
       onSave={async (text, id) => {
         read(text);
         setRules(current => (id === null ? [...current, saved(`rule-${current.length}`, text)]
@@ -73,6 +81,8 @@ function fixture(initial: AgentRuleDto[] = []) {
     dialog: () => host.querySelector('.setw-dialog'),
     said: () => host.querySelector('[aria-label="What the rule says"]')?.textContent ?? null,
     alert: () => scope().querySelector('[role="alert"]')?.textContent ?? null,
+    record: () => [...scope().querySelectorAll('.setw-rule-run')]
+      .map(run => `${run.querySelector('[role="img"]')?.getAttribute('aria-label')} ${run.textContent}`),
     async click(label: string) {
       const button = [...scope().querySelectorAll('button')]
         .find(item => item.getAttribute('aria-label') === label || item.textContent?.trim() === label);
@@ -138,6 +148,18 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
     await view.click('Remove rule');
     assert(view.rows().length === 0 && view.dialog() === null, 'Remove deletes the rule and closes the box');
   }, [saved('rule-1', RULE)]);
+
+  await check('shows a rule\'s record on its row and each run in its box', async view => {
+    assert(view.rows()[0].includes('A review is requested from you · 4 runs · 67% agree · Observe'), `The row counts the record: ${view.rows()[0]}`);
+    await view.click('Edit Review PRs that need me');
+    const record = view.record();
+    assert(record.length === 4 && record[0].startsWith('Waiting for you acme/warehouse#4524Cache block reads')
+      && record[1].startsWith('You did not, in time acme/warehouse#4523') && record[3].startsWith('You agreed acme/warehouse#4521'),
+    `The box lists each run with what you did: ${record.join(' | ')}`);
+    await view.click('Cancel');
+    await view.click('Edit Review PRs that ask for me');
+    assert(view.record().length === 0, 'A rule with no runs shows no record');
+  }, [{ ...saved('rule-1', RULE), runs: 4, agreed: 2, disagreed: 1 }, saved('rule-2', RULE.replace('need me', 'ask for me'))]);
 
   return results;
 }

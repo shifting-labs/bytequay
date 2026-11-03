@@ -13,13 +13,17 @@
  */
 package com.bytequay.app.service.rules;
 
+import com.bytequay.core.domain.RuleRun;
+
 import java.time.Instant;
+import java.util.List;
 
 import static com.bytequay.core.domain.Checks.checkText;
 import static java.util.Objects.requireNonNull;
 
-/** A saved rule as Settings shows it: the rule itself and what its text says. */
-public record AgentRuleView(String id, String text, AgentRule.Mode mode, boolean paused, Instant recordSince, RuleDefinition rule)
+/** A saved rule as Settings shows it: the rule itself, what its text says, and how its record counts so far. */
+public record AgentRuleView(String id, String text, AgentRule.Mode mode, boolean paused, Instant recordSince, RuleDefinition rule, int runs, int agreed,
+        int disagreed)
 {
     public AgentRuleView
     {
@@ -30,8 +34,14 @@ public record AgentRuleView(String id, String text, AgentRule.Mode mode, boolean
         requireNonNull(rule, "rule is null");
     }
 
-    static AgentRuleView of(AgentRule saved)
+    static AgentRuleView of(AgentRule saved, List<RuleRun> record)
     {
-        return new AgentRuleView(saved.id(), saved.text(), saved.mode(), saved.paused(), saved.recordSince(), RuleText.parse(saved.text()));
+        return new AgentRuleView(saved.id(), saved.text(), saved.mode(), saved.paused(), saved.recordSince(), RuleText.parse(saved.text()), record.size(),
+                count(record, RuleRun.Verdict.AGREED), count(record, RuleRun.Verdict.DISAGREED));
+    }
+
+    private static int count(List<RuleRun> record, RuleRun.Verdict verdict)
+    {
+        return (int) record.stream().filter(run -> run.verdict() == verdict).count();
     }
 }

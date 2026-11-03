@@ -313,6 +313,7 @@ const bridge: Bridge = {
   updateAgentRule: invoke('settings:agent-rules:update'),
   pauseAgentRule: invoke('settings:agent-rules:pause'),
   removeAgentRule: invoke('settings:agent-rules:remove'),
+  getAgentRuleRuns: invoke('settings:agent-rules:runs'),
   getQuietHours: invoke('settings:quiet-hours'),
   saveQuietHours: invoke('settings:quiet-hours:save'),
   getDevelopmentAutomation: invoke('settings:development-automation'),

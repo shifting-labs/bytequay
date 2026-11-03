@@ -51,6 +51,7 @@ import {
   parseAgentQueuedInput,
   parseAgentQueuedInputDraft,
   parseAgentRuleDefinition,
+  parseAgentRuleRuns,
   parseAgentRules,
   parseAgentRuntimeStopImpact,
   parseAgentSkillInput,
@@ -1477,6 +1478,8 @@ function registerIpc(): void {
       .then(parseAgentRules));
   ipcMain.handle('settings:agent-rules:remove', (_event, id: string) =>
     backendJson(`${backendBase()}/api/settings/agent-rules/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(parseAgentRules));
+  ipcMain.handle('settings:agent-rules:runs', (_event, id: string) =>
+    backendJson(`${backendBase()}/api/settings/agent-rules/${encodeURIComponent(id)}/runs`).then(parseAgentRuleRuns));
   ipcMain.handle('settings:quiet-hours', () =>
     backendJson(`${backendBase()}/api/settings/quiet-hours`));
   ipcMain.handle('settings:quiet-hours:save', (_event, quietHours: unknown) =>

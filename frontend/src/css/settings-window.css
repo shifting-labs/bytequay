@@ -607,6 +607,14 @@
 .setw-rule-actions { margin-top: 8px; }
 .setw-rule-check { margin-top: 10px; font-size: 12px; line-height: 1.6; color: light-dark(#6e6e73, var(--dark-muted)); }
 .setw-rule-name { color: light-dark(#1d1d1f, var(--dark-text)); }
+.setw-rule-record { margin-top: 12px; max-height: 180px; overflow-y: auto; font-size: 12px; color: light-dark(#6e6e73, var(--dark-muted)); }
+.setw-rule-record-title { margin-bottom: 4px; }
+.setw-rule-run { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.setw-rule-run-verdict { flex: none; display: inline-flex; }
+.setw-rule-run-verdict.is-agreed { color: light-dark(#1a7f37, #287a43); }
+.setw-rule-run-subject { flex: none; color: light-dark(#1d1d1f, var(--dark-text)); }
+.setw-rule-run-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.setw-rule-run-date { flex: none; }
 
 .setw-dialog-foot {
   display: flex;

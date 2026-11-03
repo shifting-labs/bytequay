@@ -86,6 +86,7 @@ class TestRuleText
         assertRefused(STORAGE_REVIEW.replace("does: review", "does: rebase"), "can do review, task, not rebase");
         assertRefused(STORAGE_REVIEW.replace("agrees-when: reviewed", "agrees-when: started-task"), "agrees when reviewed, not started-task");
         assertRefused(STORAGE_REVIEW.replace("acme/warehouse", "warehouse"), "owner/repo, not \"warehouse\"");
+        assertRefused(STORAGE_REVIEW.replace("src/storage/**", "src/[storage"), "\"src/[storage\" is not a path pattern");
         assertRefused(STORAGE_REVIEW.replace("does: review", "does: review\nwithin: 2w"), "in days, such as 3d");
         assertRefused(STORAGE_REVIEW.replace("does: review", "does: review\nwithin: 45d"), "1 to 30 days");
         assertRefused(STORAGE_REVIEW.substring(0, STORAGE_REVIEW.lastIndexOf("---") + 3), "write what the rule should do");

@@ -12,10 +12,13 @@
  * limitations under the License.
  */
 import { useRef, useState } from 'react';
-import { Pencil } from 'lucide-react';
+import { Check, Clock, Minus, Pencil } from 'lucide-react';
+import { plural, shortDate } from '@bytequay/ui/displayText';
 import { errorMessage } from '../errorMessage';
 import { useAsyncAction } from '../useAsyncAction';
-import type { AgentRuleAction, AgentRuleAgreement, AgentRuleDefinitionDto, AgentRuleDto, AgentRuleEvent, AgentRuleMode } from '../types';
+import type {
+  AgentRuleAction, AgentRuleAgreement, AgentRuleDefinitionDto, AgentRuleDto, AgentRuleEvent, AgentRuleMode, AgentRuleRunDto, AgentRuleVerdict,
+} from '../types';
 import { AddAction, Dialog, SettingsCard, SettingsRow, Toggle } from './primitives';
 
 /** Each event in the words a rule's row and its check show. */
@@ -43,6 +46,12 @@ const RULE_AGREEMENTS: Record<AgentRuleAgreement, string> = {
 
 const MODES: Record<AgentRuleMode, string> = { OBSERVE: 'Observe', SUGGEST: 'Suggest', AUTO: 'Auto' };
 
+const VERDICTS: Record<AgentRuleVerdict, { label: string; icon: typeof Check }> = {
+  AGREED: { label: 'You agreed', icon: Check },
+  DISAGREED: { label: 'You did not, in time', icon: Minus },
+  PENDING: { label: 'Waiting for you', icon: Clock },
+};
+
 const EXAMPLE = `---
 name: Review PRs that need me
 when: review-requested
@@ -61,17 +70,38 @@ function filters(rule: AgentRuleDefinitionDto): string {
   ].filter(part => part !== '').join(' · ');
 }
 
-export default function RulesPage({ rules, busy, error, onCheck, onSave, onPause, onRemove }: {
+/** "12 runs · 83% agree", out of the runs you answered; nothing before the first run. */
+function record(rule: AgentRuleDto): string {
+  if (rule.runs === 0) return '';
+  const answered = rule.agreed + rule.disagreed;
+  return answered === 0 ? plural(rule.runs, 'run') : `${plural(rule.runs, 'run')} · ${Math.round(rule.agreed * 100 / answered)}% agree`;
+}
+
+export default function RulesPage({ rules, busy, error, onCheck, onRecord, onSave, onPause, onRemove }: {
   rules: AgentRuleDto[];
   busy: boolean;
   error: string | null;
   /** What a text says as a rule, or a rejection saying why it is not one. */
   onCheck: (text: string) => Promise<AgentRuleDefinitionDto>;
+  onRecord: (id: string) => Promise<AgentRuleRunDto[]>;
   onSave: (text: string, id: string | null) => Promise<void>;
   onPause: (rule: AgentRuleDto) => void;
   onRemove: (rule: AgentRuleDto) => void;
 }) {
   const [editing, setEditing] = useState<AgentRuleDto | 'new' | null>(null);
+  const [runs, setRuns] = useState<AgentRuleRunDto[]>([]);
+  // The record of the rule whose box is open, so a slow read for a box since closed does not fill the next one.
+  const opened = useRef<string | null>(null);
+  const edit = (rule: AgentRuleDto) => {
+    opened.current = rule.id;
+    setRuns([]);
+    setEditing(rule);
+    onRecord(rule.id).then(read => { if (opened.current === rule.id) setRuns(read); }, () => undefined);
+  };
+  const close = () => {
+    opened.current = null;
+    setEditing(null);
+  };
 
   return (
     <div className="setw-page">
@@ -84,13 +114,17 @@ export default function RulesPage({ rules, busy, error, onCheck, onSave, onPause
 
       <SettingsCard footer={<AddAction label="Paste a rule" onClick={() => setEditing('new')} />}>
         {rules.map(rule => (
-          <SettingsRow key={rule.id} title={rule.rule.name} subtitle={`${RULE_EVENTS[rule.rule.event]} · ${rule.paused ? 'Paused' : MODES[rule.mode]}`}>
+          <SettingsRow
+            key={rule.id}
+            title={rule.rule.name}
+            subtitle={[RULE_EVENTS[rule.rule.event], record(rule), rule.paused ? 'Paused' : MODES[rule.mode]].filter(part => part !== '').join(' · ')}
+          >
             <button
               type="button"
               className="setw-btn is-quiet"
               aria-label={`Edit ${rule.rule.name}`}
               disabled={busy}
-              onClick={() => setEditing(rule)}
+              onClick={() => edit(rule)}
             >
               <Pencil size={12} strokeWidth={2} />
               <span>Edit</span>
@@ -105,18 +139,20 @@ export default function RulesPage({ rules, busy, error, onCheck, onSave, onPause
       {editing !== null && (
         <RuleDialog
           rule={editing === 'new' ? null : editing}
+          runs={editing === 'new' ? [] : runs}
           onCheck={onCheck}
-          onCancel={() => setEditing(null)}
-          onSave={async text => { await onSave(text, editing === 'new' ? null : editing.id); setEditing(null); }}
-          onRemove={editing === 'new' ? undefined : () => { setEditing(null); onRemove(editing); }}
+          onCancel={close}
+          onSave={async text => { await onSave(text, editing === 'new' ? null : editing.id); close(); }}
+          onRemove={editing === 'new' ? undefined : () => { close(); onRemove(editing); }}
         />
       )}
     </div>
   );
 }
 
-function RuleDialog({ rule, onCheck, onSave, onCancel, onRemove }: {
+function RuleDialog({ rule, runs, onCheck, onSave, onCancel, onRemove }: {
   rule: AgentRuleDto | null;
+  runs: AgentRuleRunDto[];
   onCheck: (text: string) => Promise<AgentRuleDefinitionDto>;
   onSave: (text: string) => Promise<void>;
   onCancel: () => void;
@@ -170,6 +206,24 @@ function RuleDialog({ rule, onCheck, onSave, onCancel, onRemove }: {
           <div>When: {RULE_EVENTS[checked.event]}{filters(checked) === '' ? '' : ` · ${filters(checked)}`}</div>
           <div>Does: {RULE_ACTIONS[checked.action]}</div>
           <div>Agrees when {RULE_AGREEMENTS[checked.agreement]} within {checked.withinDays} days</div>
+        </div>
+      )}
+      {rule !== null && runs.length > 0 && (
+        <div className="setw-rule-record" aria-label="Record">
+          <div className="setw-rule-record-title">Record since {shortDate(rule.recordSince)}</div>
+          {runs.map(run => {
+            const verdict = VERDICTS[run.verdict];
+            return (
+              <div key={`${run.subject} ${run.occurredAt}`} className="setw-rule-run">
+                <span className={`setw-rule-run-verdict is-${run.verdict.toLowerCase()}`} role="img" aria-label={verdict.label} title={verdict.label}>
+                  <verdict.icon size={12} strokeWidth={2} />
+                </span>
+                <span className="setw-rule-run-subject">{run.subject}</span>
+                <span className="setw-rule-run-title">{run.title}</span>
+                <span className="setw-rule-run-date">{shortDate(run.occurredAt)}</span>
+              </div>
+            );
+          })}
         </div>
       )}
       <div className="setw-dialog-hint">

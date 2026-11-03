@@ -433,6 +433,7 @@ export default function SettingsWindow({ section, workspace, onWorkspacesChanged
               busy={rulesBusy}
               error={error}
               onCheck={text => window.bridge.checkAgentRule(text)}
+              onRecord={id => window.bridge.getAgentRuleRuns(id)}
               onSave={(text, id) => {
                 setRulesBusy(true);
                 const saved = id === null ? window.bridge.addAgentRule(text) : window.bridge.updateAgentRule(id, text);

@@ -28,6 +28,7 @@ import type {
   AgentQueuedInputDto,
   AgentRuleDefinitionDto,
   AgentRuleDto,
+  AgentRuleRunDto,
   AgentSkillDto,
   AgentSkillInput,
   AgentTaskActivityDto,
@@ -641,6 +642,7 @@ const RULE_EVENTS = ['REVIEW_REQUESTED', 'PULL_REQUEST_UPDATED', 'ISSUE_ASSIGNED
 const RULE_ACTIONS = ['REVIEW', 'TASK', 'REBASE', 'BACKPORT'] as const;
 const RULE_AGREEMENTS = ['REVIEWED', 'STARTED_TASK', 'UPDATED_BRANCH', 'OPENED_BACKPORT'] as const;
 const RULE_MODES = ['OBSERVE', 'SUGGEST', 'AUTO'] as const;
+const RULE_VERDICTS = ['PENDING', 'AGREED', 'DISAGREED'] as const;
 
 export function parseAgentRuleDefinition(value: unknown, path = 'agentRule'): AgentRuleDefinitionDto {
   const source = object(value, path);
@@ -670,6 +672,22 @@ export function parseAgentRules(value: unknown): AgentRuleDto[] {
       paused: flag(source.paused, `${path}.paused`),
       recordSince: text(source.recordSince, `${path}.recordSince`),
       rule: parseAgentRuleDefinition(source.rule, `${path}.rule`),
+      runs: count(source.runs, `${path}.runs`),
+      agreed: count(source.agreed, `${path}.agreed`),
+      disagreed: count(source.disagreed, `${path}.disagreed`),
+    };
+  });
+}
+
+export function parseAgentRuleRuns(value: unknown): AgentRuleRunDto[] {
+  return list(value, 'agentRuleRuns').map((entry, index) => {
+    const path = `agentRuleRuns[${index}]`;
+    const source = object(entry, path);
+    return {
+      subject: text(source.subject, `${path}.subject`),
+      title: text(source.title, `${path}.title`),
+      occurredAt: text(source.occurredAt, `${path}.occurredAt`),
+      verdict: enumText(source.verdict, RULE_VERDICTS, `${path}.verdict`),
     };
   });
 }

@@ -15,6 +15,8 @@ package com.bytequay.app.web;
 
 import com.bytequay.app.service.InMemoryAppSettingsStore;
 import com.bytequay.app.service.rules.AgentRuleService;
+import com.bytequay.app.service.rules.InMemoryRuleRunStore;
+import com.bytequay.core.domain.RuleRun;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableMap;
 import org.junit.jupiter.api.Test;
@@ -48,7 +50,8 @@ class TestAgentRulesController
             """;
 
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
-    private final AgentRuleService service = new AgentRuleService(new InMemoryAppSettingsStore(), mapper,
+    private final InMemoryRuleRunStore runs = new InMemoryRuleRunStore();
+    private final AgentRuleService service = new AgentRuleService(new InMemoryAppSettingsStore(), runs, mapper,
             Clock.fixed(Instant.parse("2026-11-03T08:00:00Z"), ZoneOffset.UTC));
     private final MockMvc mvc = standaloneSetup(new AgentRulesController(service))
             .setMessageConverters(new MappingJackson2HttpMessageConverter(mapper))
@@ -73,8 +76,16 @@ class TestAgentRulesController
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].mode").value("OBSERVE"))
                 .andExpect(jsonPath("$[0].paused").value(false))
-                .andExpect(jsonPath("$[0].rule.name").value("Review PRs that need me"));
+                .andExpect(jsonPath("$[0].rule.name").value("Review PRs that need me"))
+                .andExpect(jsonPath("$[0].runs").value(0));
         String id = service.list().getFirst().id();
+        runs.save(new RuleRun(id, "pr:7:requested:1", "acme/warehouse#7", "Fix the flaky test", Instant.parse("2026-11-03T09:00:00Z"), RuleRun.Verdict.AGREED));
+        mvc.perform(get("/api/settings/agent-rules")).andExpect(jsonPath("$[0].runs").value(1)).andExpect(jsonPath("$[0].agreed").value(1));
+        mvc.perform(get("/api/settings/agent-rules/" + id + "/runs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].subject").value("acme/warehouse#7"))
+                .andExpect(jsonPath("$[0].verdict").value("AGREED"));
+        mvc.perform(get("/api/settings/agent-rules/missing/runs")).andExpect(status().isBadRequest());
 
         mvc.perform(put("/api/settings/agent-rules/" + id + "/paused").contentType(MediaType.APPLICATION_JSON).content("{\"paused\":true}"))
                 .andExpect(status().isOk())

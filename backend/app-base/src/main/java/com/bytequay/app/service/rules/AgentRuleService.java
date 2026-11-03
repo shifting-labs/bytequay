@@ -13,7 +13,9 @@
  */
 package com.bytequay.app.service.rules;
 
+import com.bytequay.core.domain.RuleRun;
 import com.bytequay.core.store.AppSettingsStore;
+import com.bytequay.core.store.RuleRunStore;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -29,7 +31,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.util.Objects.requireNonNull;
 
-/** The user's rules, kept like skills as one app setting. */
+/** The user's rules, kept like skills as one app setting, and their records. */
 @Service
 public class AgentRuleService
 {
@@ -38,19 +40,27 @@ public class AgentRuleService
     private static final int MAXIMUM_RULES = 50;
 
     private final AppSettingsStore store;
+    private final RuleRunStore runs;
     private final ObjectMapper mapper;
     private final Clock clock;
 
-    public AgentRuleService(AppSettingsStore store, ObjectMapper mapper, Clock clock)
+    public AgentRuleService(AppSettingsStore store, RuleRunStore runs, ObjectMapper mapper, Clock clock)
     {
         this.store = requireNonNull(store, "store is null");
+        this.runs = requireNonNull(runs, "runs is null");
         this.mapper = requireNonNull(mapper, "mapper is null");
         this.clock = requireNonNull(clock, "clock is null");
     }
 
     public synchronized List<AgentRuleView> list()
     {
-        return saved().stream().map(AgentRuleView::of).collect(toImmutableList());
+        return views(saved());
+    }
+
+    /** The rule's runs since its record began, newest first; runs from before a header change judged a different rule. */
+    public synchronized List<RuleRun> record(String id)
+    {
+        return record(saved().stream().filter(rule -> rule.id().equals(id)).findFirst().orElseThrow(() -> new IllegalArgumentException("Unknown rule: " + id)));
     }
 
     /** What the text says, or why it cannot be a rule, without saving it. */
@@ -110,7 +120,17 @@ public class AgentRuleService
         catch (JsonProcessingException failure) {
             throw new IllegalStateException("Rules could not be encoded", failure);
         }
-        return rules.stream().map(AgentRuleView::of).collect(toImmutableList());
+        return views(rules);
+    }
+
+    private List<AgentRuleView> views(List<AgentRule> rules)
+    {
+        return rules.stream().map(rule -> AgentRuleView.of(rule, record(rule))).collect(toImmutableList());
+    }
+
+    private List<RuleRun> record(AgentRule rule)
+    {
+        return runs.findByRule(rule.id()).stream().filter(run -> !run.occurredAt().isBefore(rule.recordSince())).collect(toImmutableList());
     }
 
     private List<AgentRule> decode(String json)

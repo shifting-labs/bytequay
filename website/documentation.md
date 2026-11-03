@@ -539,6 +539,26 @@ Each backport PR uses the destination repository’s template and title conventi
 from recently merged PRs. Without a clear convention, its title is
 **Backport: _source PR title_**.
 
+<a id="rules"></a>
+
+## Let rules watch your work
+
+A rule names something that happens, such as a review requested from you, and
+the work ByteQuay could do then. A new rule only watches: it records what it
+would have done, and whether you then did that work yourself.
+
+1. In **Settings → Rules**, choose **Paste a rule**.
+2. Between two `---` lines, name the event (`when`), the work (`does`), and
+   what you do when you agree (`agrees-when`). Write the instructions below
+   them. The box shows an example.
+3. Choose **Check rule** to see what it reads, then **Save rule**. It starts in
+   **Observe**.
+
+A rule’s row shows its record, such as **12 runs · 83% agree**, and **Edit**
+lists each run. A run agrees when you review the pull request, start a task,
+update the branch, or open the backport in time. Records keep 30 days, and
+changing the header starts a new one. The switch pauses a rule.
+
 <a id="issues-and-jira"></a>
 
 ## Start from a work item

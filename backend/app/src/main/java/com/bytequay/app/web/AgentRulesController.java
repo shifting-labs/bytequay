@@ -16,6 +16,7 @@ package com.bytequay.app.web;
 import com.bytequay.app.service.rules.AgentRuleService;
 import com.bytequay.app.service.rules.AgentRuleView;
 import com.bytequay.app.service.rules.RuleDefinition;
+import com.bytequay.core.domain.RuleRun;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -45,6 +46,12 @@ public class AgentRulesController
     public List<AgentRuleView> list()
     {
         return rules.list();
+    }
+
+    @GetMapping("/{id}/runs")
+    public List<RuleRun> record(@PathVariable String id)
+    {
+        return rules.record(id);
     }
 
     @PostMapping
