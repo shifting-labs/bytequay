@@ -43,6 +43,7 @@ import { codeHostKey } from '../pulls/code-tests/contracts';
 import { pollVisible } from './pollVisible';
 import { idleState } from './idleState';
 import { reloadOpenFiles } from './semanticQueries';
+import { workingCopyBehindNotice } from '../pulls/agent-review/model';
 import '../css/base.css';
 import '../scrollbarFade';
 import '../css/markdown-editor.css';
@@ -218,6 +219,11 @@ function Workbench({ runtime, context, connection }: { runtime: IdeRuntime; cont
   useEffect(() => {
     if (files) void reloadOpenFiles(runtime.workspace).catch(cause => setError(String(cause)));
   }, [runtime, files?.revision, files?.sourceFingerprint]); // eslint-disable-line react-hooks/exhaustive-deps
+  const behindNotice = files === null ? null : workingCopyBehindNotice(files.revision, files.targetRevision, context.review);
+  // A push moves the review's target before its working copy catches up; no task event says so, so read the review's sync reason again.
+  useEffect(() => {
+    if (behindNotice !== null && context.review !== null) void request('review.changed', context.review).catch(() => {});
+  }, [behindNotice !== null, files?.revision, files?.targetRevision]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selected = active?.document.uri.scheme === 'vscode-remote' && active.document.uri.path.startsWith(connection.root + '/')
     ? active.document.uri.path.slice(connection.root.length + 1) : null;
@@ -295,6 +301,7 @@ function Workbench({ runtime, context, connection }: { runtime: IdeRuntime; cont
         localStorage.setItem('bytequay.ide.theme', value); setTheme(value);
       }}><option>Follow app</option><option value="ByteQuay IDEA Light">ByteQuay Light</option><option>ByteQuay Darcula</option><option>GitHub Light</option><option>GitHub Dark</option></select>
     </header>
+    {behindNotice !== null && <div className="ide-notice" role="status">{behindNotice}</div>}
     {executionError && <div className="ide-notice" role="alert">{executionError}</div>}
     {execution?.treeUnverified && <div className="ide-notice" role="status">Execution finished; verifying process cleanup.
       <button onClick={() => { void runtime.executions.stop(true).catch(cause => setError(String(cause))); }}>Stop code tools to finish cleanup</button>

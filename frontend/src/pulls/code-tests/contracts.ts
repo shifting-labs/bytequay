@@ -52,6 +52,8 @@ export type ReviewCodeFilesDto = {
   truncated: boolean;
   /** Hash of HEAD plus uncommitted and working-copy-only content; null for a reviewed revision. */
   sourceFingerprint: string | null;
+  /** The latest pull-request head a review's working copy catches up to; null for a task or a reviewed revision. */
+  targetRevision: string | null;
   /** A failed Update review left the review's experiments in a stash that Discard would also drop. */
   savedExperiment: boolean;
   files: ReviewCodeFileEntryDto[];
@@ -96,6 +98,7 @@ export function parseReviewCodeFiles(value: unknown): ReviewCodeFilesDto {
     revision: text(source.revision, 'file list revision'),
     truncated: source.truncated === true,
     sourceFingerprint: optionalText(source.sourceFingerprint),
+    targetRevision: optionalText(source.targetRevision),
     savedExperiment: source.savedExperiment === true,
     files: source.files.map(item => {
       const entry = object(item, 'file entry');

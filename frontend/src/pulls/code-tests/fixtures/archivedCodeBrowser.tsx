@@ -76,7 +76,7 @@ export async function runArchivedCodeScenarios(): Promise<{ name: string; error?
     const bridge: CodeTestsBridge = {
       ...originalBridge,
       listCodeFiles: async (): Promise<ReviewCodeFilesDto> => ({ source: 'WORKING_COPY', revision: head, sourceFingerprint: uncommitted ? 'edited' : 'clean',
-        truncated: false, savedExperiment: false, files: [{ path: 'notes.txt', changedInPr: true, addedInPr: false, onlyInWorkingCopy: false, uncommitted }] }),
+        truncated: false, targetRevision: null, savedExperiment: false, files: [{ path: 'notes.txt', changedInPr: true, addedInPr: false, onlyInWorkingCopy: false, uncommitted }] }),
       listCodeRuns: async () => [],
       readCodeFile: async () => ({ path: 'notes.txt', content: text, contentHash: 'hash', editable: false, readOnlyReason: null, unavailableReason: null,
         prPatch: '@@ -1,8 +1,8 @@\n' + text.split('\n').slice(0, 8).map(line => ' ' + line).join('\n'), lineChanges: [] }),

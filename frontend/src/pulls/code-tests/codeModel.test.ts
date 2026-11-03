@@ -98,6 +98,8 @@ describe('review code contracts', () => {
       truncated: false,
       files: [{ path: 'A.java', changedInPr: true, addedInPr: false, onlyInWorkingCopy: false, uncommitted: false }],
     }).files).toEqual([{ path: 'A.java', changedInPr: true, addedInPr: false, onlyInWorkingCopy: false, uncommitted: false }]);
+    expect(parseReviewCodeFiles({ source: 'WORKING_COPY', revision: 'abc', targetRevision: 'def', files: [] }).targetRevision).toBe('def');
+    expect(parseReviewCodeFiles({ source: 'WORKING_COPY', revision: 'abc', files: [] }).targetRevision).toBeNull();
     expect(() => parseReviewCodeFiles({ source: 'DISK', revision: 'abc', files: [] })).toThrow('Malformed file list source');
   });
 

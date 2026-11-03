@@ -79,6 +79,7 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -87,6 +88,7 @@ import static com.bytequay.app.git.GitTestSupport.configureUser;
 import static com.bytequay.app.git.GitTestSupport.git;
 import static com.bytequay.app.git.GitTestSupport.write;
 import static com.bytequay.app.review.ReviewTestData.pullRequestReview;
+import static com.bytequay.app.review.ReviewTestData.withSource;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -902,6 +904,21 @@ class TestReviewCodeService
         when(store.findReview(REVIEW_ID)).thenReturn(Optional.of(review(AgentReview.State.CLOSED)));
         assertThatThrownBy(() -> service.terminal(service.reviewHost(REVIEW_ID))).isInstanceOf(ReviewConflictException.class).hasMessage("The review has ended");
         assertThatThrownBy(() -> service.terminal(service.reviewHost("missing"))).isInstanceOf(ReviewNotFoundException.class);
+    }
+
+    @Test
+    void namesThePullRequestHeadOnlyAPullRequestReviewCatchesUpTo()
+    {
+        String pushed = "89abcdef0123456789abcdef0123456789abcdef";
+        AgentReview review = review(AgentReview.State.OPEN).withObservedHead(pushed, NOW);
+        when(store.findReview(REVIEW_ID)).thenReturn(Optional.of(review));
+        CodeFiles files = service.files(service.reviewHost(REVIEW_ID));
+        assertThat(files.revision()).isNotEqualTo(pushed);
+        assertThat(files.targetRevision()).contains(pushed);
+
+        when(store.findReview(REVIEW_ID)).thenReturn(Optional.of(withSource(review, OptionalInt.of(7), OptionalLong.empty(), Optional.of("developer-task"), Optional.empty())));
+        assertThat(service.files(service.reviewHost(REVIEW_ID)).targetRevision()).isEmpty();
+        assertThat(service.files(taskHost()).targetRevision()).isEmpty();
     }
 
     @Test

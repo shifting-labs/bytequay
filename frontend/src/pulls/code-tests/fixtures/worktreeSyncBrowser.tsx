@@ -162,7 +162,7 @@ export async function runExploration(): Promise<string> {
   const unused = async (): Promise<never> => { throw new Error('Unexpected bridge call'); };
   const bridge: CodeTestsBridge = {
     listCodeFiles: async () => ({ source: 'WORKING_COPY', revision: 'a'.repeat(40), sourceFingerprint: 'fingerprint', truncated: false,
-      savedExperiment: false, files: [] }),
+      targetRevision: null, savedExperiment: false, files: [] }),
     readCodeFile: unused, listCodeRuns: unused, stopCodeRun: unused, readCodeRunOutput: unused,
     openCodeTerminal: unused, writeReviewTerminal: unused, resizeReviewTerminal: unused, onReviewTerminalEvent: () => () => {},
     listAgentReviews: async () => [], getAgentReview: unused, subscribeAgentReview: unused, getAgentTask: unused,
@@ -218,7 +218,7 @@ export async function run(): Promise<string> {
   const unused = async (): Promise<never> => { throw new Error('Unexpected bridge call'); };
   const bridge: CodeTestsBridge = {
     listCodeFiles: async () => ({ source: 'WORKING_COPY', revision: initial.worktreeSync?.headSha ?? '', sourceFingerprint: 'fingerprint', truncated: false,
-      savedExperiment: false, files: [] }),
+      targetRevision: null, savedExperiment: false, files: [] }),
     readCodeFile: unused, listCodeRuns: unused, stopCodeRun: unused,
     readCodeRunOutput: unused,
     openCodeTerminal: unused, writeReviewTerminal: unused, resizeReviewTerminal: unused, onReviewTerminalEvent: () => () => {},

@@ -69,14 +69,14 @@ class TestTaskCodeController
     void readsTheTaskWorkingCopyWithTheReviewRouteShapes()
             throws Exception
     {
-        when(code.files(HOST)).thenReturn(new CodeFiles(CodeSource.WORKING_COPY, HEAD, Optional.of("fingerprint"), false, false, ImmutableList.of(
+        when(code.files(HOST)).thenReturn(new CodeFiles(CodeSource.WORKING_COPY, HEAD, Optional.of("fingerprint"), Optional.empty(), false, false, ImmutableList.of(
                 new CodeFileEntry("src/main/java/Code.java", true, false, false, true))));
         when(code.terminal(HOST)).thenReturn(new TerminalLaunch(Path.of("/managed/worktrees/task-1"), Optional.of(Path.of("/profiles/work"))));
 
         mvc.perform(withWorkspace(get(BASE + "/files")))
                 .andExpect(status().isOk())
                 .andExpect(content().json("""
-                        {"source": "WORKING_COPY", "revision": "%s", "sourceFingerprint": "fingerprint", "savedExperiment": false, "truncated": false,
+                        {"source": "WORKING_COPY", "revision": "%s", "sourceFingerprint": "fingerprint", "targetRevision": null, "savedExperiment": false, "truncated": false,
                          "files": [{"path": "src/main/java/Code.java", "changedInPr": true, "addedInPr": false, "onlyInWorkingCopy": false, "uncommitted": true}]}
                         """.formatted(HEAD), JsonCompareMode.STRICT));
         mvc.perform(withWorkspace(post(BASE + "/terminal")))

@@ -41,6 +41,7 @@ import {
   reviewStatus,
   shortPath,
   shortSha,
+  workingCopyBehindNotice,
 } from './model';
 import { reviewDraftFixture, candidateFixture, explanationRunFixture, reviewFixture, runningReviewFixture } from './fixtures/review';
 import { parseAgentReview } from './contracts';
@@ -86,6 +87,18 @@ function draftItem(overrides: Partial<ReviewDraftDto['items'][number]> = {}): Re
     ...overrides,
   };
 }
+
+it('tells Tears of time why its working copy is behind the pull request, and nothing once it caught up', () => {
+  const at = 'a'.repeat(40);
+  const pushed = 'b'.repeat(40);
+  const sync = (state: 'CURRENT' | 'BLOCKED', dirty = false) => ({ state, headSha: at, targetHeadSha: pushed, dirty, reason: null });
+  expect(workingCopyBehindNotice(at, null, reviewFixture())).toBeNull();
+  expect(workingCopyBehindNotice(pushed, pushed, reviewFixture())).toBeNull();
+  // A review read before the push still reports CURRENT; the file list's target is the newer fact.
+  expect(workingCopyBehindNotice(at, pushed, reviewFixture({ worktreeSync: sync('CURRENT') }))).toBe('Working copy is at aaaaaaa, behind the PR at bbbbbbb. Catching up.');
+  expect(workingCopyBehindNotice(at, pushed, reviewFixture({ worktreeSync: sync('BLOCKED', true) })))
+    .toMatch(/^Working copy is stale · Saved local changes are preserved; this branch is out of date\./);
+});
 
 describe('review status', () => {
   it('reads Finished with its coverage and scope from an accepted run', () => {

@@ -166,6 +166,13 @@ export function reviewWorktreeNotice(review: AgentReviewDto): { label: string; m
   return { label: 'Working copy sync unavailable', message: `${sync.reason ?? 'The working copy could not be synced.'} Use Update review to retry.` };
 }
 
+/** What Tears of time says while its working copy is not at the pull request's latest head; the review's own sync view gives the reason once read. */
+export function workingCopyBehindNotice(revision: string, target: string | null, review: AgentReviewDto | null): string | null {
+  if (target === null || target === revision) return null;
+  const sync = review !== null && review.worktreeSync?.state !== 'CURRENT' ? reviewWorktreeNotice(review) : null;
+  return sync !== null ? `${sync.label} · ${sync.message}` : `Working copy is at ${shortSha(revision)}, behind the PR at ${shortSha(target)}. Catching up.`;
+}
+
 export function reviewStatus(review: AgentReviewDto): ReviewStatusView {
   const run = latestRun(review);
   const findings = openFindings(review);

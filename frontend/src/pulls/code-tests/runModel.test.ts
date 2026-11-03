@@ -27,7 +27,7 @@ function run(overrides: Partial<LocalRunDto> = {}): LocalRunDto {
   };
 }
 
-const files: ReviewCodeFilesDto = { source: 'WORKING_COPY', revision: 'abc', truncated: false, sourceFingerprint: 'f1', savedExperiment: false, files: [] };
+const files: ReviewCodeFilesDto = { source: 'WORKING_COPY', revision: 'abc', truncated: false, sourceFingerprint: 'f1', targetRevision: null, savedExperiment: false, files: [] };
 
 describe('result tree', () => {
   it('keeps only failed and errored methods, and only the classes that have them, when asked', () => {

@@ -65,7 +65,7 @@ export async function run(keepMounted = false, showChanges = false, zoomChanges 
     },
     listCodeFiles: async () => {
       return { source: 'WORKING_COPY' as const, revision: 'commit123', truncated: false,
-        sourceFingerprint: 'working-copy', savedExperiment: false,
+        sourceFingerprint: 'working-copy', targetRevision: null, savedExperiment: false,
         files: [{ path: 'notes.txt', changedInPr: true, addedInPr: false, onlyInWorkingCopy: false, uncommitted: true }] };
     },
     readCodeFile: async () => ({ path: 'notes.txt', content: 'local\n', contentHash: 'hash', editable: true,

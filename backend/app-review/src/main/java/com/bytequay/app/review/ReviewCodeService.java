@@ -133,7 +133,13 @@ public class ReviewCodeService
 
     public CodeFiles files(TaskCodeHost host)
     {
-        return files(source(host));
+        return files(source(host), host.reviewId().flatMap(this::targetRevision));
+    }
+
+    /** The pull-request head a review's working copy catches up to; a development review and a replay stay where they are. */
+    private Optional<String> targetRevision(String reviewId)
+    {
+        return store.findReview(reviewId).filter(review -> review.sourceTaskId().isEmpty() && review.replay().isEmpty()).flatMap(AgentReview::observedHeadSha);
     }
 
     /** Resolves a writable IDE workspace without claiming it or changing an agent's execution state. */
@@ -156,7 +162,7 @@ public class ReviewCodeService
         return task.taskWorktree().orElseThrow();
     }
 
-    private CodeFiles files(Source source)
+    private CodeFiles files(Source source, Optional<String> targetRevision)
     {
         Set<String> changed = source.diff().get().stream().map(DiffFile::filename).collect(toImmutableSet());
         // GitHub's pull-request file status vocabulary.
@@ -168,7 +174,7 @@ public class ReviewCodeService
             List<CodeFileEntry> files = ImmutableSortedSet.copyOf(entries(listed.output(), listed.truncated())).stream()
                     .map(path -> new CodeFileEntry(path, changed.contains(path), added.contains(path), false, false))
                     .collect(toImmutableList());
-            return new CodeFiles(CodeSource.REVISION, revision, Optional.empty(), false, listed.truncated(), files);
+            return new CodeFiles(CodeSource.REVISION, revision, Optional.empty(), Optional.empty(), false, listed.truncated(), files);
         }
         Path checkout = source.checkout().orElseThrow();
         String head = source.headSha().get();
@@ -189,7 +195,7 @@ public class ReviewCodeService
             boolean notInHead = pathCodes.stream().anyMatch(code -> code.equals("??") || "ARC".indexOf(code.charAt(0)) >= 0);
             files.add(new CodeFileEntry(path, changed.contains(path), added.contains(path), notInHead, !pathCodes.isEmpty()));
         }
-        CodeFiles result = new CodeFiles(CodeSource.WORKING_COPY, head, Optional.of(fingerprint(checkout, head, codes.keySet())),
+        CodeFiles result = new CodeFiles(CodeSource.WORKING_COPY, head, Optional.of(fingerprint(checkout, head, codes.keySet())), targetRevision,
                 experiments.hasSavedExperiment(source.task().taskWorktree().orElseThrow()), listed.truncated() || status.truncated(), files.build());
         requireUnchangedHead(source);
         return result;
@@ -1027,15 +1033,18 @@ public class ReviewCodeService
      * A listing of the working copy or of the reviewed revision.
      *
      * @param sourceFingerprint the working copy's {@link #fingerprint}; empty for a revision
+     * @param targetRevision the latest pull-request head a review's working copy catches up to; empty for a revision or a task
      * @param savedExperiment a failed Update left this review's experiments stashed, which Discard also drops
      */
-    public record CodeFiles(CodeSource source, String revision, Optional<String> sourceFingerprint, boolean savedExperiment, boolean truncated, List<CodeFileEntry> files)
+    public record CodeFiles(CodeSource source, String revision, Optional<String> sourceFingerprint, Optional<String> targetRevision, boolean savedExperiment, boolean truncated,
+            List<CodeFileEntry> files)
     {
         public CodeFiles
         {
             requireNonNull(source, "source is null");
             requireNonNull(revision, "revision is null");
             requireNonNull(sourceFingerprint, "sourceFingerprint is null");
+            requireNonNull(targetRevision, "targetRevision is null");
             files = ImmutableList.copyOf(files);
         }
     }

@@ -135,7 +135,7 @@ export async function verifySearch() {
     return result;
   } });
   const root = createRoot(shell);
-  flushSync(() => root.render(<Search editors={codeEditors} workspace={workspace} files={{ source: 'WORKING_COPY', revision: 'fixture', truncated: false, sourceFingerprint: null, savedExperiment: false,
+  flushSync(() => root.render(<Search editors={codeEditors} workspace={workspace} files={{ source: 'WORKING_COPY', revision: 'fixture', truncated: false, sourceFingerprint: null, targetRevision: null, savedExperiment: false,
     files: [...sources.keys(), 'core/query-engine/pom.xml', 'tools/go.mod', 'rust/Cargo.toml'].map(path => ({ path, changedInPr: false, addedInPr: false, onlyInWorkingCopy: false, uncommitted: false })) }} />));
   const popup = () => host.querySelector<HTMLElement>('.ide-search-popup');
   const rows = () => [...host.querySelectorAll<HTMLButtonElement>('.ide-search-row')];

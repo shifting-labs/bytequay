@@ -79,6 +79,7 @@ public class TaskCodeController
                 .putString(files.source().name(), UTF_8).putByte((byte) 0)
                 .putString(files.revision(), UTF_8).putByte((byte) 0)
                 .putString(files.sourceFingerprint().orElse(""), UTF_8).putByte((byte) 0)
+                .putString(files.targetRevision().orElse(""), UTF_8).putByte((byte) 0)
                 .putBoolean(files.savedExperiment()).putBoolean(files.truncated());
         for (CodeFileEntry file : files.files()) {
             hasher.putString(file.path(), UTF_8).putByte((byte) 0)

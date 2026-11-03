@@ -57,6 +57,7 @@ import static org.springframework.test.web.servlet.setup.MockMvcBuilders.standal
 class TestReviewCodeController
 {
     private static final String HEAD = "0123456789abcdef0123456789abcdef01234567";
+    private static final String NEXT_HEAD = "89abcdef0123456789abcdef0123456789abcdef";
     private static final String FINISHED_RUN_JSON = """
             {"id": "run-2", "ordinal": 2, "initiator": "USER", "scope": "METHOD", "path": "core/src/test/java/demo/TestCode.java",
              "testClass": "demo.TestCode", "testMethod": "fails", "module": "core",
@@ -101,31 +102,38 @@ class TestReviewCodeController
     void listsFilesWithTheWireFieldNames()
             throws Exception
     {
-        when(code.files(host("review-1"))).thenReturn(new CodeFiles(CodeSource.WORKING_COPY, HEAD, Optional.of("fingerprint"), true, true, ImmutableList.of(
-                new CodeFileEntry("src/test/java/TestCode.java", true, true, false, true))));
+        when(code.files(host("review-1"))).thenReturn(new CodeFiles(CodeSource.WORKING_COPY, HEAD, Optional.of("fingerprint"), Optional.of(NEXT_HEAD), true, true,
+                ImmutableList.of(new CodeFileEntry("src/test/java/TestCode.java", true, true, false, true))));
 
         mvc.perform(get("/api/agent-review/review-1/code/files"))
                 .andExpect(status().isOk())
                 .andExpect(content().json("""
-                        {"source": "WORKING_COPY", "revision": "%s", "sourceFingerprint": "fingerprint", "savedExperiment": true, "truncated": true,
+                        {"source": "WORKING_COPY", "revision": "%s", "sourceFingerprint": "fingerprint", "targetRevision": "%s", "savedExperiment": true, "truncated": true,
                          "files": [{"path": "src/test/java/TestCode.java", "changedInPr": true, "addedInPr": true, "onlyInWorkingCopy": false, "uncommitted": true}]}
-                        """.formatted(HEAD), JsonCompareMode.STRICT));
+                        """.formatted(HEAD, NEXT_HEAD), JsonCompareMode.STRICT));
     }
 
     @Test
     void answersAnUnchangedFileListWith304()
             throws Exception
     {
-        when(code.files(host("review-1"))).thenReturn(new CodeFiles(CodeSource.WORKING_COPY, HEAD, Optional.of("fingerprint"), false, false, ImmutableList.of(
-                new CodeFileEntry("src/test/java/TestCode.java", true, false, false, false))));
+        when(code.files(host("review-1"))).thenReturn(new CodeFiles(CodeSource.WORKING_COPY, HEAD, Optional.of("fingerprint"), Optional.of(HEAD), false, false,
+                ImmutableList.of(new CodeFileEntry("src/test/java/TestCode.java", true, false, false, false))));
         String etag = mvc.perform(get("/api/agent-review/review-1/code/files")).andExpect(status().isOk()).andReturn().getResponse().getHeader("ETag");
 
         mvc.perform(get("/api/agent-review/review-1/code/files").header("If-None-Match", etag))
                 .andExpect(status().isNotModified())
                 .andExpect(content().string(""));
 
-        when(code.files(host("review-1"))).thenReturn(new CodeFiles(CodeSource.WORKING_COPY, HEAD, Optional.of("fingerprint"), false, false, ImmutableList.of(
-                new CodeFileEntry("src/test/java/TestCode.java", true, false, false, true))));
+        // A newer pull-request head changes nothing in the working copy until it catches up, but the editor must learn of it.
+        when(code.files(host("review-1"))).thenReturn(new CodeFiles(CodeSource.WORKING_COPY, HEAD, Optional.of("fingerprint"), Optional.of(NEXT_HEAD), false, false,
+                ImmutableList.of(new CodeFileEntry("src/test/java/TestCode.java", true, false, false, false))));
+        mvc.perform(get("/api/agent-review/review-1/code/files").header("If-None-Match", etag))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.targetRevision").value(NEXT_HEAD));
+
+        when(code.files(host("review-1"))).thenReturn(new CodeFiles(CodeSource.WORKING_COPY, HEAD, Optional.of("fingerprint"), Optional.of(HEAD), false, false,
+                ImmutableList.of(new CodeFileEntry("src/test/java/TestCode.java", true, false, false, true))));
         mvc.perform(get("/api/agent-review/review-1/code/files").header("If-None-Match", etag))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.files[0].uncommitted").value(true));

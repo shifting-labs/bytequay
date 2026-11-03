@@ -31,7 +31,7 @@ export async function verifyFileExplorer() {
   const deepPath = `nested/${Array.from({ length: 16 }, (_, index) => `level${index + 1}`).join('/')}/Current.xml`;
   const paths = [currentPath, longPath, deepPath, 'changed.txt',
     ...Array.from({ length: 35 }, (_, index) => `${packagePath}/Entry${index + 1}.xml`)];
-  let files: ReviewCodeFilesDto | null = { source: 'WORKING_COPY', revision: 'head', sourceFingerprint: 'files', savedExperiment: false, truncated: false,
+  let files: ReviewCodeFilesDto | null = { source: 'WORKING_COPY', revision: 'head', sourceFingerprint: 'files', targetRevision: null, savedExperiment: false, truncated: false,
     files: paths.map(path => ({ path, changedInPr: path === 'changed.txt', addedInPr: false, onlyInWorkingCopy: false, uncommitted: false })) };
   let selected: string | null = currentPath;
   const opened: string[] = [];

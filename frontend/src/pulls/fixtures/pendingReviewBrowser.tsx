@@ -89,7 +89,7 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
     listWorkspaces: async () => [],
     listLocalReviewComments: async () => [],
     listCodeFiles: async () => ({ source: 'WORKING_COPY', revision: 'one', truncated: false,
-      sourceFingerprint: null, savedExperiment: false, files: [] }),
+      sourceFingerprint: null, targetRevision: null, savedExperiment: false, files: [] }),
     listCodeRuns: async () => [],
     listAgentReviews: async () => [review],
     subscribeAgentReview: async () => () => {},
