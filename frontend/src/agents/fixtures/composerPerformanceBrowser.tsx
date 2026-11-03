@@ -63,7 +63,7 @@ async function exercise(surface: 'task' | 'review', verifyCaching: boolean) {
   const initial: AgentTaskState = { ...initialAgentTaskState(), task: { ...previewTask('workspace-1', TASK_ID), mutationClaim: null },
     turn: turns['history-99'], turns, events, lastSequence: 1000, latestTurnId: 'history-99', connection: 'open',
     capabilities: { ...NO_AGENT_CAPABILITIES, nestedAgentActivity: true },
-    historyPages: [{ events, beforeCursor: null, afterCursor: null, latestSequence: 1000 }] };
+    historyPages: [{ events, firstSequence: events[0]?.sequence ?? null, lastSequence: events.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null, latestSequence: 1000 }] };
   const reviewBase = reviewFixture({ runs: [], messages: [], byteQuayTurnIds: [] });
   const review = { ...reviewBase, task: { ...reviewBase.task, id: TASK_ID, nestedAgents: true } };
   const { host, root, dispose } = createFixtureRoot();
@@ -129,7 +129,7 @@ async function exercise(surface: 'task' | 'review', verifyCaching: boolean) {
     flushSync(() => {
       update({ events: updatedEvents, turns: { ...turns, latest }, turn: latest, pendingMessage: null, sending: false,
         latestTurnId: 'latest', lastSequence: 1002,
-        historyPages: [{ events: updatedEvents, beforeCursor: null, afterCursor: null, latestSequence: 1002 }] });
+        historyPages: [{ events: updatedEvents, firstSequence: updatedEvents[0]?.sequence ?? null, lastSequence: updatedEvents.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null, latestSequence: 1002 }] });
       approve([approval]);
     });
     await settle();
@@ -177,7 +177,7 @@ export async function sendProgress(): Promise<string> {
   bridge.readAgentPendingApprovals = async () => [];
   bridge.readAgentHistory = async () => {
     historyReads++;
-    return { events, beforeCursor: null, afterCursor: null, latestSequence: events.at(-1)?.sequence ?? 0 };
+    return { events, firstSequence: events[0]?.sequence ?? null, lastSequence: events.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null, latestSequence: events.at(-1)?.sequence ?? 0 };
   };
   bridge.subscribeAgentTask = async (taskId, _after, listener) => {
     notify = listener;
@@ -244,7 +244,7 @@ export async function sendFailures(): Promise<{ name: string; error?: string }[]
     };
     bridge.getAgentTurn = async () => current;
     bridge.readAgentPendingApprovals = async () => [];
-    bridge.readAgentHistory = async () => ({ events, beforeCursor: null, afterCursor: null, latestSequence: events.at(-1)?.sequence ?? 0 });
+    bridge.readAgentHistory = async () => ({ events, firstSequence: events[0]?.sequence ?? null, lastSequence: events.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null, latestSequence: events.at(-1)?.sequence ?? 0 });
     bridge.subscribeAgentTask = async (taskId, _after, listener) => {
       notify = listener;
       listener({ subscriptionId: 'send-failure', taskId, kind: 'state', state: 'open' });
@@ -426,7 +426,7 @@ export async function sendAfterNavigation(): Promise<{ name: string; error?: str
     bridge.getAgentTurn = async () => old;
     bridge.readAgentPendingApprovals = async () => [];
     bridge.readAgentHistory = async () => ({ events: [request(1, old.id, 'Earlier request'), answer(2, old.id, 'Earlier answer')],
-      beforeCursor: null, afterCursor: null, latestSequence: 2 });
+      firstSequence: 1, lastSequence: 2, beforeCursor: null, afterCursor: null, latestSequence: 2 });
     bridge.subscribeAgentTask = async (taskId, _after, listener) => {
       listener({ subscriptionId: 'navigation', taskId, kind: 'state', state: 'open' }); return () => {};
     };

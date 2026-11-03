@@ -69,7 +69,7 @@ it('retains the newest development progress across offscreen history, watermarks
     payload: { phase: 'DEVELOPMENT_AUTOMATION_UPDATED', message: 'Waiting for PR checks: required external build is pending' } };
   let state = agentTaskReducer({ ...initialAgentTaskState(), latestTurnId: 'source-turn' }, { type: 'live/changed', sequence: 100, turnId: 'source-turn' });
   state = agentTaskReducer(state, { type: 'history/loaded', direction: 'latest', page: {
-    events: [progress], beforeCursor: '40', afterCursor: null, latestSequence: 100,
+    events: [progress], firstSequence: 41, lastSequence: 100, beforeCursor: '40', afterCursor: null, latestSequence: 100,
   } });
   expect(state.developmentProgress).toEqual({ sequence: 50, message: progress.payload.message });
   const newest = { ...progress, sequence: 101, payload: { ...progress.payload, message: 'Synchronizing source worktree' } };
@@ -77,7 +77,7 @@ it('retains the newest development progress across offscreen history, watermarks
   expect(state.events).not.toContainEqual(newest);
   expect(state.developmentProgress).toEqual({ sequence: 101, message: 'Synchronizing source worktree' });
   state = agentTaskReducer(state, { type: 'history/loaded', direction: 'older', page: {
-    events: [{ ...progress, sequence: 10 }], beforeCursor: null, afterCursor: '40', latestSequence: 100,
+    events: [{ ...progress, sequence: 10 }], firstSequence: 1, lastSequence: 40, beforeCursor: null, afterCursor: '40', latestSequence: 100,
   } });
   state = agentTaskReducer(state, { type: 'events/observed', events: [progress] });
   expect(state.developmentProgress?.message).toBe('Synchronizing source worktree');
@@ -93,7 +93,7 @@ it('new root turns and released markers prevent historical delivery progress fro
   state = agentTaskReducer(state, { type: 'events/observed', events: [started] });
   expect(state.developmentProgress).toEqual({ sequence: 11, message: '' });
   state = agentTaskReducer(state, { type: 'history/loaded', direction: 'older', page: {
-    events: [progress], beforeCursor: null, afterCursor: '11', latestSequence: 11,
+    events: [progress], firstSequence: 10, lastSequence: 10, beforeCursor: null, afterCursor: '11', latestSequence: 11,
   } });
   expect(state.developmentProgress?.message).toBe('');
   state = agentTaskReducer(state, { type: 'events/observed', events: [{ ...progress, sequence: 12 }] });
@@ -111,7 +111,7 @@ it('retains the stopped automation reason after release and clears it for a new 
   const stopped: AgentEventEnvelope = { ...all[0], type: 'lifecycle', turnId: null, sequence: 20,
     payload: { phase: 'DEVELOPMENT_AUTOMATION_UPDATED', message: 'Automation stopped. Source synchronization failed; your files are retained.' } };
   let state = agentTaskReducer(initialAgentTaskState(), { type: 'history/loaded', direction: 'latest', page: {
-    events: [stopped], beforeCursor: null, afterCursor: null, latestSequence: 20,
+    events: [stopped], firstSequence: 20, lastSequence: 20, beforeCursor: null, afterCursor: null, latestSequence: 20,
   } });
   state = agentTaskReducer(state, { type: 'task/loaded', task: { ...openTask(), developmentContinuationUnfinished: false } });
   expect(state.developmentProgress).toEqual({ sequence: 20, message: stopped.payload.message });
@@ -211,7 +211,7 @@ describe('applying events', () => {
 });
 
 describe('sending a message', () => {
-  const page = (events: AgentEventEnvelope[]): AgentHistoryPageDto => ({ events, beforeCursor: null, afterCursor: null, latestSequence: events.at(-1)?.sequence ?? 0 });
+  const page = (events: AgentEventEnvelope[]): AgentHistoryPageDto => ({ events, firstSequence: events[0]?.sequence ?? null, lastSequence: events.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null, latestSequence: events.at(-1)?.sequence ?? 0 });
 
   it('shows the sent message until a user message after its send point arrives', () => {
     let state = agentTaskReducer(apply(initialAgentTaskState(), stream(1, 2)), { type: 'message/sent', text: 'Next step' });
@@ -774,6 +774,8 @@ describe('bounded history pages', () => {
   function page(start: number, end: number, watermark = 1000): AgentHistoryPageDto {
     return {
       events: Array.from({ length: end - start + 1 }, (_, index) => ({ ...all[0], sequence: start + index, eventId: `event-${start + index}`, turnId: `turn-${start}` })),
+      firstSequence: start,
+      lastSequence: end,
       beforeCursor: start > 1 ? `byte-${start}` : null,
       afterCursor: end < watermark ? `byte-${end + 1}` : null,
       latestSequence: watermark,
@@ -821,6 +823,18 @@ describe('bounded history pages', () => {
       expect(history.earlier.at(-1)?.afterCursor).toBe(history.page.beforeCursor);
     }
     expect(readAgentHistory).toHaveBeenCalledTimes(13);
+  });
+
+  it('joins the recent window by page bounds when a left-out streamed piece was the sequence before it', async () => {
+    const latest = page(2001, 3000, 3000);
+    const readAgentHistory = vi.fn().mockResolvedValueOnce({ ...latest, events: latest.events.filter(event => event.sequence !== 2010) })
+      .mockResolvedValueOnce(page(1001, 2000, 3000)).mockResolvedValueOnce(page(1, 1000, 3000));
+    const previous = await readRecentAgentHistory({ readAgentHistory }, 'task-1');
+    readAgentHistory.mockResolvedValueOnce(page(2011, 3010, 3010));
+    const history = await readRecentAgentHistory({ readAgentHistory }, 'task-1', previous);
+    expect(readAgentHistory).toHaveBeenCalledTimes(4);
+    expect(history.earlier.at(-1)).toMatchObject({ lastSequence: 2010, afterCursor: history.page.beforeCursor });
+    expect(history.earlier.at(-1)?.events.at(-1)?.sequence).toBe(2009);
   });
 
   it('refills missed history after a live update moves beyond the cached window', async () => {

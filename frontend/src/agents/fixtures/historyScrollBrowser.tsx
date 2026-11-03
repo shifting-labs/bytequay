@@ -131,7 +131,8 @@ async function longCommandConversation(): Promise<void> {
   });
   const read = (end: number): AgentHistoryPageDto => {
     const start = Math.max(0, end - 1000);
-    return { events: events.slice(start, end), beforeCursor: start === 0 ? null : String(start), afterCursor: end === events.length ? null : String(end), latestSequence: events.length };
+    const slice = events.slice(start, end);
+    return { events: slice, firstSequence: slice[0]?.sequence ?? null, lastSequence: slice.at(-1)?.sequence ?? null, beforeCursor: start === 0 ? null : String(start), afterCursor: end === events.length ? null : String(end), latestSequence: events.length };
   };
   const turn: AgentTurnDto = {
     id: 'turn', taskId: 'scroll-fixture', state: 'COMPLETED', version: 1, createdAt: '2026-09-08T00:00:00Z',
@@ -228,7 +229,7 @@ const durable = (id: string, state: AgentTurnDto['state']): AgentTurnDto => ({
   settings: null, terminalReason: null, metrics: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, cost: null, elapsed: 'PT10M' },
 });
 
-const latest = (events: AgentEventEnvelope[]): AgentHistoryPageDto => ({ events, beforeCursor: null, afterCursor: null, latestSequence: events.at(-1)?.sequence ?? 0 });
+const latest = (events: AgentEventEnvelope[]): AgentHistoryPageDto => ({ events, firstSequence: events[0]?.sequence ?? null, lastSequence: events.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null, latestSequence: events.at(-1)?.sequence ?? 0 });
 
 const earlierTurn = (): AgentEventEnvelope[] => [request(1, 'earlier', 'Explain the build'),
   ...Array.from({ length: 30 }, (_, index) => message(index + 2, 'earlier', `Earlier commentary ${index}. The build output is being read.`)),
@@ -391,10 +392,11 @@ async function sendsWhileOlderHistoryLoads(): Promise<void> {
   const events = page(1, 5000).map(event => event.sequence % 1000 > 970 || event.sequence % 1000 === 0 ? event : {
     ...event, source: { ...event.source, providerThreadId: 'child-thread', parentProviderThreadId: 'thread', logicalAgentPath: '/child' },
   });
-  const read = (end: number): AgentHistoryPageDto => ({
-    events: events.slice(Math.max(0, end - 1000), end), beforeCursor: end > 1000 ? String(end - 1000) : null,
-    afterCursor: end < events.length ? String(end) : null, latestSequence: events.length,
-  });
+  const read = (end: number): AgentHistoryPageDto => {
+    const slice = events.slice(Math.max(0, end - 1000), end);
+    return { events: slice, firstSequence: slice[0]?.sequence ?? null, lastSequence: slice.at(-1)?.sequence ?? null,
+      beforeCursor: end > 1000 ? String(end - 1000) : null, afterCursor: end < events.length ? String(end) : null, latestSequence: events.length };
+  };
   let reads = 0;
   const replies: { older?: (result: AgentHistoryPageDto) => void; latest?: (result: AgentHistoryPageDto) => void } = {};
   bridge.getAgentTask = async () => task;

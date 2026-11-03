@@ -168,7 +168,7 @@ function Conversation({ workspaceId, artifactId, initial, onBack }: {
             : [...previous.events, ...page.events].slice(-MAX_EVENTS);
           const first = joined[0]?.sequence ?? 1;
           const last = joined.at(-1)?.sequence ?? 0;
-          held.current = { events: joined, latestSequence: page.latestSequence,
+          held.current = { events: joined, firstSequence: joined.length > 0 ? first : null, lastSequence: joined.length > 0 ? last : null, latestSequence: page.latestSequence,
             beforeCursor: first > 1 ? String(first) : null, afterCursor: last < page.latestSequence ? String(last) : null };
           if (page.events.length > 0 || previous === null || direction === 'latest') setEvents(joined);
         }

@@ -33,7 +33,7 @@ function mount() {
     getSetupPreferences: async () => ({ step: 'COMPLETE', assistantEnabled: true }),
     getModelSettings: async () => PREVIEW_CATALOG,
     readAppNotices: async () => ({ notices: [FINISHED], viewedIds: [], popupIds: [], active: false }),
-    readAgentHistory: async () => ({ events: [], beforeCursor: null, afterCursor: null, latestSequence: 0 }),
+    readAgentHistory: async () => ({ events: [], firstSequence: null, lastSequence: null, beforeCursor: null, afterCursor: null, latestSequence: 0 }),
     readAgentPendingApprovals: async () => [],
     onAppNotices: () => () => {},
     getVoiceSettings: async () => ({ enabled: true, spoken: null, written: null }),

@@ -92,7 +92,7 @@ async function scenario(mode: 'idle' | 'queued' | 'unsent' | 'published'): Promi
       commits: [{ sha: '2222222', title: 'Simplify the implementation', summary: 'Validate the optional before returning its value.' }],
       combinedResult: 'Simpler validation.', evidence: 'The offline build was unavailable.', limitations: [] },
   } } : null;
-  bridge.readAgentHistory = async () => ({ events: [...history], beforeCursor: null, afterCursor: null, latestSequence: history.at(-1)?.sequence ?? 0 });
+  bridge.readAgentHistory = async () => ({ events: [...history], firstSequence: history[0]?.sequence ?? null, lastSequence: history.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null, latestSequence: history.at(-1)?.sequence ?? 0 });
   bridge.readAgentPendingApprovals = async () => [];
   bridge.listAgentQueue = async () => [...queue];
   const viewer = mode === 'published' ? 'bob' : 'alice';

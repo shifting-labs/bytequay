@@ -31,7 +31,7 @@ async function keyboardSwitching(): Promise<void> {
   const loading = Promise.withResolvers<AgentTaskDto[]>();
   bridge.listAgentTasks = () => loading.promise;
   bridge.getAgentTask = async id => tasks.find(task => task.id === id) ?? tasks[0];
-  bridge.readAgentHistory = async () => ({ events: [], beforeCursor: null, afterCursor: null, latestSequence: 0 });
+  bridge.readAgentHistory = async () => ({ events: [], firstSequence: null, lastSequence: null, beforeCursor: null, afterCursor: null, latestSequence: 0 });
   const { host, root, dispose } = createFixtureRoot();
   host.style.cssText = 'position:relative;height:700px;width:1000px';
   const trigger = document.createElement('button');
@@ -115,7 +115,7 @@ async function overlappingRefreshes(): Promise<void> {
   let reads = 0;
   bridge.listAgentTasks = async () => ++reads === 1 ? tasks : reads === 2 ? older.promise : [];
   bridge.getAgentTask = async id => tasks.find(task => task.id === id) ?? tasks[0];
-  bridge.readAgentHistory = async () => ({ events: [], beforeCursor: null, afterCursor: null, latestSequence: 0 });
+  bridge.readAgentHistory = async () => ({ events: [], firstSequence: null, lastSequence: null, beforeCursor: null, afterCursor: null, latestSequence: 0 });
   const { host, root, dispose } = createFixtureRoot();
   const close = async (title: string) => {
     host.querySelector<HTMLButtonElement>(`[aria-label="Close task: ${title}"]`)?.click();
@@ -151,7 +151,7 @@ async function everyWorkspace(): Promise<void> {
     .map(([id, repo]) => ({ id, monitoredOwner: 'example', monitoredRepo: repo, hostingServer: { provider: 'GITHUB', webBaseUrl: 'https://github.com', apiBaseUrl: 'https://api.github.com' } }) as unknown as WorkspaceDto);
   bridge.listAgentTasks = async id => tasks.filter(task => task.workspaceId === id);
   bridge.getAgentTask = async id => tasks.find(task => task.id === id) ?? tasks[0];
-  bridge.readAgentHistory = async () => ({ events: [], beforeCursor: null, afterCursor: null, latestSequence: 0 });
+  bridge.readAgentHistory = async () => ({ events: [], firstSequence: null, lastSequence: null, beforeCursor: null, afterCursor: null, latestSequence: 0 });
   const { host, root, dispose } = createFixtureRoot();
   let opened: string[] = [];
   try {

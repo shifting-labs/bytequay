@@ -28,7 +28,7 @@ async function testSteering(): Promise<string> {
   bridge.getAgentTask = async (...args) => ({ ...await readTask(...args), interactive: true, developmentContinuationUnfinished: false,
     mutationClaim: { kind: 'TURN', ownerId: turn.id, acquiredAt: '' } });
   bridge.getAgentTurn = async () => turn;
-  bridge.readAgentHistory = async () => ({ events: [event], beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
+  bridge.readAgentHistory = async () => ({ events: [event], firstSequence: event.sequence, lastSequence: event.sequence, beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
   bridge.subscribeAgentTask = async (taskId, _after, listener) => {
     listener({ subscriptionId: 'queue', taskId, kind: 'state', state: 'open' });
     return () => {};
@@ -96,7 +96,7 @@ async function testEditing(): Promise<string> {
   assert(event.turnId !== null, 'The fixture needs an active turn');
   const turn: AgentTurnDto = { ...await bridge.getAgentTurn(event.turnId), state: 'RUNNING', endedAt: null };
   bridge.getAgentTurn = async () => turn;
-  bridge.readAgentHistory = async () => ({ events: [event], beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
+  bridge.readAgentHistory = async () => ({ events: [event], firstSequence: event.sequence, lastSequence: event.sequence, beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
   bridge.subscribeAgentTask = async (taskId, _after, listener) => {
     listener({ subscriptionId: 'queue', taskId, kind: 'state', state: 'open' });
     return () => {};

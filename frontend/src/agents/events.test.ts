@@ -195,6 +195,8 @@ describe('bounded history contract', () => {
   const taskId = fixture.events[0].taskId;
   const page = () => ({
     events: structuredClone(fixture.events.slice(8)),
+    firstSequence: 9 as number | null,
+    lastSequence: 14 as number | null,
     beforeCursor: '4294967296',
     afterCursor: null as string | null,
     latestSequence: 14,
@@ -205,13 +207,21 @@ describe('bounded history contract', () => {
     expect(parsed.events[0].sequence).toBe(9);
     expect(parsed.beforeCursor).toBe('4294967296');
     expect(parsed.latestSequence).toBe(14);
-    expect(parseAgentHistoryPage({ ...page(), events: [], beforeCursor: null }, taskId).events).toEqual([]);
+    expect(parseAgentHistoryPage({ ...page(), events: [], firstSequence: null, lastSequence: null, beforeCursor: null }, taskId).events).toEqual([]);
   });
 
-  it('rejects gaps, foreign history, and a watermark behind the page', () => {
+  it('accepts left-out streamed pieces inside the page bounds and rejects events outside them', () => {
     const gap = page();
     gap.events.splice(2, 1);
-    expect(() => parseAgentHistoryPage(gap, taskId)).toThrow('Event sequence gap');
+    expect(parseAgentHistoryPage(gap, taskId).events.map(event => event.sequence)).toEqual([9, 10, 12, 13, 14]);
+    expect(parseAgentHistoryPage({ ...page(), firstSequence: 5 }, taskId).firstSequence).toBe(5);
+    expect(() => parseAgentHistoryPage({ ...page(), firstSequence: 10 }, taskId)).toThrow('out-of-order');
+    expect(() => parseAgentHistoryPage({ ...page(), lastSequence: 13 }, taskId)).toThrow('bounds');
+    expect(() => parseAgentHistoryPage({ ...page(), firstSequence: null }, taskId)).toThrow('bounds');
+    expect(() => parseAgentHistoryPage({ ...page(), events: [] }, taskId)).toThrow('bounds');
+  });
+
+  it('rejects foreign history and a watermark behind the page', () => {
     expect(() => parseAgentHistoryPage(page(), 'another-task')).toThrow('another task');
     expect(() => parseAgentHistoryPage({ ...page(), latestSequence: 13 }, taskId)).toThrow('watermark');
   });
@@ -224,7 +234,7 @@ describe('bounded history contract', () => {
     const events = Array.from({ length: 1000 }, (_, index) => ({
       ...fixture.events[0], sequence: index + 1, eventId: `event-${index + 1}`,
     }));
-    expect(parseAgentHistoryPage({ ...page(), events, latestSequence: 1000 }, taskId).events).toHaveLength(1000);
+    expect(parseAgentHistoryPage({ ...page(), events, firstSequence: 1, lastSequence: 1000, latestSequence: 1000 }, taskId).events).toHaveLength(1000);
     expect(() => parseAgentHistoryPage({ ...page(), events: [...events, events[0]], latestSequence: 1001 }, taskId))
       .toThrow('count or byte limit');
     const oversized = structuredClone(fixture.events[0]);
@@ -249,7 +259,7 @@ describe('bounded history contract', () => {
     expect(bytes(stored)).toBeLessThanOrEqual(2 * 1024 * 1024);
     expect(bytes(normalized)).toBeGreaterThan(2 * 1024 * 1024);
     expect(bytes(normalized)).toBeLessThan(12 * 1024 * 1024);
-    const parsed = parseAgentHistoryPage({ ...page(), events: [normalized] }, taskId).events[0];
+    const parsed = parseAgentHistoryPage({ ...page(), events: [normalized], firstSequence: normalized.sequence, lastSequence: normalized.sequence }, taskId).events[0];
     expect(parsed.type === 'command' && parsed.payload.actions.length).toBe(count);
   });
 

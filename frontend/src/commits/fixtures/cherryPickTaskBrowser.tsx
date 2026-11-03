@@ -70,8 +70,8 @@ async function install(value: CherryPickExecution, run: CiAutofixRunDto): Promis
     getCherryPickExecution: async () => value,
     getCiAutofixRun: async () => run,
     readAgentHistory: async (taskId: string): Promise<AgentHistoryPageDto> => taskId === 'ci-task'
-      ? { events: [ciEvent], beforeCursor: null, afterCursor: null, latestSequence: ciEvent.sequence }
-      : { events: [], beforeCursor: null, afterCursor: null, latestSequence: 0 },
+      ? { events: [ciEvent], firstSequence: ciEvent.sequence, lastSequence: ciEvent.sequence, beforeCursor: null, afterCursor: null, latestSequence: ciEvent.sequence }
+      : { events: [], firstSequence: null, lastSequence: null, beforeCursor: null, afterCursor: null, latestSequence: 0 },
     subscribeAgentTask: async (taskId: string, _after: number, notify: (message: unknown) => void) => {
       notify({ subscriptionId: taskId, taskId, kind: 'state', state: 'open' });
       return () => {};

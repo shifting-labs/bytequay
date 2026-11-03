@@ -271,7 +271,7 @@ describe('historical activity presentation', () => {
     return renderTaskBody({
       task: previewTask('workspace', 'task'),
       turn, turns: { turn }, events, connection: 'open', lastSequence: 102,
-      historyPages: [{ events, beforeCursor: 'older', afterCursor, latestSequence: afterCursor === null ? 102 : 9000 }],
+      historyPages: [{ events, firstSequence: events[0]?.sequence ?? null, lastSequence: events.at(-1)?.sequence ?? null, beforeCursor: 'older', afterCursor, latestSequence: afterCursor === null ? 102 : 9000 }],
     }, { turnChoice: { turn: true }, activityChoice: { 'progress-command': true } });
   }
 

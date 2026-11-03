@@ -38,12 +38,17 @@ function message(sequence: number, text: string, complete = false): AgentEventEn
 }
 
 function pages(events: AgentEventEnvelope[], size = 1000): AgentHistoryPageDto[] {
-  return Array.from({ length: Math.ceil(events.length / size) }, (_, index) => ({
-    events: events.slice(index * size, (index + 1) * size),
+  return Array.from({ length: Math.ceil(events.length / size) }, (_, index) => {
+    const slice = events.slice(index * size, (index + 1) * size);
+    return {
+    events: slice,
+    firstSequence: slice[0]?.sequence ?? null,
+    lastSequence: slice.at(-1)?.sequence ?? null,
     beforeCursor: index === 0 ? null : String(index * size),
     afterCursor: (index + 1) * size >= events.length ? null : String((index + 1) * size),
     latestSequence: events.at(-1)?.sequence ?? 0,
-  }));
+  };
+  });
 }
 
 const flattened = (value: AgentHistoryPageDto[]): AgentEventEnvelope[] => value.flatMap(page => page.events);
@@ -54,7 +59,7 @@ describe('compact conversation history', () => {
     const cached = compactHistoryPages(pages(events, 1), false);
     expect(cached).toHaveLength(1);
     expect(cached[0].events).toEqual(events);
-    expect(cached[0]).toMatchObject({ beforeCursor: null, afterCursor: null, latestSequence: 3 });
+    expect(cached[0]).toMatchObject({ firstSequence: 1, lastSequence: 3, beforeCursor: null, afterCursor: null, latestSequence: 3 });
   });
 
   it('keeps 7,000 command updates and their surrounding messages in one bounded logical page', () => {

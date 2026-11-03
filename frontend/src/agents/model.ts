@@ -491,14 +491,16 @@ type RecentAgentHistory = {
 /** Reuse the unchanged prefix of the bounded window when the latest transport page overlaps it. */
 export async function readRecentAgentHistory(bridge: Pick<Bridge, 'readAgentHistory'>, taskId: string, previous?: RecentAgentHistory): Promise<RecentAgentHistory> {
   const page = await bridge.readAgentHistory(taskId);
-  const firstSequence = page.events[0]?.sequence;
-  if (page.beforeCursor !== null && firstSequence !== undefined && previous !== undefined) {
+  const firstSequence = page.firstSequence;
+  if (page.beforeCursor !== null && firstSequence !== null && previous !== undefined) {
     // Keep raw transport pages: cutting a compacted delta could discard text from before the cut.
     const cached = [...previous.earlier, previous.page];
-    const boundary = cached.findIndex(entry => entry.events.some(event => event.sequence === firstSequence - 1));
+    // A slice's own bounds, not its events: left-out streamed pieces can leave the sequence before this page absent.
+    const boundary = cached.findIndex(entry => entry.firstSequence !== null && entry.lastSequence !== null
+      && entry.firstSequence < firstSequence && firstSequence - 1 <= entry.lastSequence);
     if (boundary >= 0) {
       const earlier = cached.slice(0, boundary + 1);
-      earlier[earlier.length - 1] = { ...cached[boundary],
+      earlier[earlier.length - 1] = { ...cached[boundary], lastSequence: firstSequence - 1,
         events: cached[boundary].events.filter(event => event.sequence < firstSequence), afterCursor: page.beforeCursor };
       return { page, earlier: compactHistoryPages(earlier, false).slice(-2) };
     }

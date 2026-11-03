@@ -96,7 +96,7 @@ async function deliveryResult(outcome: 'ready' | 'draft' | 'sync failure', publi
   };
   bridge.getAgentTask = async () => task;
   bridge.getAgentTurn = async id => { const result = turns.get(id); assert(result !== undefined, `Unknown fixture turn ${id}`); return result; };
-  bridge.readAgentHistory = async () => ({ events: [...history], beforeCursor: null, afterCursor: null, latestSequence: sequence });
+  bridge.readAgentHistory = async () => ({ events: [...history], firstSequence: history[0]?.sequence ?? null, lastSequence: history.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null, latestSequence: sequence });
   bridge.readAgentPendingApprovals = async () => [];
   bridge.subscribeAgentTask = async (id, _after, listener) => {
     notify = listener;

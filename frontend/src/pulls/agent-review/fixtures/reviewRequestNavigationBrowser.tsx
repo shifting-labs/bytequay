@@ -107,7 +107,7 @@ export async function run(): Promise<string[]> {
     getAgentReview: async id => { assert(id === review.id, 'Navigation must retain the selected review'); return review; },
     readAgentReviewHistory: async (id, taskId) => {
       assert(id === review.id && taskId === review.task.id, 'Replay must keep the review and task identity');
-      return { events, beforeCursor: null, afterCursor: null, latestSequence: events.length };
+      return { events, firstSequence: events[0]?.sequence ?? null, lastSequence: events.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null, latestSequence: events.length };
     },
     fetchAttentionPrs: async () => [],
     fetchPullRequestDetailByRef: async () => detail,

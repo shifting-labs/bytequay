@@ -165,7 +165,7 @@ function mount(view: AssistantViewDto = VIEW, failSends = 0, notices = NOTICES, 
     listRunningTasks: async () => running,
     readAgentHistory: async (taskId: string): Promise<AgentHistoryPageDto> => {
       const events = taskId === RUNNING.id ? history : [];
-      return { events, beforeCursor: null, afterCursor: null, latestSequence: events.length };
+      return { events, firstSequence: events[0]?.sequence ?? null, lastSequence: events.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null, latestSequence: events.length };
     },
     readAgentPendingApprovals: async (taskId: string, turnId: string) => taskId === APPROVAL.taskId && turnId === APPROVAL.turnId ? [APPROVAL] : [],
     resolveAgentApproval: async (...args: unknown[]) => { calls.resolved.push(args); return {}; },

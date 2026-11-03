@@ -1010,9 +1010,14 @@ export type AgentStreamPayload =
   | { kind: 'changed'; sequence: number; turnId: string | null }
   | { kind: 'state'; state: AgentStreamConnectionState; detail?: string };
 
-/** A bounded, contiguous slice of ByteQuay's event log, with opaque adjacent-page cursors. */
+/**
+ * A bounded slice of ByteQuay's event log, with opaque adjacent-page cursors. Streamed message pieces that their completed
+ * message replaces are left out, so the events may skip sequences inside the slice's own bounds; both are null for an empty slice.
+ */
 export type AgentHistoryPageDto = {
   events: AgentEventEnvelope[];
+  firstSequence: number | null;
+  lastSequence: number | null;
   beforeCursor: string | null;
   afterCursor: string | null;
   latestSequence: number;

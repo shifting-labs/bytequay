@@ -200,7 +200,7 @@ describe('issue development conversation', () => {
     const legacyTask: AgentTaskDto = { ...task('t-1', 'OPEN', 'Legacy issue development'), issueSource: { ...source, initialTurnId: null, instructions: '' } };
     const later = { ...message, eventId: 'later-request', sequence: message.sequence + 1, turnId: 'later-turn',
       payload: { ...message.payload, text: 'Keep this follow-up visible.' } };
-    const firstPage: AgentTaskState['historyPages'][number] = { events: [message, later], beforeCursor: null, afterCursor: null, latestSequence: later.sequence };
+    const firstPage: AgentTaskState['historyPages'][number] = { events: [message, later], firstSequence: message.sequence, lastSequence: later.sequence, beforeCursor: null, afterCursor: null, latestSequence: later.sequence };
     const markup = body({ task: legacyTask, connection: 'open', events: firstPage.events, historyPages: [firstPage] });
     expect(markup.match(/class="agt-instruction"/g)).toHaveLength(1);
     expect(markup).toContain(`<pre>${rawPrompt}</pre>`);
@@ -226,7 +226,7 @@ describe('agent task layout', () => {
     const markup = body({
       task: task('t-1', 'OPEN', 'x'),
       connection: 'open',
-      historyPages: [{ events: [], beforeCursor: 'older', afterCursor: 'newer', latestSequence: 10 }],
+      historyPages: [{ events: [], firstSequence: null, lastSequence: null, beforeCursor: 'older', afterCursor: 'newer', latestSequence: 10 }],
     });
     expect(markup).not.toContain('Scroll up');
     expect(markup).not.toContain('Loading earlier activity');
@@ -942,7 +942,7 @@ describe('agent task detail', () => {
       payload: { messageKind: 'COMMENTARY', phase: 'FINAL', text: 'Tests are running.' } };
     const state: Partial<AgentTaskState> = { task: task('t-1', 'OPEN', 'Fix planner'), turn: turn('RUNNING', { plan }),
       latestTurnId: 'turn-1', latestTurnSettled: false, events: [recent], connection: 'open',
-      historyPages: [{ events: [recent], beforeCursor: '3000', afterCursor: null, latestSequence: 4000 }] };
+      historyPages: [{ events: [recent], firstSequence: recent.sequence, lastSequence: recent.sequence, beforeCursor: '3000', afterCursor: null, latestSequence: 4000 }] };
     const markup = body(state);
     expect(markup).toContain('class="agt-todos"');
     expect(markup).toContain('Inspect planner');
@@ -1456,7 +1456,7 @@ describe('agent task detail', () => {
     expect(body({ ...state, events: start, gap: true })).toContain('>Reconnecting…</span>');
     expect(body({ ...state, events: start, gap: true })).not.toContain('agt-critter is-moving');
     expect(body({ ...state, events, turn: turn('COMPLETED', { endedAt: '2026-08-20T10:00:12Z' }) })).not.toContain('class="agt-live"');
-    expect(body({ ...state, events: start, historyPages: [{ events: start, beforeCursor: null, afterCursor: 'newer', latestSequence: 20 }] })).not.toContain('class="agt-live"');
+    expect(body({ ...state, events: start, historyPages: [{ events: start, firstSequence: start[0]?.sequence ?? null, lastSequence: start.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: 'newer', latestSequence: 20 }] })).not.toContain('class="agt-live"');
   });
 
   it('keeps the turtle still while waiting for approval', () => {

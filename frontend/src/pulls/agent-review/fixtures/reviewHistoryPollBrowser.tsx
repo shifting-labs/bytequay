@@ -43,7 +43,7 @@ export async function run(): Promise<ScenarioResult[]> {
   const bridge = {
     readAgentReviewHistory: async (_reviewId, _taskId, _before, after) => {
       if (after !== undefined) throw new Error(`A poll must not send sequence ${after} as a history cursor`);
-      return { events: [...events], beforeCursor: null, afterCursor: null, latestSequence: events.length };
+      return { events: [...events], firstSequence: events[0]?.sequence ?? null, lastSequence: events.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null, latestSequence: events.length };
     },
     readAgentReviewEvents: async (_reviewId, after) => {
       cursors.push(after);

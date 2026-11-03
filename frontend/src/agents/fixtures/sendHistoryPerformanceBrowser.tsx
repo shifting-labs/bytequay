@@ -61,7 +61,8 @@ async function exercise(surface: 'task' | 'review') {
   const read = async (_id: string, before?: string): Promise<AgentHistoryPageDto> => {
     const end = before === undefined ? events.length : Number(before);
     const start = Math.max(0, end - 1000);
-    const page = { events: events.slice(start, end), beforeCursor: start === 0 ? null : String(start),
+    const slice = events.slice(start, end);
+    const page = { events: slice, firstSequence: slice[0]?.sequence ?? null, lastSequence: slice.at(-1)?.sequence ?? null, beforeCursor: start === 0 ? null : String(start),
       afterCursor: end === events.length ? null : String(end), latestSequence: events.length };
     // Include serialization/clone cost instead of sharing references with the renderer's cache.
     const wire = JSON.stringify(page);

@@ -84,7 +84,7 @@ describe('a workflow-owned conversation', () => {
     let stop = (): void => {};
     try {
       const preview = createPreviewBridge('workspace-1');
-      const initial: AgentHistoryPageDto = { events: [], beforeCursor: null, afterCursor: null, latestSequence: 0 };
+      const initial: AgentHistoryPageDto = { events: [], firstSequence: null, lastSequence: null, beforeCursor: null, afterCursor: null, latestSequence: 0 };
       const latest = { ...initial, events: preview.events, latestSequence: preview.events.at(-1)?.sequence ?? 0 };
       const readAgentHistory = vi.fn().mockResolvedValueOnce(initial).mockRejectedValueOnce(new Error('Temporary history failure')).mockResolvedValue(latest);
       let notify: (message: AgentStreamMessage) => void = () => { throw new Error('subscription not open'); };
@@ -116,7 +116,7 @@ describe('a workflow-owned conversation', () => {
     vi.useFakeTimers();
     let stop = (): void => {};
     try {
-      const readAgentHistory = vi.fn().mockResolvedValueOnce({ events: [], beforeCursor: null, afterCursor: null, latestSequence: 0 })
+      const readAgentHistory = vi.fn().mockResolvedValueOnce({ events: [], firstSequence: null, lastSequence: null, beforeCursor: null, afterCursor: null, latestSequence: 0 })
         .mockRejectedValue(new Error('Offline'));
       let notify: (message: AgentStreamMessage) => void = () => { throw new Error('subscription not open'); };
       const unsubscribe = vi.fn();
@@ -146,7 +146,7 @@ describe('a workflow-owned conversation', () => {
     let stop = (): void => {};
     try {
       const preview = createPreviewBridge('workspace-1');
-      const initial: AgentHistoryPageDto = { events: [], beforeCursor: null, afterCursor: null, latestSequence: 0 };
+      const initial: AgentHistoryPageDto = { events: [], firstSequence: null, lastSequence: null, beforeCursor: null, afterCursor: null, latestSequence: 0 };
       const latest = { ...initial, events: preview.events, latestSequence: preview.events.at(-1)?.sequence ?? 0 };
       const readAgentHistory = vi.fn().mockResolvedValueOnce(initial).mockResolvedValue(latest);
       let notify: (message: AgentStreamMessage) => void = () => { throw new Error('subscription not open'); };
@@ -186,6 +186,8 @@ describe('preview journey', () => {
       if (answer?.type !== 'assistant_message') throw new Error('missing final answer fixture');
       const page = (through: number): AgentHistoryPageDto => ({
         events: preview.events.filter((event) => event.sequence <= through),
+        firstSequence: preview.events[0]?.sequence ?? null,
+        lastSequence: through,
         beforeCursor: null,
         afterCursor: null,
         latestSequence: through,

@@ -46,7 +46,7 @@ function fixture() {
       })) };
     },
     readAgentHistory: (taskId, before, after) => taskId === second
-      ? Promise.resolve({ events: [], beforeCursor: null, afterCursor: null, latestSequence: 0 }) : readHistory(taskId, before, after),
+      ? Promise.resolve({ events: [], firstSequence: null, lastSequence: null, beforeCursor: null, afterCursor: null, latestSequence: 0 }) : readHistory(taskId, before, after),
     startAgentTurn: request => {
       preview.commands.push({ name: 'startAgentTurn', args: [request] });
       sending = Promise.withResolvers();

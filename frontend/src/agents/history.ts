@@ -106,6 +106,8 @@ export function compactHistoryPages(pages: AgentHistoryPageDto[], compactDeltas 
       if (combined.events.length <= MAX_EVENTS && combined.bytes <= MAX_BYTES) {
         result[result.length - 1] = {
           events: combined.events,
+          firstSequence: previous.firstSequence ?? current.firstSequence,
+          lastSequence: current.lastSequence ?? previous.lastSequence,
           beforeCursor: previous.beforeCursor,
           afterCursor: current.afterCursor,
           latestSequence: Math.max(previous.latestSequence, current.latestSequence),

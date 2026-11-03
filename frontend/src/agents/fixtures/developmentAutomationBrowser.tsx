@@ -152,7 +152,7 @@ async function retryLocalTurn(): Promise<{ name: string; error?: string }[]> {
   turn.settings = { ...turn.settings, developmentAutomation: localOnly };
   bridge.getAgentTask = async () => task;
   bridge.getAgentTurn = async () => turn;
-  bridge.readAgentHistory = async () => ({ events: [userEvent], beforeCursor: null, afterCursor: null, latestSequence: userEvent.sequence });
+  bridge.readAgentHistory = async () => ({ events: [userEvent], firstSequence: userEvent.sequence, lastSequence: userEvent.sequence, beforeCursor: null, afterCursor: null, latestSequence: userEvent.sequence });
   bridge.subscribeAgentTask = async (taskId, _after, listener) => {
     listener({ subscriptionId: 'retry', taskId, kind: 'state', state: 'open' });
     return () => {};
@@ -247,7 +247,7 @@ async function developerFeedback(): Promise<{ name: string; error?: string }[]> 
   bridge.getAgentTask = async () => task;
   bridge.getAgentTurn = async () => turn;
   bridge.listAgentTaskPullRequests = async () => [pr];
-  bridge.readAgentHistory = async () => ({ events: [event], beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
+  bridge.readAgentHistory = async () => ({ events: [event], firstSequence: event.sequence, lastSequence: event.sequence, beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
   bridge.subscribeAgentTask = async (taskId, _after, listener) => {
     listener({ subscriptionId: 'local-review', taskId, kind: 'state', state: 'open' });
     return () => {};
@@ -297,7 +297,7 @@ async function stopPreservesTask(): Promise<{ name: string; error?: string }[]> 
   let notify: (message: AgentStreamMessage) => void = () => {};
   bridge.getAgentTask = async () => task;
   bridge.getAgentTurn = async () => turn;
-  bridge.readAgentHistory = async () => ({ events: [...history], beforeCursor: null, afterCursor: null, latestSequence: history.at(-1)?.sequence ?? 0 });
+  bridge.readAgentHistory = async () => ({ events: [...history], firstSequence: history[0]?.sequence ?? null, lastSequence: history.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null, latestSequence: history.at(-1)?.sequence ?? 0 });
   bridge.readAgentPendingApprovals = async () => [];
   bridge.subscribeAgentTask = async (taskId, _after, listener) => {
     notify = listener;
@@ -376,7 +376,7 @@ async function stopWaitingCi(): Promise<{ name: string; error?: string }[]> {
   const turn: AgentTurnDto = { ...await bridge.getAgentTurn(event.turnId), state: 'COMPLETED', endedAt: '2026-01-01T12:00:00Z' };
   bridge.getAgentTask = async () => task;
   bridge.getAgentTurn = async () => turn;
-  bridge.readAgentHistory = async () => ({ events: [event], beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
+  bridge.readAgentHistory = async () => ({ events: [event], firstSequence: event.sequence, lastSequence: event.sequence, beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
   bridge.readAgentPendingApprovals = async () => [];
   bridge.getCiAutofixRun = async () => ({ ...CI_RUN, status: 'ACTIVE', activity: 'WATCHING_CI', attemptsUsed: 0, canMessage: false });
   bridge.subscribeAgentTask = async (taskId, _after, listener) => {
@@ -444,7 +444,7 @@ async function continuationAdmission(): Promise<{ name: string; error?: string }
   let turn: AgentTurnDto = { ...await bridge.getAgentTurn(event.turnId), id: event.turnId, state: 'COMPLETED' };
   bridge.getAgentTask = async () => task;
   bridge.getAgentTurn = async () => turn;
-  bridge.readAgentHistory = async () => ({ events: [event], beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
+  bridge.readAgentHistory = async () => ({ events: [event], firstSequence: event.sequence, lastSequence: event.sequence, beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
   let notify: (message: AgentStreamMessage) => void = () => {};
   bridge.subscribeAgentTask = async (taskId, _after, listener) => {
     notify = listener;
@@ -499,7 +499,7 @@ async function pullRequestLookupPolicy(initiallyRunning = false): Promise<{ name
   let turn: AgentTurnDto = { ...await bridge.getAgentTurn(event.turnId), id: event.turnId, state: 'COMPLETED', endedAt: '2026-01-01T12:00:00Z' };
   bridge.getAgentTask = async () => task;
   bridge.getAgentTurn = async () => turn;
-  bridge.readAgentHistory = async () => ({ events: [event], beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
+  bridge.readAgentHistory = async () => ({ events: [event], firstSequence: event.sequence, lastSequence: event.sequence, beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
   let notify: (message: AgentStreamMessage) => void = () => {};
   bridge.subscribeAgentTask = async (taskId, _after, listener) => {
     notify = listener;
@@ -606,7 +606,7 @@ async function pausedPullRequestLookup(): Promise<{ name: string; error?: string
   const turn: AgentTurnDto = { ...await bridge.getAgentTurn(event.turnId), id: event.turnId, state: 'COMPLETED', endedAt: '2026-01-01T12:00:00Z' };
   bridge.getAgentTask = async () => task;
   bridge.getAgentTurn = async () => turn;
-  bridge.readAgentHistory = async () => ({ events: [event], beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
+  bridge.readAgentHistory = async () => ({ events: [event], firstSequence: event.sequence, lastSequence: event.sequence, beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
   bridge.subscribeAgentTask = async (taskId, _after, listener) => {
     listener({ subscriptionId: 'observations', taskId, kind: 'state', state: 'open' });
     return () => {};
@@ -656,7 +656,7 @@ async function worktreeVersionRefresh(conflictAfterRefresh = false): Promise<{ n
   const requests: StartAgentTurnRequest[] = [];
   bridge.getAgentTask = async () => { taskReads++; return task; };
   bridge.getAgentTurn = async () => turn;
-  bridge.readAgentHistory = async () => ({ events: [event], beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
+  bridge.readAgentHistory = async () => ({ events: [event], firstSequence: event.sequence, lastSequence: event.sequence, beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
   let notify: (message: AgentStreamMessage) => void = () => {};
   bridge.subscribeAgentTask = async (taskId, _after, listener) => {
     notify = listener;

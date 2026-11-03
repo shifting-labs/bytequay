@@ -45,7 +45,7 @@ async function ciReplyAndOwnership(steering = false): Promise<{ name: string; er
   bridge.getAgentTurn = async () => sourceTurn;
   bridge.readAgentHistory = async id => {
     assert(id === task.id, 'The source screen must not load a separate CI conversation');
-    return { events: [sourceEvent], beforeCursor: null, afterCursor: null, latestSequence: 1 };
+    return { events: [sourceEvent], firstSequence: sourceEvent.sequence, lastSequence: sourceEvent.sequence, beforeCursor: null, afterCursor: null, latestSequence: 1 };
   };
   bridge.readAgentPendingApprovals = async () => [];
   bridge.subscribeAgentTask = async (id, _after, notify) => {
@@ -142,7 +142,7 @@ async function sourcePolling(): Promise<{ name: string; error?: string }> {
   let reads = 0;
   bridge.getAgentTask = async () => { reads++; return pauseRead ? await new Promise<AgentTaskDto>(resolve => { resolveRead = resolve; }) : task; };
   bridge.getAgentTurn = async () => turn;
-  bridge.readAgentHistory = async () => ({ events: [event], beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
+  bridge.readAgentHistory = async () => ({ events: [event], firstSequence: event.sequence, lastSequence: event.sequence, beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
   bridge.subscribeAgentTask = async (id, _after, notify) => { notify({ subscriptionId: id, taskId: id, kind: 'state', state: 'open' }); return () => {}; };
   bridge.getCiAutofixRun = async () => ({ ...CI_RUN, status: 'ACTIVE', activity: 'WATCHING_CI', currentTurnId: null, parentTaskId: task.id });
   const timers = controlTimers(5000);
@@ -202,7 +202,7 @@ async function ciApprovalCard(): Promise<{ name: string; error?: string }> {
   let ciApprovalReads = 0;
   bridge.getAgentTask = async id => { assert(id === task.id, 'The CI child is not an interactive task'); return task; };
   bridge.getAgentTurn = async () => sourceTurn;
-  bridge.readAgentHistory = async () => ({ events: [sourceEvent], beforeCursor: null, afterCursor: null, latestSequence: 1 });
+  bridge.readAgentHistory = async () => ({ events: [sourceEvent], firstSequence: sourceEvent.sequence, lastSequence: sourceEvent.sequence, beforeCursor: null, afterCursor: null, latestSequence: 1 });
   bridge.subscribeAgentTask = async (id, _after, notify) => { notify({ subscriptionId: id, taskId: id, kind: 'state', state: 'open' }); return () => {}; };
   bridge.getCiAutofixRun = async () => ({ ...CI_RUN, status: 'ACTIVE', activity: 'FIXING', currentTurnId: approval.turnId, parentTaskId });
   bridge.readAgentPendingApprovals = async (id, turnId) => {
@@ -244,7 +244,7 @@ async function finishedCiRouting(): Promise<{ name: string; error?: string }> {
   const sourceTurn: AgentTurnDto = { ...await bridge.getAgentTurn(event.turnId), taskId: task.id, state: 'COMPLETED', endedAt: '2026-01-01T12:00:00Z' };
   bridge.getAgentTask = async () => task;
   bridge.getAgentTurn = async () => sourceTurn;
-  bridge.readAgentHistory = async () => ({ events: [event], beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
+  bridge.readAgentHistory = async () => ({ events: [event], firstSequence: event.sequence, lastSequence: event.sequence, beforeCursor: null, afterCursor: null, latestSequence: event.sequence });
   bridge.readAgentPendingApprovals = async () => [];
   bridge.subscribeAgentTask = async (id, _after, notify) => { notify({ subscriptionId: id, taskId: id, kind: 'state', state: 'open' }); return () => {}; };
   let runReads = 0;
@@ -300,7 +300,7 @@ async function laterRunAndRecovery(): Promise<{ name: string; error?: string }> 
   const sourceTurn: AgentTurnDto = { ...await bridge.getAgentTurn(event.turnId), taskId: task.id, state: 'COMPLETED', endedAt: '2026-01-01T12:00:00Z' };
   bridge.getAgentTask = async id => { assert(id === task.id, 'CI child must not use generic task GET'); return task; };
   bridge.getAgentTurn = async () => sourceTurn;
-  bridge.readAgentHistory = async () => ({ events: [sourceEvent], beforeCursor: null, afterCursor: null, latestSequence: 1 });
+  bridge.readAgentHistory = async () => ({ events: [sourceEvent], firstSequence: sourceEvent.sequence, lastSequence: sourceEvent.sequence, beforeCursor: null, afterCursor: null, latestSequence: 1 });
   bridge.readAgentPendingApprovals = async () => [];
   bridge.subscribeAgentTask = async (id, _after, notify) => { notify({ subscriptionId: id, taskId: id, kind: 'state', state: 'open' }); return () => {}; };
   const replies: { runId: string; message: string }[] = [];

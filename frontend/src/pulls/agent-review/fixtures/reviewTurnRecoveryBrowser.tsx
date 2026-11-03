@@ -55,7 +55,7 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
         state: saved().activeTurn === null ? 'COMPLETED' : 'RUNNING',
         endedAt: saved().activeTurn === null ? '2026-09-06T16:20:00Z' : null } as AgentTurnDto),
       readAgentReviewHistory: async () => ({ events: saved().activeTurn === null ? [...inputEvents, endEvent] : inputEvents,
-        beforeCursor: null, afterCursor: null, latestSequence: saved().activeTurn === null ? 3 : 2 }),
+        firstSequence: 1, lastSequence: saved().activeTurn === null ? 3 : 2, beforeCursor: null, afterCursor: null, latestSequence: saved().activeTurn === null ? 3 : 2 }),
       readAgentReviewApprovals: async () => [],
       // The connection stays open but never sends the terminal notification, reproducing the stale screen.
       subscribeAgentReview: async (id, _after, listener) => {
@@ -106,7 +106,7 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
           reconciling = true;
           return new Promise<AgentReviewDto>(resolve => { release = () => { hold = false; resolve(completed); }; });
         },
-        readAgentReviewHistory: async () => ({ events: history, beforeCursor: null, afterCursor: null, latestSequence: history.at(-1)?.sequence ?? 0 }),
+        readAgentReviewHistory: async () => ({ events: history, firstSequence: history[0]?.sequence ?? null, lastSequence: history.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null, latestSequence: history.at(-1)?.sequence ?? 0 }),
         subscribeAgentReview: async (taskId, _after, listener) => {
           notify = listener;
           listener({ subscriptionId: 'review-failure', taskId, kind: 'state', state: 'open' });
@@ -195,7 +195,7 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
               historyWaiting = true;
               await new Promise<void>(resolve => { releaseHistory = () => { holdHistory = false; resolve(); }; });
             }
-            return { events: [...history], beforeCursor: null, afterCursor: null, latestSequence: history.at(-1)?.sequence ?? 0 };
+            return { events: [...history], firstSequence: history[0]?.sequence ?? null, lastSequence: history.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null, latestSequence: history.at(-1)?.sequence ?? 0 };
           },
           subscribeAgentReview: async (id, _after, callback) => {
             listener = callback;
@@ -268,7 +268,7 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
           },
           getAgentTurn: async id => ({ ...parseAgentTurn(contracts.turn), id, taskId: completed.task.id, state: id === 'accepted-chat' ? 'RUNNING' : 'COMPLETED',
             endedAt: id === 'accepted-chat' ? null : '2026-09-06T16:20:00Z' } as AgentTurnDto),
-          readAgentReviewHistory: async () => ({ events: [...history], beforeCursor: null, afterCursor: null, latestSequence: history.at(-1)?.sequence ?? 0 }),
+          readAgentReviewHistory: async () => ({ events: [...history], firstSequence: history[0]?.sequence ?? null, lastSequence: history.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null, latestSequence: history.at(-1)?.sequence ?? 0 }),
           subscribeAgentReview: async (id, _after, callback) => {
             listener = callback;
             listener({ kind: 'state', state: 'open', subscriptionId: 'review-owner', taskId: id });
@@ -330,10 +330,11 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
           return saved;
         }, {
           readAgentReviewHistory: async (_id, _taskId, before) => {
-            if (!olderHistory) return { events: [...history], beforeCursor: null, afterCursor: null, latestSequence: history.at(-1)?.sequence ?? 0 };
+            if (!olderHistory) return { events: [...history], firstSequence: history[0]?.sequence ?? null, lastSequence: history.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null, latestSequence: history.at(-1)?.sequence ?? 0 };
             if (before === undefined && ++historyReads > 1) return new Promise(resolve => { latestReply = resolve; });
             const end = before === undefined ? initialSequence : Number(before);
-            return { events: history.slice(Math.max(0, end - 1000), end), beforeCursor: end > 1000 ? String(end - 1000) : null,
+            const slice = history.slice(Math.max(0, end - 1000), end);
+            return { events: slice, firstSequence: slice[0]?.sequence ?? null, lastSequence: slice.at(-1)?.sequence ?? null, beforeCursor: end > 1000 ? String(end - 1000) : null,
               afterCursor: end < initialSequence ? String(end) : null, latestSequence: initialSequence };
           },
           subscribeAgentReview: async (id, _after, callback) => {
@@ -371,7 +372,8 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
         saved = { ...completed, activeTurn: { ...running.activeTurn, id: 'chat-turn' }, task: { ...completed.task, mutationClaim: 'TURN' } };
         if (olderHistory) {
           assert(latestReply !== null, 'Send should request the latest review history');
-          (latestReply as (value: AgentHistoryPageDto) => void)({ events: history.slice(-3), beforeCursor: null, afterCursor: null, latestSequence: initialSequence + 3 });
+          (latestReply as (value: AgentHistoryPageDto) => void)({ events: history.slice(-3), firstSequence: history.at(-3)?.sequence ?? null, lastSequence: history.at(-1)?.sequence ?? null,
+            beforeCursor: null, afterCursor: null, latestSequence: initialSequence + 3 });
         }
         else listener({ kind: 'changed', taskId: completed.task.id, subscriptionId: 'review-stream', sequence: initialSequence + 3, turnId: 'chat-turn' });
         await until(() => host.textContent?.includes('Checking the review request now.') === true,
@@ -440,7 +442,7 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
             if (delayed) await turnGate;
             return { ...parseAgentTurn(contracts.turn), id, taskId: completed.task.id } as AgentTurnDto;
           },
-          readAgentReviewHistory: async () => ({ events: [...history], beforeCursor: null, afterCursor: null,
+          readAgentReviewHistory: async () => ({ events: [...history], firstSequence: history[0]?.sequence ?? null, lastSequence: history.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null,
             latestSequence: history.at(-1)?.sequence ?? 0 }),
           subscribeAgentReview: async (_id, _after, callback) => { listener = callback; return () => {}; },
         });

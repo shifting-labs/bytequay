@@ -72,7 +72,7 @@ async function boundedHistory(): Promise<void> {
       requests.push({ before, after, size: events.length });
       if (requests.length === 1) await initialRead.promise;
       if (before !== undefined && olderRead !== null) await olderRead.promise;
-      return { events, beforeCursor: first > 1 ? String(first) : null, afterCursor: last < all.length ? String(last) : null, latestSequence: all.length };
+      return { events, firstSequence: events[0]?.sequence ?? null, lastSequence: events.at(-1)?.sequence ?? null, beforeCursor: first > 1 ? String(first) : null, afterCursor: last < all.length ? String(last) : null, latestSequence: all.length };
     },
     sendArtifact: async (_workspace, _artifact, text) => {
       sends.push(text); all.push(...turn(1251, text)); return view;
@@ -170,7 +170,7 @@ async function approvalAuthority(): Promise<void> {
       const first = events[0]?.sequence ?? 1;
       const last = events.at(-1)?.sequence ?? 0;
       reads.push({ first, last });
-      return { events, beforeCursor: first > 1 ? String(first) : null, afterCursor: last < all.length ? String(last) : null, latestSequence: all.length };
+      return { events, firstSequence: events[0]?.sequence ?? null, lastSequence: events.at(-1)?.sequence ?? null, beforeCursor: first > 1 ? String(first) : null, afterCursor: last < all.length ? String(last) : null, latestSequence: all.length };
     },
     answerArtifactQuestion: async (_workspace, _artifact, approvalId, allow, selected) => {
       answers.push({ approvalId, allow, answers: selected });
@@ -220,7 +220,7 @@ async function openFromNotice(): Promise<void> {
     listArtifacts: async () => views.map(each => ({ artifact: each.artifact, pages: 0 })),
     onArtifactReading: () => () => undefined,
     viewArtifact: async (_workspace, artifact) => views.find(each => each.artifact.id === artifact) ?? views[0],
-    artifactEvents: async () => ({ events: [], beforeCursor: null, afterCursor: null, latestSequence: 0 }),
+    artifactEvents: async () => ({ events: [], firstSequence: null, lastSequence: null, beforeCursor: null, afterCursor: null, latestSequence: 0 }),
   } satisfies Partial<Bridge> as unknown as Bridge;
   const { root, host, dispose } = createFixtureRoot();
   host.style.cssText = 'height:650px;width:950px';
@@ -250,7 +250,7 @@ async function resumeFollowing(): Promise<void> {
     artifactEvents: async (_workspace, _artifact, before, after) => {
       reads.push({ before, after });
       const events = after === undefined ? [...all] : all.filter(event => event.sequence > Number(after));
-      return { events, beforeCursor: null, afterCursor: null, latestSequence: all.length };
+      return { events, firstSequence: events[0]?.sequence ?? null, lastSequence: events.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null, latestSequence: all.length };
     },
   } satisfies Partial<Bridge> as unknown as Bridge;
   const { root, host, dispose } = createFixtureRoot();
@@ -308,7 +308,7 @@ async function answerDuringRead(): Promise<void> {
       const latestSequence = all.length;
       reads.push(after);
       if (pendingRead !== null) await pendingRead.promise;
-      return { events, beforeCursor: null, afterCursor: null, latestSequence };
+      return { events, firstSequence: events[0]?.sequence ?? null, lastSequence: events.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null, latestSequence };
     },
     answerArtifactQuestion: async () => {
       all.push({ ...base, eventId: 'resolved', sequence: 4, type: 'approval_resolved',

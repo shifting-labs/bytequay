@@ -138,7 +138,7 @@ ipcMain.handle('fixture:events', (_event, workspaceId, id, before, after) => {
   const first = events[0]?.sequence ?? 1;
   const last = events.at(-1)?.sequence ?? Number(after ?? 0);
   const latestSequence = all.at(-1)?.sequence ?? 0;
-  return { events, beforeCursor: first > 1 ? String(first) : null, afterCursor: last < latestSequence ? String(last) : null, latestSequence };
+  return { events, firstSequence: events[0]?.sequence ?? null, lastSequence: events.at(-1)?.sequence ?? null, beforeCursor: first > 1 ? String(first) : null, afterCursor: last < latestSequence ? String(last) : null, latestSequence };
 });
 ipcMain.handle('fixture:start', (_event, workspaceId, text) => {
   calls.push(['start', text]);

@@ -165,7 +165,7 @@ export type AgentEventEnvelope =
   }>;
 
 /** Parses one ordered event page. Provider-native payloads never cross this boundary. */
-export function parseAgentEventSequence(value: unknown, afterSequence = 0): AgentEventEnvelope[] {
+export function parseAgentEventSequence(value: unknown, afterSequence = 0, gaps = false): AgentEventEnvelope[] {
   if (!Number.isSafeInteger(afterSequence) || afterSequence < 0) {
     throw new Error('afterSequence must be a non-negative integer');
   }
@@ -185,7 +185,7 @@ export function parseAgentEventSequence(value: unknown, afterSequence = 0): Agen
     if (sequence < expectedSequence) {
       throw new Error(`Duplicate or out-of-order event sequence ${sequence}`);
     }
-    if (sequence > expectedSequence) {
+    if (sequence > expectedSequence && !gaps) {
       throw new Error(`Event sequence gap: expected ${expectedSequence}, received ${sequence}`);
     }
     const currentTaskId = stringValue(event.taskId, `event[${index}].taskId`);
@@ -205,7 +205,7 @@ export function parseAgentEventSequence(value: unknown, afterSequence = 0): Agen
         throw new Error('Development result must belong to a root turn');
       }
     }
-    expectedSequence++;
+    expectedSequence = sequence + 1;
     return candidate as AgentEventEnvelope;
   });
 }
@@ -220,11 +220,15 @@ export function parseAgentHistoryPage(value: unknown, expectedTaskId: string): A
     || new TextEncoder().encode(JSON.stringify(rawEvents)).byteLength > 12 * 1024 * 1024) {
     throw new Error('History page exceeds its count or byte limit');
   }
-  const first = rawEvents.length === 0 ? 1 : integerValue(objectValue(rawEvents[0], 'first event').sequence, 'first sequence');
-  const events = parseAgentEventSequence(rawEvents, first - 1);
+  const firstSequence = page.firstSequence === null ? null : integerValue(page.firstSequence, 'history.firstSequence');
+  const lastSequence = page.lastSequence === null ? null : integerValue(page.lastSequence, 'history.lastSequence');
+  // Left-out streamed pieces leave gaps, never events outside the slice's own bounds.
+  const events = parseAgentEventSequence(rawEvents, (firstSequence ?? 1) - 1, true);
   if (events.some((event) => event.taskId !== expectedTaskId)) throw new Error('History belongs to another task');
+  if ((firstSequence === null) !== (events.length === 0) || (lastSequence === null) !== (events.length === 0)
+    || (lastSequence !== null && (events.at(-1)?.sequence ?? 0) > lastSequence)) throw new Error('Invalid history bounds');
   const latestSequence = integerValue(page.latestSequence, 'history.latestSequence');
-  if (latestSequence < 0 || (events.at(-1)?.sequence ?? 0) > latestSequence) throw new Error('Invalid history watermark');
+  if (latestSequence < 0 || (lastSequence ?? 0) > latestSequence) throw new Error('Invalid history watermark');
   const cursor = (value: unknown): string | null => {
     const text = nullableString(value, 'history cursor');
     if (text !== null && (!/^(0|[1-9]\d{0,18})$/.test(text) || BigInt(text) > 9223372036854775807n)) {
@@ -232,7 +236,7 @@ export function parseAgentHistoryPage(value: unknown, expectedTaskId: string): A
     }
     return text;
   };
-  return { events, latestSequence, beforeCursor: cursor(page.beforeCursor), afterCursor: cursor(page.afterCursor) };
+  return { events, firstSequence, lastSequence, latestSequence, beforeCursor: cursor(page.beforeCursor), afterCursor: cursor(page.afterCursor) };
 }
 
 export function parseAgentPendingApprovals(value: unknown, taskId: string, turnId: string): AgentPendingApprovalDto[] {

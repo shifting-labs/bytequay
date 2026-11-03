@@ -107,7 +107,7 @@ export async function run(local = false): Promise<string> {
       createdAt: '2026-09-06T16:03:00Z', startedAt: '2026-09-06T16:03:01Z' }),
     readAgentReviewHistory: async () => {
       readsBeforeHistory ??= reviewReads;
-      return { events: [...events], beforeCursor: null, afterCursor: null, latestSequence: events.length };
+      return { events: [...events], firstSequence: events[0]?.sequence ?? null, lastSequence: events.at(-1)?.sequence ?? null, beforeCursor: null, afterCursor: null, latestSequence: events.length };
     },
     readAgentReviewApprovals: async () => [],
     subscribeAgentReview: async (_id, _after, listener) => {

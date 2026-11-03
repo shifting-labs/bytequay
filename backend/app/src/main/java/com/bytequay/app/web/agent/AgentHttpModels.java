@@ -22,15 +22,20 @@ import com.bytequay.agent.core.ApprovalDecision;
 import com.bytequay.agent.core.ApprovalRequest;
 import com.bytequay.agent.core.StoredAgentAttachment;
 import com.bytequay.agent.core.TaskCompletion;
+import com.bytequay.agent.core.TurnId;
 import com.bytequay.agent.spi.AgentCapabilities;
 import com.bytequay.agent.spi.AgentProviderStatus;
+import com.bytequay.agent.spi.ProviderAgentEvent.MessageKind;
+import com.bytequay.agent.spi.ProviderAgentEvent.MessagePhase;
 import com.bytequay.agent.spi.ProviderAgentEventSource;
 import com.bytequay.agent.spi.ProviderApprovalRequest;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 
@@ -71,12 +76,48 @@ public final class AgentHttpModels
 
     public static HistoryResponse history(AgentHistoryPage page)
     {
+        List<AgentEventEnvelope> events = page.events();
         return new HistoryResponse(
-                page.events().stream().map(AgentHttpModels::event).collect(toImmutableList()),
+                withoutReplacedPieces(events).stream().map(AgentHttpModels::event).collect(toImmutableList()),
+                events.isEmpty() ? OptionalLong.empty() : OptionalLong.of(events.getFirst().sequence()),
+                events.isEmpty() ? OptionalLong.empty() : OptionalLong.of(events.getLast().sequence()),
                 page.beforeCursor().isPresent() ? Optional.of(Long.toString(page.beforeCursor().getAsLong())) : Optional.empty(),
                 page.afterCursor().isPresent() ? Optional.of(Long.toString(page.afterCursor().getAsLong())) : Optional.empty(),
                 page.latestSequence());
     }
+
+    /**
+     * Leaves out streamed message pieces whose completed message follows them directly in the same page. They are often most of a
+     * page, and the transcript shows the completed text in their place; a run whose completion is not in the page stays.
+     */
+    private static List<AgentEventEnvelope> withoutReplacedPieces(List<AgentEventEnvelope> events)
+    {
+        List<AgentEventEnvelope> kept = new ArrayList<>(events.size());
+        Optional<MessageItem> completed = Optional.empty();
+        for (AgentEventEnvelope event : events.reversed()) {
+            Optional<MessageItem> item = messageItem(event);
+            // The transcript treats a message with a provider event id as complete, whatever its phase.
+            boolean finished = event.source().providerEventId().isPresent();
+            boolean piece = !finished && event.payload() instanceof AgentEventPayload.AssistantMessage message && message.phase() == MessagePhase.PARTIAL;
+            if (piece && item.isPresent() && item.equals(completed)) {
+                continue;
+            }
+            completed = finished ? item : Optional.empty();
+            kept.add(event);
+        }
+        return kept.reversed();
+    }
+
+    private static Optional<MessageItem> messageItem(AgentEventEnvelope event)
+    {
+        if (!(event.payload() instanceof AgentEventPayload.AssistantMessage message) || event.source().providerItemId().isEmpty()) {
+            return Optional.empty();
+        }
+        AgentEventSource source = event.source();
+        return Optional.of(new MessageItem(event.turnId(), source.providerThreadId(), source.providerTurnId(), source.providerItemId().orElseThrow(), message.messageKind()));
+    }
+
+    private record MessageItem(Optional<TurnId> turnId, Optional<String> threadId, Optional<String> providerTurnId, String itemId, MessageKind kind) {}
 
     public static PendingApprovalResponse pendingApproval(ApprovalRequest request)
     {
@@ -140,7 +181,9 @@ public final class AgentHttpModels
             Instant resolvedAt,
             boolean timedOut) {}
 
-    public record HistoryResponse(List<EventResponse> events, Optional<String> beforeCursor, Optional<String> afterCursor, long latestSequence) {}
+    /** The events skip streamed pieces their completed message replaces; the sequence bounds are the page's own, before that. */
+    public record HistoryResponse(
+            List<EventResponse> events, OptionalLong firstSequence, OptionalLong lastSequence, Optional<String> beforeCursor, Optional<String> afterCursor, long latestSequence) {}
 
     public record PendingApprovalResponse(
             String approvalId, String taskId, String turnId, AgentEventSource source, Instant occurredAt, Instant expiresAt,

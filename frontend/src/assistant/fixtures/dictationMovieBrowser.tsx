@@ -114,7 +114,7 @@ window.bridge = new Proxy({
     conversation = { ...conversation, id, running: true, items: [...conversation.items, item(`u${conversation.items.length}`, 'USER', text)] };
     return { itemId: 'u' };
   },
-  readAgentHistory: async () => ({ events: [], beforeCursor: null, afterCursor: null, latestSequence: 0 }),
+  readAgentHistory: async () => ({ events: [], firstSequence: null, lastSequence: null, beforeCursor: null, afterCursor: null, latestSequence: 0 }),
   getLinkedWorkspaceWork: async () => [],
   getBackportChains: async () => [],
   listRunningTasks: async () => [],
