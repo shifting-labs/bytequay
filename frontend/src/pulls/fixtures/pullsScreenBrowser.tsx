@@ -1189,8 +1189,10 @@ export async function runSelectionStability(): Promise<string> {
     } satisfies Pick<Bridge, 'getUserProfile' | 'getWorkspaceHostingViewer' | 'fetchWorkspaceHostingAttention' | 'fetchPrs' | 'onPullRequestsSynced' | 'listWorkspaces' | 'fetchAttentionPrs'
       | 'fetchPullRequestDetailByRef' | 'refreshPullRequestDetailByRef' | 'refreshAllPullRequestDetailByRef' | 'recordRecentTouch'>;
     Object.assign(window, { bridge });
-    flushSync(() => root.render(<PullsScreen key={String(link)} initialPr={link ? { repo: older.repo, number: older.number } : undefined}
+    // Each render passes a new callback, as the workspace page does.
+    const render = () => flushSync(() => root.render(<PullsScreen key={String(link)} initialPr={link ? { repo: older.repo, number: older.number } : undefined}
       onSelectPullRequest={reference => navigations.push(reference.number)} />));
+    render();
     if (link) {
       // The link resolves after page zero renders; its wait must never paint another pull request.
       let intruder: string | undefined;
@@ -1225,6 +1227,10 @@ export async function runSelectionStability(): Promise<string> {
       'Sync must keep unselected rows from later pages mounted throughout the refresh');
     assert(open() === older.title && navigations.length === 0,
       `Refresh and sync must keep ${older.title} open, not ${open()} (navigated to ${navigations.join(', ')})`);
+    // The host renders when another page's route is set, before its hashchange; rewriting the route then cancels that navigation.
+    render();
+    await settle();
+    assert(navigations.length === 0, `A host render must not rewrite the route (navigated to ${navigations.join(', ')})`);
   };
 
   try {

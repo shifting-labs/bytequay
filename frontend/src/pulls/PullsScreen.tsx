@@ -767,6 +767,9 @@ function PullsContent({
     ? null
     : { id: selectedPr.id, key: `${selectedPr.repo.toLowerCase()}#${selectedPr.number}`, pr: selectedPr };
 
+  // Only a new selection writes the route. A host may pass a new callback on every render, and a render between another page's
+  // hash change and its hashchange event would otherwise replace that route with this pull request's.
+  const selectPullRequest = useRef(onSelectPullRequest); selectPullRequest.current = onSelectPullRequest;
   useEffect(() => {
     if (singlePullRequest) return;
     if (selectedPrId === undefined || selectedPrNumber === undefined || selectedPrRepo === undefined) return;
@@ -779,8 +782,8 @@ function PullsContent({
       setSelected(selectedPrId);
       return;
     }
-    onSelectPullRequest?.({ repo: selectedPrRepo, number: selectedPrNumber }, 'replace');
-  }, [onSelectPullRequest, singlePullRequest, selected, selectedPrId, selectedPrNumber, selectedPrRepo]);
+    selectPullRequest.current?.({ repo: selectedPrRepo, number: selectedPrNumber }, 'replace');
+  }, [singlePullRequest, selected, selectedPrId, selectedPrNumber, selectedPrRepo]);
 
   const localReview = useLocalReviewThreads(selectedPr === null ? null : {
     repo: selectedPr.repo, number: selectedPr.number, workspaceId: repositoryScope?.workspaceId,
