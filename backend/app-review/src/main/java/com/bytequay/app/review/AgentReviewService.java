@@ -492,6 +492,38 @@ public class AgentReviewService
         });
     }
 
+    /** Moves a pull request review's working copy to the pushed head without a run; saved edits come along as in {@link #update}. */
+    public AgentReviewProjection catchUp(String reviewId)
+    {
+        AgentReview review = requireOpen(reviewId);
+        if (!remoteReview(review)) {
+            throw new ReviewConflictException("Only a pull request review's working copy follows its pushes");
+        }
+        String target = review.observedHeadSha().orElseThrow();
+        WorkspaceRepositoryContext workspace = workspaces.requireReadyRepository(review.workspaceId());
+        if (!fetchReviewHead(review, workspace).equals(target)) {
+            refresh.refreshAllDetail(pullRequests.prepareRead(review.workspaceId(), review.repo(), review.number().orElseThrow()));
+            throw new ReviewConflictException("The pull request's latest commit is not available yet; try again");
+        }
+        return withLock(locks.lock(reviewId), () -> {
+            AgentReview current = requireOpen(reviewId);
+            if (!current.observedHeadSha().equals(Optional.of(target))) {
+                throw new ReviewConflictException("The pull request moved again; try again");
+            }
+            AgentTask task = tasks.get(TaskId.valueOf(current.taskId()));
+            List<ReviewRun> runs = store.listRuns(reviewId);
+            LocalRunService.requireIdle(turns, runs, current, task);
+            if (runs.stream().anyMatch(ReviewRun::active)) {
+                throw new ReviewConflictException("Finish or stop the current review before updating its code");
+            }
+            turns.synchronizeWorktree(task.id(), task.version(),
+                    claimed -> moveWorktree(claimed, current.worktreeHeadSha().or(() -> latestRun(reviewId).map(ReviewRun::headSha)), target, workspace));
+            store.updateReview(requireOpen(reviewId).withWorktreeHead(target, Instant.now(clock)));
+            syncFailures.remove(reviewId);
+            return projection(reviewId);
+        });
+    }
+
     /** Regenerates only the displayed change explanation at the latest committed head. */
     public AgentReviewProjection refreshExplanation(String reviewId, String runId, int expectedRevision)
     {

@@ -224,6 +224,14 @@ function Workbench({ runtime, context, connection }: { runtime: IdeRuntime; cont
   useEffect(() => {
     if (behindNotice !== null && context.review !== null) void request('review.changed', context.review).catch(() => {});
   }, [behindNotice !== null, files?.revision, files?.targetRevision]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [catchingUp, setCatchingUp] = useState(false);
+  const catchUp = async () => {
+    setCatchingUp(true);
+    // A fresh file list shows the new revision at once and reloads the open files.
+    try { await request('catchUpWorkingCopy'); setFilesReload(value => value + 1); }
+    catch (cause) { setError(String(cause)); }
+    finally { setCatchingUp(false); }
+  };
 
   const selected = active?.document.uri.scheme === 'vscode-remote' && active.document.uri.path.startsWith(connection.root + '/')
     ? active.document.uri.path.slice(connection.root.length + 1) : null;
@@ -301,7 +309,8 @@ function Workbench({ runtime, context, connection }: { runtime: IdeRuntime; cont
         localStorage.setItem('bytequay.ide.theme', value); setTheme(value);
       }}><option>Follow app</option><option value="ByteQuay IDEA Light">ByteQuay Light</option><option>ByteQuay Darcula</option><option>GitHub Light</option><option>GitHub Dark</option></select>
     </header>
-    {behindNotice !== null && <div className="ide-notice" role="status">{behindNotice}</div>}
+    {behindNotice !== null && <div className="ide-notice" role="status"><span>{behindNotice}</span>
+      <button disabled={catchingUp} onClick={() => { void catchUp(); }}>{catchingUp ? 'Updating…' : 'Update code'}</button></div>}
     {executionError && <div className="ide-notice" role="alert">{executionError}</div>}
     {execution?.treeUnverified && <div className="ide-notice" role="status">Execution finished; verifying process cleanup.
       <button onClick={() => { void runtime.executions.stop(true).catch(cause => setError(String(cause))); }}>Stop code tools to finish cleanup</button>

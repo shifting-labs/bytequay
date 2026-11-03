@@ -91,13 +91,13 @@ function draftItem(overrides: Partial<ReviewDraftDto['items'][number]> = {}): Re
 it('tells Tears of time why its working copy is behind the pull request, and nothing once it caught up', () => {
   const at = 'a'.repeat(40);
   const pushed = 'b'.repeat(40);
-  const sync = (state: 'CURRENT' | 'BLOCKED', dirty = false) => ({ state, headSha: at, targetHeadSha: pushed, dirty, reason: null });
+  const sync = (state: 'CURRENT' | 'BLOCKED', reason: string | null) => ({ state, headSha: at, targetHeadSha: pushed, dirty: reason !== null, reason });
   expect(workingCopyBehindNotice(at, null, reviewFixture())).toBeNull();
   expect(workingCopyBehindNotice(pushed, pushed, reviewFixture())).toBeNull();
   // A review read before the push still reports CURRENT; the file list's target is the newer fact.
-  expect(workingCopyBehindNotice(at, pushed, reviewFixture({ worktreeSync: sync('CURRENT') }))).toBe('Working copy is at aaaaaaa, behind the PR at bbbbbbb. Catching up.');
-  expect(workingCopyBehindNotice(at, pushed, reviewFixture({ worktreeSync: sync('BLOCKED', true) })))
-    .toMatch(/^Working copy is stale · Saved local changes are preserved; this branch is out of date\./);
+  expect(workingCopyBehindNotice(at, pushed, reviewFixture({ worktreeSync: sync('CURRENT', null) }))).toBe('Working copy is at aaaaaaa, behind the PR at bbbbbbb');
+  expect(workingCopyBehindNotice(at, pushed, reviewFixture({ worktreeSync: sync('BLOCKED', 'Saved local changes are preserved') })))
+    .toBe('Working copy is at aaaaaaa, behind the PR at bbbbbbb · Saved local changes are preserved');
 });
 
 describe('review status', () => {

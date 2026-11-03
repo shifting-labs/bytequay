@@ -276,6 +276,13 @@ export class IdeViews {
         }
         return backendJson(url).then(parse);
       }
+      if (method === 'catchUpWorkingCopy') {
+        const host = editor.host;
+        if (host.kind !== 'review') throw new Error('Only a review working copy follows its pull request');
+        // Fetching and moving a large checkout can take minutes; the editor learns the result from its file list.
+        return backendJson(`${backendBase()}/api/agent-review/${encodeURIComponent(host.reviewId)}/catch-up`, { method: 'POST', signal: AbortSignal.timeout(15 * 60_000) })
+          .then(() => undefined);
+      }
       if (method === 'readCodeBlame') {
         const host = editor.host;
         const route = host.kind === 'review' ? `/reviews/${encodeURIComponent(host.reviewId)}` : `/tasks/${encodeURIComponent(host.workspaceId)}/${encodeURIComponent(host.taskId)}`;

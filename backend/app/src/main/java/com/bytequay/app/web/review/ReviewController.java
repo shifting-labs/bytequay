@@ -229,6 +229,12 @@ public class ReviewController
         return ReviewHttpModels.review(reviews.update(reviewId));
     }
 
+    @PostMapping("/{reviewId}/catch-up")
+    public ReviewHttpModels.ReviewResponse catchUp(@PathVariable String reviewId)
+    {
+        return ReviewHttpModels.review(reviews.catchUp(reviewId));
+    }
+
     @PostMapping("/{reviewId}/explanation/refresh")
     public ReviewHttpModels.ReviewResponse refreshExplanation(@PathVariable String reviewId, @RequestBody ReviewHttpModels.RefreshExplanationRequest request)
     {

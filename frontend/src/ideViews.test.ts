@@ -574,6 +574,17 @@ it('reads blame only for the current task and keeps backend credentials in main'
 });
 
 
+it('moves only its own review working copy on a click and hands the editor no review data', async () => {
+  const review = { kind: 'review', reviewId: 'review' };
+  const id = await invoke('ide:open', parent(), review);
+  invoke('ide:update', parent(), id, { host: review, task: null, review: { id: 'review', state: 'OPEN' }, detail: null });
+  expect(() => invoke('ide:request', child(), 'catchUpWorkingCopy', [], false)).toThrow('user click');
+  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ id: 'review', findings: [] })));
+  await expect(invoke('ide:request', child(), 'catchUpWorkingCopy', [], true)).resolves.toBeUndefined();
+  expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:9527/api/agent-review/review/catch-up', expect.objectContaining({ method: 'POST' }));
+  expect(sender.send).not.toHaveBeenCalledWith('ide:request', expect.anything());
+});
+
 it('bounds history queries to fixed read routes and validated revisions', async () => {
   const id = await invoke('ide:open', parent(), host);
   invoke('ide:update', parent(), id, { host, task: null, review: null, detail: null });

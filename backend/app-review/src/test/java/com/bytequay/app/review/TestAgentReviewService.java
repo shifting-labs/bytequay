@@ -3116,6 +3116,25 @@ class TestAgentReviewService
     }
 
     @Test
+    void explicitCatchUpMovesTheCodeWithItsSavedEditsAndStartsNoRun()
+    {
+        Fixture fixture = rewrittenHistory();
+        AutoCheckout checkout = new AutoCheckout(fixture);
+        String reviewId = fixture.store.listOpenReviews().getFirst().id();
+        checkout.entries = "1 .M N... 100644 100644 100644 a b saved.txt\0";
+        fixture.service.observeHead(12L, NEW_HEAD);
+        assertThat(checkout.head).isEqualTo(HEAD);
+
+        fixture.service.catchUp(reviewId);
+
+        assertThat(checkout.head).isEqualTo(NEW_HEAD);
+        assertThat(fixture.store.findReview(reviewId).orElseThrow().worktreeHeadSha()).contains(NEW_HEAD);
+        assertThat(fixture.store.listRuns(reviewId)).hasSize(1);
+        verify(fixture.experiments).synchronize(any(TaskWorktree.class), eq(HEAD), eq(NEW_HEAD), any(Runnable.class));
+        verify(fixture.turns, times(2)).start(any(StartAgentTurnCommand.class));
+    }
+
+    @Test
     void staleObservedHeadCannotRollBackANewerFetchedRemoteRevision()
     {
         Fixture fixture = rewrittenHistory();

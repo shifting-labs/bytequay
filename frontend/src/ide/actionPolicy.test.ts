@@ -136,6 +136,14 @@ it('asks an open review agent to run tests only by their code names', () => {
   expect(() => validateIdeAction('run.agent', ['run', []], { ...context, host: { kind: 'task', taskId: 'task', workspaceId: 'workspace' } }, true)).toThrow('Open a review');
 });
 
+it('moves only an open review working copy to its pull request, and only on a click', () => {
+  expect(() => validateIdeAction('catchUpWorkingCopy', [], context, true)).not.toThrow();
+  expect(() => validateIdeAction('catchUpWorkingCopy', [], context, false)).toThrow('user click');
+  expect(() => validateIdeAction('catchUpWorkingCopy', ['other-review'], context, true)).toThrow('arguments');
+  expect(() => validateIdeAction('catchUpWorkingCopy', [], { ...context, review: { ...review, state: 'CLOSED' } }, true)).toThrow('Open a review');
+  expect(() => validateIdeAction('catchUpWorkingCopy', [], { ...context, host: { kind: 'task', taskId: 'task', workspaceId: 'workspace' } }, true)).toThrow('Open a review');
+});
+
 it('rejects removed working-copy menu actions', () => {
   for (const method of ['worktree.reset', 'worktree.discard']) {
     expect(() => validateIdeAction(method, [], context, true)).toThrow('unavailable');

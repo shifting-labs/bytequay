@@ -169,8 +169,9 @@ export function reviewWorktreeNotice(review: AgentReviewDto): { label: string; m
 /** What Tears of time says while its working copy is not at the pull request's latest head; the review's own sync view gives the reason once read. */
 export function workingCopyBehindNotice(revision: string, target: string | null, review: AgentReviewDto | null): string | null {
   if (target === null || target === revision) return null;
-  const sync = review !== null && review.worktreeSync?.state !== 'CURRENT' ? reviewWorktreeNotice(review) : null;
-  return sync !== null ? `${sync.label} · ${sync.message}` : `Working copy is at ${shortSha(revision)}, behind the PR at ${shortSha(target)}. Catching up.`;
+  const sync = review?.worktreeSync;
+  const reason = sync != null && sync.state !== 'CURRENT' ? sync.reason : null;
+  return `Working copy is at ${shortSha(revision)}, behind the PR at ${shortSha(target)}${reason === null ? '' : ` · ${reason}`}`;
 }
 
 export function reviewStatus(review: AgentReviewDto): ReviewStatusView {
