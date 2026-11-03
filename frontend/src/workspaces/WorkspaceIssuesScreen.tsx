@@ -319,7 +319,8 @@ export default function WorkspaceIssuesScreen({ workspaceId, repository, initial
       .then(value => {
         if (cancelled) return;
         apply(value);
-        if (value.syncedAt !== null && Date.now() - Date.parse(value.syncedAt) < ISSUES_SYNC_ON_OPEN_MS) return;
+        // The overlay shows one issue, which the backend's minute refresh keeps current; a full sync walks every open issue for nothing.
+        if (overlay || (value.syncedAt !== null && Date.now() - Date.parse(value.syncedAt) < ISSUES_SYNC_ON_OPEN_MS)) return;
         // Quiet, like other background refreshes: the stored list stays on screen and a failure says nothing.
         void window.bridge.refreshWorkspaceIssues(workspaceId).then(fresh => {
           if (cancelled) return;
@@ -335,7 +336,7 @@ export default function WorkspaceIssuesScreen({ workspaceId, repository, initial
       .then(value => { if (!cancelled) setMetadata(value); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [apply, workspaceId]);
+  }, [apply, overlay, workspaceId]);
 
   // The backend keeps the stored issues current; reread the loaded pages so the open list follows it.
   useEffect(() => {
@@ -374,13 +375,14 @@ export default function WorkspaceIssuesScreen({ workspaceId, repository, initial
       setPaneOpen(true);
       return;
     }
-    let cancelled = false;
+    // Only another issue makes this read stale: a newer page re-runs the effect without reading again.
+    const cancelled = () => openedInitialIssue.current !== initialIssueNumber;
     void window.bridge.fetchWorkspaceIssue(workspaceId, initialIssueNumber)
       .catch((): null => null)
       .then(issue => issue ?? readPreview(initialIssueNumber))
       // Named, so the preview's state survives: a cached issue and a preview of one would otherwise collapse into the cached type.
       .then((issue: Issue | (Issue & { state: string })) => {
-        if (cancelled) return;
+        if (cancelled()) return;
         if ('state' in issue) {
           setPreviewIssue(issue);
           setClosedIssueId(issue.state.toLowerCase() === 'closed' ? issue.id : null);
@@ -393,9 +395,8 @@ export default function WorkspaceIssuesScreen({ workspaceId, repository, initial
         setPaneOpen(true);
       })
       .catch(failure => {
-        if (!cancelled) setError(errorMessage(failure));
+        if (!cancelled()) setError(errorMessage(failure));
       });
-    return () => { cancelled = true; };
   }, [initialIssueNumber, loading, snapshot, workspaceId, readPreview]);
 
   const loadMore = useCallback(async () => {

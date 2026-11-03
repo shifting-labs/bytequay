@@ -152,6 +152,37 @@ async function zoomsOneIssue(): Promise<void> {
   finally { flushSync(() => { root.unmount(); baseRoot.unmount(); }); host.remove(); baseHost.remove(); }
 }
 
+async function zoomReadsOnlyItsIssue(): Promise<void> {
+  const issue = (number: number): Issue => ({
+    id: 7000 + number, epicId: `ISSUE:github.com:${7000 + number}`, number, title: `Issue ${number}`, body: 'Details', author: 'alice', authorAvatarUrl: '',
+    htmlUrl: `https://github.com/upstream/app/issues/${number}`, labels: [], assignees: [], commentCount: 0,
+    createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-02T00:00:00Z',
+  });
+  // The zoomed issue is past the stored first page, so it is read on its own.
+  const read = Promise.withResolvers<Issue>();
+  let stored = [issue(7)];
+  let syncs = 0;
+  window.bridge = {
+    ...issueReads(() => stored),
+    fetchWorkspaceIssue: () => read.promise,
+    refreshWorkspaceIssues: async () => { syncs++; throw new Error('No full sync'); },
+  } as unknown as Bridge;
+  const host = document.createElement('div'); document.body.append(host);
+  const root = createRoot(host);
+  try {
+    flushSync(() => root.render(<WorkspaceIssuesScreen workspaceId="workspace-1" repository="upstream/app" initialIssueNumber={90} onClose={() => {}} />));
+    await settle();
+    // The stored page is reread while the issue is still on its way.
+    stored = [issue(7), issue(8)];
+    document.dispatchEvent(new Event('visibilitychange')); await settle();
+    read.resolve(issue(90)); await settle(); await settle();
+    const title = host.querySelector('.issues-detail h1')?.textContent?.trim();
+    assert(title === 'Issue 90 #90', `The zoom keeps the issue it read while the stored page changed: ${title ?? host.textContent}`);
+    assert(syncs === 0, 'The zoom never syncs every open issue, even from a never-synced store');
+  }
+  finally { flushSync(() => root.unmount()); host.remove(); }
+}
+
 async function epicTabs(): Promise<void> {
   const issues = [24, 25].map((number): Issue => ({
     id: 7000 + number, epicId: `ISSUE:github.com:${7000 + number}`, number, title: number === 24 ? 'Migrate every connector to MemoryContext' : 'Not an Epic', body: 'Follows #23', author: 'alice',
@@ -339,6 +370,7 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
   const scenarios: [string, () => Promise<void>][] = [
     ['Closing an issue keeps it in view until the reader leaves', closeKeepsIssue],
     ['An issue reference zooms that issue over the page it came from', zoomsOneIssue],
+    ['A zoomed issue reads only itself and survives a reread', zoomReadsOnlyItsIssue],
     ['An Epic switches between its issue and its work in one card', epicTabs],
     ['Search and clickable labels filter only the loaded issues', filtersLoadedIssues],
     ['A closed issue reminder opens the latest read-only preview', closedIssueReminder],
