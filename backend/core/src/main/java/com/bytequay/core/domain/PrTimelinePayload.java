@@ -27,6 +27,7 @@ import static java.util.Objects.requireNonNull;
 public record PrTimelinePayload(
         String actorAvatarUrl,
         boolean actorBot,
+        Boolean authorCanPush,
         String state,
         String htmlUrl,
         String requestedReviewer,

@@ -424,7 +424,7 @@ final class PullRequestActions
             });
             List<PrTimelineEvent> timeline = new ArrayList<>(cached.timeline());
             created.filter(review -> review.remoteId() != null && review.submittedAt() != null).ifPresent(review -> {
-                PrTimelineEvent reviewed = reviewedTimelineEvent(review);
+                PrTimelineEvent reviewed = reviewedTimelineEvent(review, cached.viewerCanWrite());
                 timeline.removeIf(event -> Objects.equals(event.remoteId(), reviewed.remoteId()) && reviewed.event().equals(event.event()));
                 timeline.add(reviewed);
             });
@@ -440,7 +440,7 @@ final class PullRequestActions
                 .orElseGet(() -> readDetail.apply(route));
     }
 
-    private static PrTimelineEvent reviewedTimelineEvent(PrReviewState review)
+    private static PrTimelineEvent reviewedTimelineEvent(PrReviewState review, boolean viewerCanWrite)
     {
         return new PrTimelineEvent(
                 review.remoteId(),
@@ -451,6 +451,7 @@ final class PullRequestActions
                 PrTimelinePayload.builder()
                         .actorAvatarUrl(review.avatarUrl())
                         .actorBot(review.bot())
+                        .authorCanPush(viewerCanWrite)
                         .state(review.state())
                         .htmlUrl(review.htmlUrl())
                         .build(),

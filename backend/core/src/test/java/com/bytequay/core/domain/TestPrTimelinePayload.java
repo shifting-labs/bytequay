@@ -33,7 +33,7 @@ class TestPrTimelinePayload
         PrTimelineComment comment = new PrTimelineComment(
                 1L, "reviewer", "avatar", false, Instant.EPOCH, "comment", "comment-url", 2L, 3L, ImmutableList.of(reaction));
         PrTimelinePayload original = new PrTimelinePayload(
-                "avatar", true, "APPROVED", "url", "reviewer", "assignee", "label", "color", "old", "new",
+                "avatar", true, true, "APPROVED", "url", "reviewer", "assignee", "label", "color", "old", "new",
                 "sha", "message", "source", "source-url", 42, "milestone",
                 new PrMergeQueueRemoval(Optional.of("failed_checks"), Optional.of("commit-url"), ImmutableList.of()), "file.java", "hunk", 10, 11, 12, 13,
                 "RIGHT", true, true, ImmutableList.of(reaction), ImmutableList.of(comment));

@@ -433,7 +433,7 @@ class TestGitHubPullRequestOverviewClient
     }
 
     @Test
-    void addsGraphQlReactionsToReviewTimelineEvents()
+    void addsGraphQlReactionsAndPushAccessToReviewTimelineEvents()
     {
         server.expect(requestTo("https://api.github.test/repos/owner/repo/issues/42/timeline?per_page=100&page=1"))
                 .andRespond(withSuccess("""
@@ -446,7 +446,7 @@ class TestGitHubPullRequestOverviewClient
         graphServer.expect(requestTo("https://api.github.test/graphql"))
                 .andRespond(withSuccess("""
                         {"data":{"repository":{"pullRequest":{"reviews":{
-                          "nodes":[{"databaseId":5,"reactionGroups":[
+                          "nodes":[{"databaseId":5,"authorCanPushToRepository":false,"reactionGroups":[
                             {"content":"THUMBS_UP","users":{"totalCount":1},"viewerHasReacted":true},
                             {"content":"HEART","users":{"totalCount":2},"viewerHasReacted":false},
                             {"content":"EYES","users":{"totalCount":0},"viewerHasReacted":true}]}],
@@ -460,7 +460,9 @@ class TestGitHubPullRequestOverviewClient
         assertThat(timeline.getFirst().payload().reactions())
                 .extracting(reaction -> reaction.content() + ":" + reaction.count() + ":" + reaction.viewerHasReacted())
                 .containsExactly("+1:1:true", "heart:2:false");
+        assertThat(timeline.getFirst().payload().authorCanPush()).isFalse();
         assertThat(timeline.getLast().payload().reactions()).isEmpty();
+        assertThat(timeline.getLast().payload().authorCanPush()).isNull();
     }
 
     @Test

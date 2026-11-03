@@ -531,6 +531,19 @@ describe('PullOverview', () => {
     expect(html).toContain('role="menuitemcheckbox" class="is-active" aria-checked="true" aria-label="Add or remove thumbs up reaction"');
   });
 
+  it('greys approvals from reviewers who cannot push', () => {
+    const value = detail();
+    value.recentActivity = [
+      timelineActivity({ actor: 'carol', eventType: 'reviewed', timestamp: '2026-08-20T09:20:00Z', remoteId: 72 }, { state: 'approved', authorCanPush: true }),
+      timelineActivity({ actor: 'dave', eventType: 'reviewed', timestamp: '2026-08-20T09:30:00Z', remoteId: 73 }, { state: 'approved', authorCanPush: false }),
+    ];
+
+    const html = renderToStaticMarkup(<PullOverview pr={pullRequest()} detail={value} onRefresh={async () => {}} />);
+
+    expect(html.match(/class="pr-review-badge is-approved"/g)).toHaveLength(1);
+    expect(html.match(/class="pr-review-badge is-approved-no-write" title="Approved without write access"/g)).toHaveLength(1);
+  });
+
   it('renders review submission as an overlay without replacing the pull request', () => {
     const html = renderToStaticMarkup(<ReviewDialog
       pr={pullRequest()}

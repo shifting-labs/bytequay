@@ -22,6 +22,7 @@ export function canSubmitReview(pr: PullRequestDto, detail: PullRequestDetailDto
 export const EMPTY_TIMELINE_PAYLOAD: PullTimelinePayloadDto = {
   actorAvatarUrl: null,
   actorBot: false,
+  authorCanPush: null,
   state: null,
   htmlUrl: null,
   label: null,

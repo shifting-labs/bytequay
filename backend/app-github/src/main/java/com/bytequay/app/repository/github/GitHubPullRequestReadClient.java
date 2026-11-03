@@ -842,11 +842,11 @@ public class GitHubPullRequestReadClient
             return timeline;
         }
         try {
-            Map<Long, List<PrReaction>> reactions = fetchReviewReactions(pat, pr);
+            Map<Long, GitHubReviewsResponse.Review> reviews = fetchReviews(pat, pr);
             return timeline.stream()
-                    .map(event -> event.remoteId() == null
-                            ? event
-                            : withReviewReactions(event, reactions.get(event.remoteId())))
+                    .map(event -> "reviewed".equals(event.event()) && reviews.containsKey(event.remoteId())
+                            ? withReview(event, reviews.get(event.remoteId()))
+                            : event)
                     .collect(toImmutableList());
         }
         catch (RestClientResponseException ignored) {
@@ -854,7 +854,7 @@ public class GitHubPullRequestReadClient
         }
     }
 
-    private Map<Long, List<PrReaction>> fetchReviewReactions(String pat, PullRequestRef pr)
+    private Map<Long, GitHubReviewsResponse.Review> fetchReviews(String pat, PullRequestRef pr)
     {
         String query = """
                 query($owner:String!,$repo:String!,$number:Int!,$after:String) {
@@ -862,34 +862,27 @@ public class GitHubPullRequestReadClient
                   repository(owner:$owner,name:$repo) {
                     pullRequest(number:$number) {
                       reviews(first:100,after:$after) {
-                        nodes { databaseId reactionGroups { content users { totalCount } viewerHasReacted } }
+                        nodes { databaseId authorCanPushToRepository reactionGroups { content users { totalCount } viewerHasReacted } }
                         pageInfo { hasNextPage endCursor }
                       }
                     }
                   }
                 }
                 """;
-        Map<Long, List<PrReaction>> out = new LinkedHashMap<>();
-        forEachGraphQlPage(pat, pr, query, GitHubReviewReactionsResponse.class, response -> {
-            GitHubReviewReactionsResponse.Reviews reviews = Optional.ofNullable(response)
-                    .map(GitHubReviewReactionsResponse::data)
-                    .map(GitHubReviewReactionsResponse.Data::repository)
-                    .map(GitHubReviewReactionsResponse.Repository::pullRequest)
-                    .map(GitHubReviewReactionsResponse.PullRequest::reviews)
+        Map<Long, GitHubReviewsResponse.Review> out = new LinkedHashMap<>();
+        forEachGraphQlPage(pat, pr, query, GitHubReviewsResponse.class, response -> {
+            GitHubReviewsResponse.Reviews reviews = Optional.ofNullable(response)
+                    .map(GitHubReviewsResponse::data)
+                    .map(GitHubReviewsResponse.Data::repository)
+                    .map(GitHubReviewsResponse.Repository::pullRequest)
+                    .map(GitHubReviewsResponse.PullRequest::reviews)
                     .orElse(null);
             if (reviews == null) {
                 return null;
             }
-            for (GitHubReviewReactionsResponse.Review review : Optional.ofNullable(reviews.nodes()).orElse(ImmutableList.of())) {
-                if (review.databaseId() == null) {
-                    continue;
-                }
-                List<PrReaction> counts = Optional.ofNullable(review.reactionGroups()).orElse(ImmutableList.of()).stream()
-                        .filter(group -> group.users() != null && group.users().totalCount() > 0)
-                        .map(group -> new PrReaction(reactionContent(group.content()), group.users().totalCount(), group.viewerHasReacted()))
-                        .collect(toImmutableList());
-                if (!counts.isEmpty()) {
-                    out.put(review.databaseId(), counts);
+            for (GitHubReviewsResponse.Review review : Optional.ofNullable(reviews.nodes()).orElse(ImmutableList.of())) {
+                if (review.databaseId() != null) {
+                    out.put(review.databaseId(), review);
                 }
             }
             return reviews.pageInfo();
@@ -974,10 +967,15 @@ public class GitHubPullRequestReadClient
         return ImmutableMap.copyOf(out);
     }
 
-    private static PrTimelineEvent withReviewReactions(PrTimelineEvent event, List<PrReaction> reactions)
+    private static PrTimelineEvent withReview(PrTimelineEvent event, GitHubReviewsResponse.Review review)
     {
-        if (reactions == null || reactions.isEmpty()) {
-            return event;
+        List<PrReaction> reactions = Optional.ofNullable(review.reactionGroups()).orElse(ImmutableList.of()).stream()
+                .filter(group -> group.users() != null && group.users().totalCount() > 0)
+                .map(group -> new PrReaction(reactionContent(group.content()), group.users().totalCount(), group.viewerHasReacted()))
+                .collect(toImmutableList());
+        PrTimelinePayload.Builder payload = PrTimelinePayload.builder(event.payload()).authorCanPush(review.authorCanPushToRepository());
+        if (!reactions.isEmpty()) {
+            payload.reactions(reactions);
         }
         return new PrTimelineEvent(
                 event.remoteId(),
@@ -985,7 +983,7 @@ public class GitHubPullRequestReadClient
                 event.actor(),
                 event.timestamp(),
                 event.body(),
-                PrTimelinePayload.builder(event.payload()).reactions(reactions).build(),
+                payload.build(),
                 event.localEventKey());
     }
 
@@ -1474,7 +1472,7 @@ public class GitHubPullRequestReadClient
         public record Parent(String sha) {}
     }
 
-    private record GitHubReviewReactionsResponse(Data data)
+    private record GitHubReviewsResponse(Data data)
     {
         public record Data(Repository repository) {}
 
@@ -1484,7 +1482,7 @@ public class GitHubPullRequestReadClient
 
         public record Reviews(List<Review> nodes, GitHubReviewThreadsResponse.PageInfo pageInfo) {}
 
-        public record Review(Long databaseId, List<ReactionGroup> reactionGroups) {}
+        public record Review(Long databaseId, Boolean authorCanPushToRepository, List<ReactionGroup> reactionGroups) {}
 
         public record ReactionGroup(String content, Users users, Boolean viewerHasReacted) {}
 

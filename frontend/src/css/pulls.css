@@ -938,8 +938,9 @@
 .md-alert.is-caution { border-left-color: var(--fg-danger); }
 .md-alert.is-caution > strong { color: var(--fg-danger); }
 
-.pr-review-badge { border: 1px solid; border-radius: 999px; padding: 2px 8px; font-size: 10.5px; font-weight: 600; }
-.pr-review-badge.is-approved { border-color: light-dark(#aceebb, var(--dark-green-border)); background: var(--bg-success); color: var(--fg-success); }
+.pr-review-badge { display: inline-flex; align-items: center; gap: 3px; border: 1px solid; border-radius: 999px; padding: 2px 8px; font-size: 10.5px; font-weight: 600; }
+.pr-review-badge.is-approved { border-color: light-dark(#1f883d, #287a43); background: light-dark(#1f883d, #287a43); color: var(--on-solid); }
+.pr-review-badge.is-approved-no-write { border-color: var(--line-default); background: light-dark(#eff2f4, var(--dark-subtle)); color: var(--fg-subtle); }
 .pr-review-badge.is-changes { border-color: light-dark(#ffcecb, var(--dark-red-soft)); background: var(--bg-danger); color: var(--fg-danger); }
 .pr-review-badge.is-dismissed { border-color: var(--line-default); background: light-dark(#eff2f4, var(--dark-subtle)); color: var(--fg-subtle); }
 .pr-reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 18px 15px; }

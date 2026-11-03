@@ -305,6 +305,8 @@ export type PullTimelinePayloadDto = {
   mergeQueueRemoval?: PullMergeQueueRemovalDto | null;
   actorAvatarUrl: string | null;
   actorBot: boolean;
+  /** Whether a review's author can push to the repository; null when unknown. */
+  authorCanPush: boolean | null;
   state: string | null;
   htmlUrl: string | null;
   label: string | null;

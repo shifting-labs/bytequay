@@ -13,7 +13,7 @@
  */
 import { readPullRequestViewer, usePullRequestBridge, useHostingPresentation } from './PullRequestWorkspace';
 import { shortSha } from '@bytequay/ui/displayText';
-import { Copy, Ellipsis, ExternalLink, Eye, GitCommitHorizontal, Link, LoaderCircle, Pencil, Quote, Tag } from 'lucide-react';
+import { Check, Copy, Ellipsis, ExternalLink, Eye, GitCommitHorizontal, Link, LoaderCircle, Pencil, Quote, Tag } from 'lucide-react';
 import { errorMessage } from '../errorMessage';
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { TaskDiscussionDto } from '../agents/discussions/contracts';
@@ -539,7 +539,6 @@ function CommentCard({ activity, viewerLogin, privateThreads, pr, onDetailUpdate
   onDetailUpdate: PullDetailUpdater;
   onQuote: (body: string) => void;
 }) {
-  const state = activity.payload.state?.toUpperCase();
   const actor = displayActor(activity.actor || 'github');
   const body = activity.body?.trim() ? activity.body : null;
   const [editDraft, setEditDraft] = useState<string | null>(null);
@@ -558,7 +557,7 @@ function CommentCard({ activity, viewerLogin, privateThreads, pr, onDetailUpdate
   // The backend resolves review: keys from the same reviewed event this card renders.
   const threadKey = privateThreads === undefined || body === null || commentId === null ? null
     : privateThreadKey(activity.eventType === 'reviewed' ? 'review' : 'issue_comment', commentId);
-  const badge = reviewBadge(state);
+  const badge = reviewBadge(activity.payload);
   if (!body) {
     return <article className="pr-card pr-review-event">
       <CardHeader actor={actor} avatarUrl={activity.payload.actorAvatarUrl} bot={activity.payload.actorBot}
@@ -579,7 +578,7 @@ function CommentCard({ activity, viewerLogin, privateThreads, pr, onDetailUpdate
       <ReviewThreadMessage timestamp={activity.timestamp}
         author={<UserAvatar login={actor} avatarUrl={activity.payload.actorAvatarUrl} size={22} showLogin />}
         tag={<>{activity.payload.actorBot && <span className="pr-bot">Bot</span>}
-          {badge && <span className={`pr-review-badge ${badge.className}`}>{badge.text}</span>}</>}
+          {badge}</>}
         menu={<>{reaction && <ReactionPicker action={reaction} />}
           {privateThreads !== undefined && threadKey !== null && <PrivateThreadControls threads={privateThreads} threadKey={threadKey}
             own={isViewerComment(activity.actor, viewerLogin)} comment={{ author: actor, body, url: activity.payload.htmlUrl ?? pr.htmlUrl, location: null }} />}
@@ -609,7 +608,7 @@ function ReviewGroup({ activities, viewerLogin, privateThreads, pr, workspaceId,
 }) {
   const review = activities[0];
   const actor = displayActor(review.actor || 'github');
-  const badge = reviewBadge(review.payload.state?.toUpperCase());
+  const badge = reviewBadge(review.payload);
   return (
     <section className="pr-review-group">
       <div className="pr-review-group__summary">
@@ -618,7 +617,7 @@ function ReviewGroup({ activities, viewerLogin, privateThreads, pr, workspaceId,
         {review.payload.actorBot && <span className="pr-bot-badge">Bot</span>}
         <span>reviewed</span>
         <time>{relativeTime(review.timestamp)}</time>
-        {badge && <span className={`pr-review-badge ${badge.className}`}>{badge.text}</span>}
+        {badge}
       </div>
       {review.body?.trim() && (
         <CommentCard activity={review} viewerLogin={viewerLogin} privateThreads={privateThreads} pr={pr} onDetailUpdate={onDetailUpdate} onQuote={onQuote} />
@@ -1114,7 +1113,7 @@ export function CardHeader({ actor, avatarUrl, bot = false, timestamp, badge, re
   avatarUrl?: string | null;
   bot?: boolean;
   timestamp: string | null;
-  badge?: { text: string; className: string } | null;
+  badge?: ReactNode;
   reaction?: ReactionAction;
   actions?: CardActions;
 }) {
@@ -1123,7 +1122,7 @@ export function CardHeader({ actor, avatarUrl, bot = false, timestamp, badge, re
       <UserAvatar login={actor} avatarUrl={avatarUrl} size={22} showLogin />
       {bot && <span className="pr-bot">Bot</span>}
       {timestamp && <><span>·</span><time>{relativeTime(timestamp)}</time></>}
-      {badge && <span className={`pr-review-badge ${badge.className}`}>{badge.text}</span>}
+      {badge}
       {(reaction || actions) && <div className="pr-card__menu">
         {reaction && <ReactionPicker action={reaction} />}
         {actions && <CardActionsMenu actions={actions} />}
@@ -1351,11 +1350,16 @@ export function isAutoMergeEnabled(activity: Activity[]) {
   }, false);
 }
 
-function reviewBadge(state?: string | null) {
-  if (state === 'APPROVED') return { text: 'Approved', className: 'is-approved' };
-  if (state === 'CHANGES_REQUESTED') return { text: 'Changes requested', className: 'is-changes' };
-  if (state === 'DISMISSED') return { text: 'Dismissed', className: 'is-dismissed' };
-  return null;
+function reviewBadge({ state, authorCanPush }: PullTimelinePayloadDto) {
+  switch (state?.toUpperCase()) {
+    // Like GitHub, an approval from someone who cannot push stays grey: it does not count toward merging.
+    case 'APPROVED': return authorCanPush === false
+      ? <span className="pr-review-badge is-approved-no-write" title="Approved without write access"><Check size={11} strokeWidth={2.5} aria-hidden="true" />Approved</span>
+      : <span className="pr-review-badge is-approved"><Check size={11} strokeWidth={2.5} aria-hidden="true" />Approved</span>;
+    case 'CHANGES_REQUESTED': return <span className="pr-review-badge is-changes">Changes requested</span>;
+    case 'DISMISSED': return <span className="pr-review-badge is-dismissed">Dismissed</span>;
+    default: return null;
+  }
 }
 
 function threadLocation(path: string | null, line: number | null, side: string | null, startLine: number | null) {
