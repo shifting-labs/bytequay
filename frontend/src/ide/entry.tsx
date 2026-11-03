@@ -42,6 +42,7 @@ import { installGitHistory } from './gitHistory';
 import { codeHostKey } from '../pulls/code-tests/contracts';
 import { pollVisible } from './pollVisible';
 import { idleState } from './idleState';
+import { reloadOpenFiles } from './semanticQueries';
 import '../css/base.css';
 import '../scrollbarFade';
 import '../css/markdown-editor.css';
@@ -213,6 +214,10 @@ function Workbench({ runtime, context, connection }: { runtime: IdeRuntime; cont
     }, 5_000);
     return () => { live = false; stop(); };
   }, [context.host.kind, context.host.kind === 'task' ? context.host.taskId : context.host.reviewId, filesReload]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The fingerprint covers HEAD and every uncommitted file's bytes, so an agent's write or a moved checkout changes it.
+  useEffect(() => {
+    if (files) void reloadOpenFiles(runtime.workspace).catch(cause => setError(String(cause)));
+  }, [runtime, files?.revision, files?.sourceFingerprint]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selected = active?.document.uri.scheme === 'vscode-remote' && active.document.uri.path.startsWith(connection.root + '/')
     ? active.document.uri.path.slice(connection.root.length + 1) : null;

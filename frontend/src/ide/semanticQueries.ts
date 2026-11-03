@@ -42,25 +42,36 @@ async function pause(token: CancellationToken) {
   });
 }
 
+function workspaceRelative(workspace: URI, uri: URI): string | undefined {
+  if (uri.scheme !== workspace.scheme || uri.authority !== workspace.authority || !uri.path.startsWith(workspace.path + '/')) return;
+  const relative = uri.path.slice(workspace.path.length + 1);
+  return workspacePath(relative) ? relative : undefined;
+}
+
+/**
+ * The server's macOS file watcher can deliver an agent's write or a checkout move many seconds late, or not at all.
+ * Rereads open working-copy files from disk; unsaved and saving models keep their text.
+ */
+export async function reloadOpenFiles(workspace: URI, between: () => void = () => {}): Promise<void> {
+  const textFiles = await getService(ITextFileService);
+  for (const file of textFiles.files.models) {
+    if (workspaceRelative(workspace, file.resource) !== undefined) await textFiles.files.resolve(file.resource, { reload: { async: false } });
+    between();
+  }
+}
+
 /** Uses the same registered providers and document models as the visible editor, including cancellation. */
 export async function semanticQuery(workspace: URI, input: CodeQuery, token: CancellationToken): Promise<CodeQueryReply> {
   const query = parseCodeQuery(input);
-  const [models, features, copies, markers, textFiles] = await Promise.all([
-    getService(ITextModelService), getService(ILanguageFeaturesService), getService(IWorkingCopyService), getService(IMarkerService), getService(ITextFileService),
+  const [models, features, copies, markers] = await Promise.all([
+    getService(ITextModelService), getService(ILanguageFeaturesService), getService(IWorkingCopyService), getService(IMarkerService),
   ]);
-  const localPath = (uri: URI): string | undefined => {
-    if (uri.scheme !== workspace.scheme || uri.authority !== workspace.authority || !uri.path.startsWith(workspace.path + '/')) return;
-    const relative = uri.path.slice(workspace.path.length + 1);
-    return workspacePath(relative) ? relative : undefined;
-  };
+  const localPath = (uri: URI) => workspaceRelative(workspace, uri);
   const dirty = () => copies.dirtyWorkingCopies.some(copy => localPath(copy.resource) !== undefined);
   if (dirty()) return queryFailure('UNSAVED', 'The editor has unsaved source changes. Save or discard them before querying the on-disk working copy.');
   cancelled(token);
-  // A file watcher can lag an agent's write. Reload clean open models before consulting their shared language index.
-  for (const file of textFiles.files.models) {
-    if (localPath(file.resource) !== undefined) await textFiles.files.resolve(file.resource, { reload: { async: false } });
-    cancelled(token);
-  }
+  // Before consulting the shared language index.
+  await reloadOpenFiles(workspace, () => cancelled(token));
   if (dirty()) return queryFailure('UNSAVED', 'Source was edited while preparing the query. Save or discard it before retrying.');
   const reference = await models.createModelReference(URI.joinPath(workspace, query.path));
   const model = reference.object.textEditorModel;
