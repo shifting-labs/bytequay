@@ -40,6 +40,7 @@ type MockView = {
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events');
   return {
+    app: { getPath: vi.fn(() => '/user-data') },
     protocol: { registerSchemesAsPrivileged: vi.fn() },
     BrowserWindow: class {
       contentView = { addChildView: vi.fn(), removeChildView: vi.fn() }; destroy = vi.fn();

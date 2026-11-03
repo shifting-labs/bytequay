@@ -12,7 +12,7 @@
  * limitations under the License.
  */
 import { backendJson, backendJsonIfChanged } from './backendJson';
-import { ipcMain, net, protocol, WebContentsView, BrowserWindow, type IpcMainInvokeEvent, type WebContents } from 'electron';
+import { app, ipcMain, net, protocol, WebContentsView, BrowserWindow, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
@@ -25,6 +25,7 @@ import { parseCodeQuery, parseCodeQueryReply, queryFailure, type CodeQueryReques
 import { parseExecutionRequest } from './ide/executionProtocol';
 import { parseLocalRun } from './pulls/code-tests/contracts';
 import { validateIdeAction } from './ide/actionPolicy';
+import { editorPartition, removeForgottenEditorStorage } from './ide/editorStorage';
 import type { IdeConnection, IdeContext, IdeEvent, IdeReply, IdeRequest, IdeStateReport, IdeUnsavedChanges } from './ide/contracts';
 
 declare const IDE_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -92,6 +93,7 @@ export class IdeViews {
   private pumping = false;
   private background: BrowserWindow | null = null;
   private readonly opening = new Map<string, Promise<string>>();
+  private storageSwept = false;
   private readonly timer: ReturnType<typeof setInterval>;
 
   constructor(private readonly window: () => BrowserWindow | null, private readonly hasTerminal: (sender: WebContents) => boolean = () => false,
@@ -361,9 +363,14 @@ export class IdeViews {
       existing.host = host;
       return existing.id;
     }
+    if (!this.storageSwept) {
+      // Before any other editor's storage is open in this run, so only folders no session holds are removed.
+      this.storageSwept = true;
+      void removeForgottenEditorStorage(app.getPath('userData'), connection.cacheRoot, connection.taskId).catch(() => {});
+    }
     const id = randomUUID();
     const view = new WebContentsView({ webPreferences: {
-      preload: path.join(__dirname, 'idePreload.js'), sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, partition: `persist:bytequay-ide-${connection.taskId}`,
+      preload: path.join(__dirname, 'idePreload.js'), sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, partition: editorPartition(connection.taskId),
       // Cache compiled editor code on its first load so the first resume can reuse it.
       v8CacheOptions: 'bypassHeatCheck',
     } });
