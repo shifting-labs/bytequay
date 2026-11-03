@@ -1489,7 +1489,7 @@ export async function runAssignedPrActions(): Promise<string> {
     assert(button('Review').classList.contains('is-assigned'), 'A review is highlighted without a development task');
     button('Development').click();
     await settle();
-    assert(host.querySelector('dialog')?.textContent?.includes('belongs to someone else') === true && assigned === 1,
+    assert(host.querySelector('dialog h2')?.textContent === "Work on someone else's PR?" && assigned === 1,
       'Ask before creating a development task on someone else\'s PR');
     dialogButton('Cancel').click();
     await settle();

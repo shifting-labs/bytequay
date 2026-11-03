@@ -109,7 +109,7 @@ export default function PullRequestTaskActions({ repo, number, authored, workspa
     {error !== null && <span className="pr-task-message" role="alert">{error}</span>}
     {confirming && <ConfirmDialog title="Work on someone else's PR?" confirmLabel="Create task"
       onConfirm={() => { setConfirming(false); void open('development', true); }} onCancel={() => setConfirming(false)}>
-      <p>This pull request belongs to someone else. The agent works on a local branch of its own. Nothing is pushed unless you ask.</p>
+      <p>The agent works on its own local branch. Nothing is pushed unless you ask.</p>
     </ConfirmDialog>}
   </>;
 }
