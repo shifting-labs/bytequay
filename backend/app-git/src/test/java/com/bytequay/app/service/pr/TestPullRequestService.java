@@ -1423,11 +1423,11 @@ class TestPullRequestService
         when(workspaces.findHostingRepositoryId("unwatched")).thenReturn(Optional.of(30L));
         when(workspaces.findHostingRepositoryId("watched")).thenReturn(Optional.of(30L));
         when(workspaces.findHostingRepositoryId("alone")).thenReturn(Optional.of(31L));
-        when(store.findHostingIdentity(1L)).thenReturn(Optional.of(new HostingPullRequest(101, 30, 1)));
-        when(store.findHostingIdentity(2L)).thenReturn(Optional.of(new HostingPullRequest(102, 31, 2)));
+        when(store.findHostingIdentities(ImmutableSet.of(1L, 2L))).thenReturn(ImmutableMap.of(1L, new HostingPullRequest(101, 30, 1), 2L, new HostingPullRequest(102, 31, 2)));
 
         assertThat(service.attentionRoutes(ImmutableList.of(rowWithId(1), rowWithId(2))))
                 .containsExactlyInAnyOrderEntriesOf(ImmutableMap.of(1L, PullRequestRoute.of("watched", null), 2L, PullRequestRoute.of("alone", null)));
+        verify(store, never()).findHostingIdentity(anyLong());
     }
 
     @Test
@@ -1486,7 +1486,7 @@ class TestPullRequestService
                 connection(new HostingAccount(13, 1, "400", "gone"), github, false)));
         when(requests.readingAccounts(ImmutableSet.of(1L, 2L, 3L)))
                 .thenReturn(ImmutableMap.of(1L, ImmutableSet.of(12L, 11L), 2L, ImmutableSet.of(12L), 3L, ImmutableSet.of(9L, 13L)));
-        when(store.findHostingIdentity(1L)).thenReturn(Optional.of(new HostingPullRequest(101, 30, 1)));
+        when(store.findHostingIdentities(ImmutableSet.of(1L, 2L, 3L))).thenReturn(ImmutableMap.of(1L, new HostingPullRequest(101, 30, 1)));
 
         assertThat(service.attentionRoutes(ImmutableList.of(rowWithId(1), rowWithId(2), rowWithId(3)))).containsExactlyInAnyOrderEntriesOf(ImmutableMap.of(
                 1L, PullRequestRoute.account(11), 2L, PullRequestRoute.account(12), 3L, PullRequestRoute.of(null, null)));

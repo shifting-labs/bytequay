@@ -28,6 +28,7 @@ import com.bytequay.persistence.sqlite.repository.PullRequestJpaRepository;
 import com.bytequay.persistence.sqlite.repository.PullRequestJpaRepository.AttentionActivity;
 import com.bytequay.persistence.sqlite.repository.PullRequestJpaRepository.CardActivity;
 import com.bytequay.persistence.sqlite.repository.PullRequestJpaRepository.DiscussionActivity;
+import com.bytequay.persistence.sqlite.repository.PullRequestJpaRepository.HostingIdentity;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.primitives.Ints;
@@ -91,6 +92,21 @@ public class SqlitePullRequestStore
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public Map<Integer, PullRequest> findByHostingRepository(long repositoryId, Set<Integer> numbers)
+    {
+        requireNonNull(numbers, "numbers is null");
+        if (numbers.isEmpty()) {
+            return ImmutableMap.of();
+        }
+        List<PullRequestEntity> rows = jpaRepository.findByHostingRepositoryIdAndNumberIn(repositoryId, numbers).stream()
+                .filter(SqlitePullRequestStore::hasSummary)
+                .collect(toImmutableList());
+        Map<Long, PrViewState> states = viewStateStore.findByPrIds(rows.stream().map(PullRequestEntity::getId).collect(toImmutableSet()));
+        return rows.stream().collect(toImmutableMap(PullRequestEntity::getNumber, row -> row.toDomain(states.get(row.getId()))));
+    }
+
+    @Override
     @Transactional
     public PullRequest saveHosted(long repositoryId, FetchedPullRequest pullRequest)
     {
@@ -114,6 +130,18 @@ public class SqlitePullRequestStore
     public Optional<HostingPullRequest> findHostingIdentity(long prId)
     {
         return jpaRepository.findById(prId).map(PullRequestEntity::hostingIdentity);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<Long, HostingPullRequest> findHostingIdentities(Set<Long> prIds)
+    {
+        requireNonNull(prIds, "prIds is null");
+        if (prIds.isEmpty()) {
+            return ImmutableMap.of();
+        }
+        return jpaRepository.findHostingIdentities(prIds).stream()
+                .collect(toImmutableMap(HostingIdentity::getId, row -> new HostingPullRequest(row.getId(), row.getRepositoryId(), row.getNumber())));
     }
 
     @Override

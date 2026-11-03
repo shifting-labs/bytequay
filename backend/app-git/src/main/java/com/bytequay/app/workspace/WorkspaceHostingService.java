@@ -41,6 +41,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.IntStream;
 
 import static com.bytequay.app.git.command.RepositoryUrls.isPlainHttps;
 import static com.bytequay.app.workspace.WorkspaceException.requireWorkspace;
@@ -219,8 +220,12 @@ public class WorkspaceHostingService
         Optional<HostingCacheTarget> target = cacheTarget(workspaceId);
         PullRequestListPage found = target.map(value -> requests.cachedPage(value, page, pageSize))
                 .orElseGet(() -> new PullRequestListPage(ImmutableList.of(), false));
-        return new WorkspacePullRequestPage(found.items().stream()
-                .map(summary -> new WorkspacePullRequestRow(summary, rows.findOrCreate(target.orElseThrow().repositoryId(), summary)))
+        if (found.items().isEmpty()) {
+            return new WorkspacePullRequestPage(ImmutableList.of(), found.hasNext());
+        }
+        List<PullRequest> stored = rows.findOrCreate(target.orElseThrow().repositoryId(), found.items());
+        return new WorkspacePullRequestPage(IntStream.range(0, stored.size())
+                .mapToObj(index -> new WorkspacePullRequestRow(found.items().get(index), stored.get(index)))
                 .collect(toImmutableList()), found.hasNext());
     }
 

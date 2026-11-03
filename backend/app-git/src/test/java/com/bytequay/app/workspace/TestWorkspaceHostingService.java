@@ -45,6 +45,7 @@ import com.bytequay.core.store.HostingPullRequestStore;
 import com.bytequay.core.store.PullRequestStore;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -74,6 +75,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -178,7 +180,7 @@ class TestWorkspaceHostingService
                 OTHER, ImmutableList.of(), ImmutableMap.of(), false, null, null, null, ImmutableList.of(), null, 4, 2, 3, "open", null, null,
                 null, null, null, "topic", NOW, null, null, null);
         when(snapshots.findPage(20, 31, CONNECTED_ACCOUNT, 2, 25)).thenReturn(new PullRequestListPage(ImmutableList.of(summary), true));
-        when(legacy.findByHostingRepository(31, 7)).thenReturn(hasProjection ? Optional.of(github) : Optional.empty());
+        when(legacy.findByHostingRepository(31, ImmutableSet.of(7))).thenReturn(hasProjection ? ImmutableMap.of(7, github) : ImmutableMap.of());
         if (!hasProjection) {
             when(legacy.saveHosted(31, summary)).thenReturn(github);
         }
@@ -187,6 +189,7 @@ class TestWorkspaceHostingService
                 .isEqualTo(new WorkspacePullRequestPage(ImmutableList.of(new WorkspacePullRequestRow(summary, github)), true));
         verify(snapshots).findPage(20, 31, CONNECTED_ACCOUNT, 2, 25);
         verify(legacy, times(hasProjection ? 0 : 1)).saveHosted(31, summary);
+        verify(legacy, never()).findByHostingRepository(anyLong(), anyInt());
         verifyNoInteractions(identities, credentials, repositories, requests);
     }
 
@@ -224,13 +227,13 @@ class TestWorkspaceHostingService
         when(snapshots.findPage(40, 60, CONNECTED_ACCOUNT, 1, 50)).thenReturn(new PullRequestListPage(ImmutableList.of(summary), false));
 
         PullRequest projected = projected(summary);
-        when(legacy.findByHostingRepository(60, summary.number())).thenReturn(hasProjection ? Optional.of(projected) : Optional.empty());
+        when(legacy.findByHostingRepository(60, ImmutableSet.of(summary.number()))).thenReturn(hasProjection ? ImmutableMap.of(summary.number(), projected) : ImmutableMap.of());
         if (!hasProjection) {
             when(legacy.saveHosted(60, summary)).thenReturn(projected);
         }
 
         assertThat(service.cachedPullRequests(workspace.id(), 1, 50).items()).containsExactly(new WorkspacePullRequestRow(summary, projected));
-        verify(legacy).findByHostingRepository(60, summary.number());
+        verify(legacy).findByHostingRepository(60, ImmutableSet.of(summary.number()));
         verify(legacy, times(hasProjection ? 0 : 1)).saveHosted(60, summary);
         verifyNoInteractions(identities, credentials, repositories, requests);
     }

@@ -21,8 +21,11 @@ import com.bytequay.core.store.WorkspaceStore;
 import com.google.common.collect.ImmutableList;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
+import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static java.util.Objects.requireNonNull;
 
 /** Finds the stored row for a request under its retained hosting repository. */
@@ -57,6 +60,15 @@ public final class PullRequestRows
     public PullRequest findOrCreate(long repositoryId, FetchedPullRequest summary)
     {
         return store.findByHostingRepository(repositoryId, summary.number()).orElseGet(() -> store.saveHosted(repositoryId, summary));
+    }
+
+    /** {@link #findOrCreate(long, FetchedPullRequest)} for a page of summaries with one read, in the summaries' order. */
+    public List<PullRequest> findOrCreate(long repositoryId, List<FetchedPullRequest> summaries)
+    {
+        Map<Integer, PullRequest> stored = store.findByHostingRepository(repositoryId, summaries.stream().map(FetchedPullRequest::number).collect(toImmutableSet()));
+        return summaries.stream()
+                .map(summary -> Optional.ofNullable(stored.get(summary.number())).orElseGet(() -> store.saveHosted(repositoryId, summary)))
+                .collect(toImmutableList());
     }
 
     public Optional<PullRequest> find(Workspace workspace, int number)

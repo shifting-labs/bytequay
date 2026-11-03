@@ -62,6 +62,7 @@ import com.bytequay.core.hosting.DiscoveryQuery.State;
 import com.bytequay.core.hosting.DiscussionProbe;
 import com.bytequay.core.hosting.HostingCapabilities;
 import com.bytequay.core.hosting.HostingFailure;
+import com.bytequay.core.hosting.HostingPullRequest;
 import com.bytequay.core.hosting.HostingPullRequestSnapshot;
 import com.bytequay.core.hosting.HostingRepository;
 import com.bytequay.core.hosting.HostingServer;
@@ -1104,10 +1105,11 @@ public class PullRequestService
     {
         Map<Long, Optional<String>> workspaceByRepository = new HashMap<>();
         List<Long> connected = connectedDiscoveryAccounts();
-        Map<Long, Set<Long>> readers = requests.readingAccounts(rows.stream().map(PullRequest::id).collect(toImmutableSet()));
-        // ponytail: one identity read per row; batch it if the attention rebuild shows up in a profile.
+        Set<Long> ids = rows.stream().map(PullRequest::id).collect(toImmutableSet());
+        Map<Long, Set<Long>> readers = requests.readingAccounts(ids);
+        Map<Long, HostingPullRequest> identities = store.findHostingIdentities(ids);
         return rows.stream().collect(toImmutableMap(PullRequest::id, row -> {
-            Optional<String> workspace = store.findHostingIdentity(row.id()).flatMap(identity -> workspaceByRepository.computeIfAbsent(identity.repositoryId(),
+            Optional<String> workspace = Optional.ofNullable(identities.get(row.id())).flatMap(identity -> workspaceByRepository.computeIfAbsent(identity.repositoryId(),
                     repositoryId -> workspaces.findByHostingRepositoryId(repositoryId).map(Workspace::id)));
             if (workspace.isPresent()) {
                 return PullRequestRoute.of(workspace.orElseThrow(), null);

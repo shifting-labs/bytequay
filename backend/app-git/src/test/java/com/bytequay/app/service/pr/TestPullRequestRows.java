@@ -27,6 +27,7 @@ import com.bytequay.core.store.PullRequestStore;
 import com.bytequay.core.store.WorkspaceStore;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -94,6 +95,21 @@ class TestPullRequestRows
         when(store.findByHostingRepository(2, 7)).thenReturn(Optional.empty());
         when(store.saveHosted(2, summary)).thenReturn(created);
         assertThat(rows.findOrCreate(2, summary)).isSameAs(created);
+    }
+
+    @Test
+    void pageOfSummariesReadsItsRowsOnceAndFillsOnlyTheMissingOnes()
+    {
+        FetchedPullRequest first = summary();
+        FetchedPullRequest second = new FetchedPullRequest(9002L, "owner/project", 8, "Other", "alice", "https://github.com/owner/project/pull/8", NOW, NOW, OTHER,
+                ImmutableList.of(), ImmutableMap.of(), false, "open", null, null, ImmutableList.of(), null, null, "other");
+        PullRequest created = mock(PullRequest.class, withSettings().mockMaker(MockMakers.INLINE));
+        when(store.findByHostingRepository(2, ImmutableSet.of(7, 8))).thenReturn(ImmutableMap.of(7, stored));
+        when(store.saveHosted(2, second)).thenReturn(created);
+
+        assertThat(rows.findOrCreate(2, ImmutableList.of(first, second))).containsExactly(stored, created);
+        verify(store, never()).findByHostingRepository(anyLong(), anyInt());
+        verify(store, never()).saveHosted(2, first);
     }
 
     private static PullRequestRead route(HostingProvider provider)

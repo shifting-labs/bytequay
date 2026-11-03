@@ -53,6 +53,11 @@ public interface PullRequestJpaRepository
 
     Optional<PullRequestEntity> findByHostingRepositoryIdAndNumber(long repositoryId, int number);
 
+    List<PullRequestEntity> findByHostingRepositoryIdAndNumberIn(long repositoryId, Set<Integer> numbers);
+
+    @Query("SELECT e.id AS id, e.hostingRepository.id AS repositoryId, e.number AS number FROM PullRequestEntity e WHERE e.id IN :ids")
+    List<HostingIdentity> findHostingIdentities(@Param("ids") Set<Long> ids);
+
     List<PullRequestEntity> findByHostingRepositoryIdAndHeadRefOrderByNumberDesc(long repositoryId, String headRef);
 
     /** A path names one repository on each server; the most recently updated request wins. */
@@ -95,5 +100,14 @@ public interface PullRequestJpaRepository
         long getId();
 
         Instant getAttentionActivityAt();
+    }
+
+    interface HostingIdentity
+    {
+        long getId();
+
+        long getRepositoryId();
+
+        int getNumber();
     }
 }

@@ -22,6 +22,7 @@ import com.bytequay.core.domain.StoredPrDetail;
 import com.bytequay.core.hosting.HostingAccount;
 import com.bytequay.core.hosting.HostingInstance;
 import com.bytequay.core.hosting.HostingProvider;
+import com.bytequay.core.hosting.HostingPullRequest;
 import com.bytequay.core.hosting.HostingPullRequestSnapshot;
 import com.bytequay.core.hosting.HostingRepository;
 import com.bytequay.core.hosting.HostingServer;
@@ -185,6 +186,7 @@ class TestSqliteHostingPullRequestStore
         entities.clear();
 
         assertThat(desktop.findByHostingRepository(scope.repository().id(), 7)).isEmpty();
+        assertThat(desktop.findByHostingRepository(scope.repository().id(), ImmutableSet.of(7, 8))).isEmpty();
         FetchedPullRequest cached = store.findPage(scope.account().id(), scope.repository().id(), CONNECTED_ACCOUNT, 1, 100).items().getFirst();
         PullRequest hydrated = desktop.saveHosted(scope.repository().id(), cached);
         entities.flush();
@@ -200,6 +202,9 @@ class TestSqliteHostingPullRequestStore
         assertThat(hydrated.additions()).isEqualTo(5);
         assertThat(desktop.findById(id)).contains(hydrated);
         assertThat(desktop.findByHostingRepository(scope.repository().id(), 7)).contains(hydrated);
+        assertThat(desktop.findByHostingRepository(scope.repository().id(), ImmutableSet.of(7, 8))).containsExactlyEntriesOf(ImmutableMap.of(7, hydrated));
+        HostingPullRequest identity = new HostingPullRequest(id, scope.repository().id(), 7);
+        assertThat(desktop.findHostingIdentities(ImmutableSet.of(id, id + 1))).containsExactlyEntriesOf(ImmutableMap.of(id, identity));
         assertThat(requests.count()).isEqualTo(1);
         assertThat(store.find(scope.account().id(), scope.repository().id(), 7)).contains(snapshot);
     }

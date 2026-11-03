@@ -37,9 +37,15 @@ public interface PullRequestStore
 
     Optional<PullRequest> findByHostingRepository(long repositoryId, int number);
 
+    /** {@link #findByHostingRepository(long, int)} for many numbers in one read, keyed by number. */
+    Map<Integer, PullRequest> findByHostingRepository(long repositoryId, Set<Integer> numbers);
+
     PullRequest saveHosted(long repositoryId, FetchedPullRequest pullRequest);
 
     Optional<HostingPullRequest> findHostingIdentity(long prId);
+
+    /** {@link #findHostingIdentity} for many rows in one read, keyed by row id. */
+    Map<Long, HostingPullRequest> findHostingIdentities(Set<Long> prIds);
 
     List<PullRequest> findByHostingHeadRef(long repositoryId, String headRef);
 
