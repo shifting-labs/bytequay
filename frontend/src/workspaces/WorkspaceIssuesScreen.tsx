@@ -609,9 +609,17 @@ export default function WorkspaceIssuesScreen({ workspaceId, repository, initial
               onMetadataChange={(assignees, labels) => updateIssueMetadata(selected.number, assignees, labels)}
               onClose={() => closeIssue(selected)}
               onComment={async body => {
-                await window.bridge.commentWorkspaceIssue(workspaceId, selected.number, body);
+                const created = await window.bridge.commentWorkspaceIssue(workspaceId, selected.number, body);
                 visit.onAction('comment');
-                await loadDetail(selected.number);
+                if (live.current.selectedId !== selected.id) return;
+                if (created.remoteId === null) {
+                  await loadDetail(selected.number);
+                  return;
+                }
+                setTimeline(current => current.some(event => event.event === created.event && event.remoteId === created.remoteId)
+                  ? current : [...current, created]);
+                // Reconcile the stored history without keeping an accepted comment in "Posting…".
+                void loadDetail(selected.number);
               }} />
           </div>
         </section>

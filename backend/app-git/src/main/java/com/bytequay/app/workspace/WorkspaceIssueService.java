@@ -178,7 +178,6 @@ public class WorkspaceIssueService
             if (created.timestamp() != null) {
                 previous.ifPresent(issue -> issues.updateActivity(repositoryId, issueNumber, issue.commentCount() + 1, created.timestamp()));
             }
-            refreshActivity(route, issueNumber);
             recent.issueAction(workspaceId, issueNumber, RecentReason.COMMENTED);
             recent.wroteOnIssue(
                     workspaceId,

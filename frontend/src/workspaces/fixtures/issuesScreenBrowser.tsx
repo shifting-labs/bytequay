@@ -14,7 +14,7 @@
 
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
-import type { Bridge, RepositoryIssueSnapshotDto, RepositoryMetadataDto, WorkspaceIssueDetailDto } from '../../types';
+import type { Bridge, RepositoryIssueSnapshotDto, RepositoryMetadataDto, WorkspaceIssueDetailDto, WorkspaceIssueTimelineEventDto } from '../../types';
 import type { WorkItemDecision, WorkItemDto } from '../../workitems/contracts';
 import { lendEpicWorkspace, takeEpicStart } from '../epics';
 import { workspaceRoute } from '../model';
@@ -25,6 +25,7 @@ import { refreshSnoozedItem } from '../../home/useSnoozedAttention';
 import { LayerCovered } from '../../Zoom';
 import { loadPinned } from '../../home/pinned';
 import { errorMessage } from '../../errorMessage';
+import { EMPTY_TIMELINE_PAYLOAD } from '../../pulls/model';
 
 type Issue = RepositoryIssueSnapshotDto['issues'][number];
 
@@ -59,7 +60,10 @@ async function closeKeepsIssue(): Promise<void> {
   window.bridge = {
     ...issueReads(() => issues, repository),
     getWorkspaceMetadata: async () => metadata,
-    commentWorkspaceIssue: async (_workspace: string, number: number, body: string) => { writes.push(`comment #${number}: ${body}`); },
+    commentWorkspaceIssue: async (_workspace: string, number: number, body: string): Promise<WorkspaceIssueTimelineEventDto> => {
+      writes.push(`comment #${number}: ${body}`);
+      return { remoteId: 99, event: 'commented', actor: 'alice', timestamp: '2026-09-03T00:00:00Z', body, payload: EMPTY_TIMELINE_PAYLOAD };
+    },
     // The backend drops a closed issue from the open list, so a reload no longer contains it.
     closeWorkspaceIssue: async (_workspace: string, number: number) => {
       writes.push(`close #${number}`);
@@ -105,6 +109,132 @@ async function closeKeepsIssue(): Promise<void> {
     open(9); await settle();
     assert(composer().value === '', 'A draft never follows the reader to another issue');
     assert(loadHandled()['issue:workspace-1:upstream/app#8']?.label === 'Viewed', 'Unsent draft text does not count as a posted comment');
+  }
+  finally { flushSync(() => root.unmount()); host.remove(); }
+}
+
+async function commentsUsePostResponse(): Promise<void> {
+  const issues = [7, 8].map((number): Issue => ({
+    id: 7000 + number, epicId: `ISSUE:github.com:${7000 + number}`, number, title: `Issue ${number}`, body: 'Details', author: 'alice', authorAvatarUrl: '',
+    htmlUrl: `https://github.com/upstream/app/issues/${number}`, labels: [], assignees: [], commentCount: 0,
+    createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-02T00:00:00Z',
+  }));
+  const created: WorkspaceIssueTimelineEventDto = {
+    remoteId: 99, event: 'commented', actor: 'alice', timestamp: '2026-09-03T00:00:00Z', body: 'A confirmed comment', payload: EMPTY_TIMELINE_PAYLOAD,
+  };
+  const detail = (number: number, timeline: WorkspaceIssueTimelineEventDto[] = []): WorkspaceIssueDetailDto => ({
+    repositoryId: 40, issueNumber: number, timeline, currentType: null, availableTypes: [], refreshedAt: '2026-09-02T00:00:00Z',
+  });
+  let post = Promise.withResolvers<WorkspaceIssueTimelineEventDto>();
+  let refresh = Promise.withResolvers<WorkspaceIssueDetailDto>();
+  const reconciliation = Promise.withResolvers<WorkspaceIssueDetailDto>();
+  let reconcile = false;
+  const writes: string[] = [];
+  let reads = 0;
+  let refreshes = 0;
+  const cachedReads = issueReads(() => issues);
+  window.bridge = {
+    ...cachedReads,
+    fetchWorkspaceIssues: async () => ({ ...await cachedReads.fetchWorkspaceIssues(), syncedAt: new Date().toISOString() }),
+    fetchWorkspaceIssueDetail: async (_workspace: string, number: number) => {
+      reads++;
+      return reconcile && number === 7 ? reconciliation.promise : detail(number);
+    },
+    refreshWorkspaceIssueDetail: () => { refreshes++; return refresh.promise; },
+    commentWorkspaceIssue: (_workspace: string, number: number, body: string) => { writes.push(`${number}: ${body}`); return post.promise; },
+  } as unknown as Bridge;
+  const host = document.createElement('div'); document.body.append(host);
+  const root = createRoot(host);
+  const composer = () => element<HTMLTextAreaElement>('.pr-composer textarea', host);
+  const comments = () => [...host.querySelectorAll('.issue-comment .markdown-body')].map(comment => comment.textContent);
+  const submit = async (body: string) => {
+    changeInput(composer(), body); await settle();
+    button('Comment', host).click(); await settle();
+  };
+  try {
+    flushSync(() => root.render(<WorkspaceIssuesScreen workspaceId="workspace-1" repository="upstream/app" initialIssueNumber={7} />));
+    await settle();
+    await submit(created.body ?? '');
+    assert(button('Posting…', host).disabled && composer().disabled && comments().length === 0,
+      'Posting waits for server acknowledgement without showing an unconfirmed comment');
+    post.reject(new Error('The comment was rejected.')); await settle();
+    assert(composer().value === created.body && !composer().disabled && host.querySelector('.pr-composer [role="alert"]')?.textContent === 'The comment was rejected.',
+      'A failed post preserves the draft and permits retry');
+
+    post = Promise.withResolvers<WorkspaceIssueTimelineEventDto>();
+    button('Comment', host).click(); await settle();
+    button('Refresh', host).click(); await settle();
+    refresh.resolve(detail(7, [created])); await settle();
+    assert(comments().join() === created.body && button('Posting…', host).disabled,
+      'A concurrent refresh may see the comment before its POST finishes');
+    refresh = Promise.withResolvers<WorkspaceIssueDetailDto>();
+    button('Refresh', host).click(); await settle();
+    const readsBeforePost = reads;
+    const refreshesBeforePost = refreshes;
+    reconcile = true;
+    post.resolve(created); await settle();
+    assert(composer().value === '' && !composer().disabled && comments().join() === created.body,
+      'The POST response clears the draft and displays the confirmed comment exactly once while reconciliation remains pending');
+    assert(reads === readsBeforePost + 1 && refreshes === refreshesBeforePost && button('Refresh', host).disabled,
+      'The stored detail reload runs in the background without delaying the composer or starting another remote refresh');
+    refresh.resolve(detail(7)); await settle();
+    assert(comments().join() === created.body, 'An older in-flight refresh cannot erase the confirmed comment');
+    reconcile = false;
+    reconciliation.resolve({ ...detail(7, [{ ...created, remoteId: 98, body: 'Earlier discussion' }, created]), currentType: 'Bug', availableTypes: ['Bug'] });
+    await settle();
+    assert(comments().join('|') === 'Earlier discussion|A confirmed comment' && !button('Refresh', host).disabled
+      && host.querySelector('[aria-label="Issue type"]')?.textContent?.includes('Bug'),
+    'The background reload restores complete history and metadata without duplicating the confirmed comment');
+
+    post = Promise.withResolvers<WorkspaceIssueTimelineEventDto>();
+    await submit('Reply belongs to issue 7');
+    const next = [...host.querySelectorAll<HTMLButtonElement>('.issues-list button[aria-pressed]')]
+      .find(candidate => candidate.textContent?.includes('#8'));
+    assert(next !== undefined, 'A second issue can be opened while the first comment is posting');
+    next.click(); await settle();
+    changeInput(composer(), 'Draft for issue 8'); await settle();
+    const readsAfterNavigation = reads;
+    post.resolve({ ...created, remoteId: 100, body: 'Reply belongs to issue 7' }); await settle();
+    assert(host.querySelector('.issues-detail h1')?.textContent?.trim() === 'Issue 8 #8'
+      && composer().value === 'Draft for issue 8' && comments().length === 0 && reads === readsAfterNavigation,
+    'A late POST response neither changes the selected issue nor its timeline and draft');
+    assert(writes.join('|') === '7: A confirmed comment|7: A confirmed comment|7: Reply belongs to issue 7',
+      'The composer sends only explicit submissions and retries');
+  }
+  finally { flushSync(() => root.unmount()); host.remove(); }
+}
+
+async function commandOnlyCommentReloadsDetail(): Promise<void> {
+  const issue: Issue = {
+    id: 7007, epicId: 'ISSUE:github.com:7007', number: 7, title: 'Issue 7', body: 'Details', author: 'alice', authorAvatarUrl: '',
+    htmlUrl: 'https://github.com/upstream/app/issues/7', labels: [], assignees: [], commentCount: 0,
+    createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-02T00:00:00Z',
+  };
+  let reads = 0;
+  let posted = false;
+  window.bridge = {
+    ...issueReads(() => [issue]),
+    fetchWorkspaceIssueDetail: async (): Promise<WorkspaceIssueDetailDto> => {
+      reads++;
+      return { repositoryId: 40, issueNumber: 7, currentType: null, availableTypes: [], refreshedAt: '2026-09-02T00:00:00Z',
+        timeline: posted ? [{ remoteId: 100, event: 'system', actor: 'alice', timestamp: null, body: 'Command applied', payload: EMPTY_TIMELINE_PAYLOAD }] : [] };
+    },
+    commentWorkspaceIssue: async (): Promise<WorkspaceIssueTimelineEventDto> => {
+      posted = true;
+      return { remoteId: null, event: 'system_note', actor: null, timestamp: null, body: null, payload: EMPTY_TIMELINE_PAYLOAD };
+    },
+  } as unknown as Bridge;
+  const host = document.createElement('div'); document.body.append(host);
+  const root = createRoot(host);
+  try {
+    flushSync(() => root.render(<WorkspaceIssuesScreen workspaceId="workspace-1" repository="upstream/app" initialIssueNumber={7} onClose={() => {}} />));
+    await settle();
+    const readsBeforePost = reads;
+    changeInput(element<HTMLTextAreaElement>('.pr-composer textarea', host), '/label correctness'); await settle();
+    button('Comment', host).click(); await settle();
+    assert(reads === readsBeforePost + 1 && host.querySelector('.pr-timeline')?.textContent?.includes('Command applied')
+      && element<HTMLTextAreaElement>('.pr-composer textarea', host).value === '',
+    'A provider command without a comment ID reloads detail to display its resulting state');
   }
   finally { flushSync(() => root.unmount()); host.remove(); }
 }
@@ -369,6 +499,8 @@ async function filtersLoadedIssues(): Promise<void> {
 export async function run(): Promise<{ name: string; error?: string }[]> {
   const scenarios: [string, () => Promise<void>][] = [
     ['Closing an issue keeps it in view until the reader leaves', closeKeepsIssue],
+    ['Issue comments finish on acknowledgement and survive overlapping reads and navigation', commentsUsePostResponse],
+    ['A command-only issue comment reloads its resulting state', commandOnlyCommentReloadsDetail],
     ['An issue reference zooms that issue over the page it came from', zoomsOneIssue],
     ['A zoomed issue reads only itself and survives a reread', zoomReadsOnlyItsIssue],
     ['An Epic switches between its issue and its work in one card', epicTabs],

@@ -103,14 +103,13 @@ class TestWorkspaceIssueService
         var client = mock(com.bytequay.core.hosting.IssueClient.class);
         when(client.comment(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(7), org.mockito.ArgumentMatchers.eq("Comment")))
                 .thenReturn(event(1, "commented", NOW));
-        when(client.activity(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(7)))
-                .thenReturn(new com.bytequay.core.hosting.IssueActivity(1, NOW));
         service = new WorkspaceIssueService(workspaceStore, issueStore, detailStore, hosting, integrations(issues(GITLAB, client)), recent,
                 Clock.fixed(NOW, ZoneOffset.UTC), mock(AppSettingsStore.class));
         when(hosting.captureRead("gitlab")).thenReturn(route);
 
         assertThat(service.comment("gitlab", 7, "Comment").event()).isEqualTo("commented");
         verify(client).comment(route.target(), 7, "Comment");
+        verifyNoMoreInteractions(client);
         verifyNoInteractions(issueReads, issueWrites, timelineReads);
     }
 
@@ -203,26 +202,25 @@ class TestWorkspaceIssueService
         when(detailStore.find(300, 9)).thenReturn(Optional.of(detail(300, 9, "Task", assigned)));
         when(issueWrites.createIssueComment("token", ref, "Looks good")).thenReturn(created);
         when(issueStore.find(300, 9)).thenReturn(Optional.of(issue(9)));
-        when(issueReads.fetchIssueActivity("token", UPSTREAM, 9)).thenReturn(new GitHubRepoClient.IssueActivity(5, NOW.plusSeconds(1)));
 
         assertThat(service.comment("fork", 9, "  Looks good  ")).isEqualTo(created);
         verify(detailStore).save(detail(300, 9, "Task", assigned, created));
         verify(issueStore).updateActivity(300, 9, 2, NOW);
-        verify(issueStore).updateActivity(300, 9, 5, NOW.plusSeconds(1));
+        verify(recent).issueAction("fork", 9, RecentReason.COMMENTED);
+        verifyNoInteractions(issueReads, timelineReads);
     }
 
     @Test
-    void keepsAnAcceptedCommentWhenItsFollowUpReadFails()
+    void postsIssueCommentWithoutFetchingMissingDetail()
     {
         workspaces.put("fork", workspace("fork", 300, UPSTREAM, Topology.FORK));
         PrTimelineEvent created = event(3, "commented", NOW);
-        when(issueStore.find(300, 9)).thenReturn(Optional.of(issue(9)));
         when(issueWrites.createIssueComment("token", PullRequestRef.of("upstream", "project", 9), "Posted once")).thenReturn(created);
-        when(issueReads.fetchIssueActivity("token", UPSTREAM, 9)).thenThrow(new IllegalStateException("GitHub unavailable"));
 
         assertThat(service.comment("fork", 9, "Posted once")).isEqualTo(created);
-        verify(issueStore).updateActivity(300, 9, 2, NOW);
+        verify(detailStore).save(RepositoryIssueDetail.empty(300, 9).append(created));
         verify(recent).issueAction("fork", 9, RecentReason.COMMENTED);
+        verifyNoInteractions(issueReads, timelineReads);
     }
 
     @Test

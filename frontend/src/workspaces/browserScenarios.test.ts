@@ -49,7 +49,7 @@ testBrowserScenarios([
   },
   {
     name: 'filters loaded issues, keeps a closed issue in view and zooms a named issue in Chromium',
-    expected: 6, timeout: 30_000,
+    expected: 8, timeout: 30_000,
     fixture: {
       prefix: 'bytequay-issues-screen-',
       entry: 'src/workspaces/fixtures/issuesScreenBrowser.tsx',
