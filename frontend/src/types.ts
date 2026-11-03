@@ -1361,6 +1361,35 @@ export type AgentSkillDto = AgentSkillInput & {
   id: string;
 };
 
+export type AgentRuleEvent = 'REVIEW_REQUESTED' | 'PULL_REQUEST_UPDATED' | 'ISSUE_ASSIGNED' | 'PULL_REQUEST_BEHIND' | 'PULL_REQUEST_MERGED';
+export type AgentRuleAction = 'REVIEW' | 'TASK' | 'REBASE' | 'BACKPORT';
+export type AgentRuleAgreement = 'REVIEWED' | 'STARTED_TASK' | 'UPDATED_BRANCH' | 'OPENED_BACKPORT';
+export type AgentRuleMode = 'OBSERVE' | 'SUGGEST' | 'AUTO';
+
+/** What a rule file says, as the backend reads it. */
+export type AgentRuleDefinitionDto = {
+  name: string;
+  event: AgentRuleEvent;
+  repositories: string[];
+  paths: string[];
+  labels: string[];
+  authors: string[];
+  action: AgentRuleAction;
+  agreement: AgentRuleAgreement;
+  withinDays: number;
+  body: string;
+};
+
+/** A saved rule: the file text the user wrote, the mode its record has earned, and what the text says. */
+export type AgentRuleDto = {
+  id: string;
+  text: string;
+  mode: AgentRuleMode;
+  paused: boolean;
+  recordSince: string;
+  rule: AgentRuleDefinitionDto;
+};
+
 
 export type AppThemeDto = 'SYSTEM' | 'LIGHT' | 'DARK';
 
@@ -2038,6 +2067,13 @@ export type Bridge = LabBridge & WorkItemBridge & JiraBridge & GoogleBridge & Ar
   addAgentSkill: (skill: AgentSkillInput) => Promise<AgentSkillDto[]>;
   updateAgentSkill: (id: string, skill: AgentSkillInput) => Promise<AgentSkillDto[]>;
   removeAgentSkill: (id: string) => Promise<AgentSkillDto[]>;
+  getAgentRules: () => Promise<AgentRuleDto[]>;
+  /** What a rule's text says, or a rejection that says why it is not a rule; nothing is saved. */
+  checkAgentRule: (text: string) => Promise<AgentRuleDefinitionDto>;
+  addAgentRule: (text: string) => Promise<AgentRuleDto[]>;
+  updateAgentRule: (id: string, text: string) => Promise<AgentRuleDto[]>;
+  pauseAgentRule: (id: string, paused: boolean) => Promise<AgentRuleDto[]>;
+  removeAgentRule: (id: string) => Promise<AgentRuleDto[]>;
   getQuietHours: () => Promise<QuietHoursDto>;
   saveQuietHours: (quietHours: QuietHoursDto) => Promise<QuietHoursDto>;
   getDevelopmentAutomation: () => Promise<DevelopmentAutomationDto>;

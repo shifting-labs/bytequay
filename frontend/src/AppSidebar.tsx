@@ -14,7 +14,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import {
   BookMarked, Bot, ChevronDown, ChevronLeft, ChevronRight, CircleDot, CircleUser, FileText, FlaskConical, GitBranch, Globe, History, House, KeyRound,
-  Keyboard, LayoutDashboard, LayoutGrid, ListChecks, LoaderCircle, PanelLeft, Search, Settings, SquareCheck, SquareLibrary,
+  Keyboard, LayoutDashboard, LayoutGrid, ListChecks, LoaderCircle, PanelLeft, ScrollText, Search, Settings, SquareCheck, SquareLibrary,
   Pin, Sparkles, Sun, Tags, ToggleRight, TriangleAlert, Users,
 } from 'lucide-react';
 import UsageMeter from './usage/UsageMeter';
@@ -57,6 +57,7 @@ const SETTINGS_ICONS: Record<SettingsSection, ReactNode> = {
   workflow: <ListChecks size={16} strokeWidth={1.7} aria-hidden="true" />,
   features: <ToggleRight size={16} strokeWidth={1.7} aria-hidden="true" />,
   skills: <SquareLibrary size={16} strokeWidth={1.7} aria-hidden="true" />,
+  rules: <ScrollText size={16} strokeWidth={1.7} aria-hidden="true" />,
   jira: <JiraIcon size={16} />,
   google: <Globe size={16} aria-hidden="true" />,
   lab: <LabIcon />,

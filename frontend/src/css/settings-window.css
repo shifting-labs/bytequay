@@ -603,6 +603,11 @@
   gap: 7px;
 }
 
+.setw-rule-text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.setw-rule-actions { margin-top: 8px; }
+.setw-rule-check { margin-top: 10px; font-size: 12px; line-height: 1.6; color: light-dark(#6e6e73, var(--dark-muted)); }
+.setw-rule-name { color: light-dark(#1d1d1f, var(--dark-text)); }
+
 .setw-dialog-foot {
   display: flex;
   align-items: center;

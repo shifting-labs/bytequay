@@ -50,6 +50,8 @@ import {
   parseAgentQueue,
   parseAgentQueuedInput,
   parseAgentQueuedInputDraft,
+  parseAgentRuleDefinition,
+  parseAgentRules,
   parseAgentRuntimeStopImpact,
   parseAgentSkillInput,
   parseAgentSkills,
@@ -1459,6 +1461,22 @@ function registerIpc(): void {
   ipcMain.handle('settings:agent-skills:remove', (_event, id: string) =>
     backendJson(`${backendBase()}/api/settings/agent-skills/${encodeURIComponent(id)}`, { method: 'DELETE' })
       .then(parseAgentSkills));
+  // The text goes as typed: the backend reads the rule and says why when it is not one.
+  const ruleBody = (text: unknown) => ({ text: typeof text === 'string' ? text : '' });
+  ipcMain.handle('settings:agent-rules', () =>
+    backendJson(`${backendBase()}/api/settings/agent-rules`).then(parseAgentRules));
+  ipcMain.handle('settings:agent-rules:check', (_event, text: unknown) =>
+    backendJson(`${backendBase()}/api/settings/agent-rules/check`, jsonInit('POST', ruleBody(text)))
+      .then(rule => parseAgentRuleDefinition(rule)));
+  ipcMain.handle('settings:agent-rules:add', (_event, text: unknown) =>
+    backendJson(`${backendBase()}/api/settings/agent-rules`, jsonInit('POST', ruleBody(text))).then(parseAgentRules));
+  ipcMain.handle('settings:agent-rules:update', (_event, id: string, text: unknown) =>
+    backendJson(`${backendBase()}/api/settings/agent-rules/${encodeURIComponent(id)}`, jsonInit('PUT', ruleBody(text))).then(parseAgentRules));
+  ipcMain.handle('settings:agent-rules:pause', (_event, id: string, paused: unknown) =>
+    backendJson(`${backendBase()}/api/settings/agent-rules/${encodeURIComponent(id)}/paused`, jsonInit('PUT', { paused: paused === true }))
+      .then(parseAgentRules));
+  ipcMain.handle('settings:agent-rules:remove', (_event, id: string) =>
+    backendJson(`${backendBase()}/api/settings/agent-rules/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(parseAgentRules));
   ipcMain.handle('settings:quiet-hours', () =>
     backendJson(`${backendBase()}/api/settings/quiet-hours`));
   ipcMain.handle('settings:quiet-hours:save', (_event, quietHours: unknown) =>

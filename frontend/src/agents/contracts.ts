@@ -26,6 +26,8 @@ import type {
   AgentProviderUnavailableDto,
   AgentQueuedInputDraftDto,
   AgentQueuedInputDto,
+  AgentRuleDefinitionDto,
+  AgentRuleDto,
   AgentSkillDto,
   AgentSkillInput,
   AgentTaskActivityDto,
@@ -631,6 +633,43 @@ export function parseAgentSkills(value: unknown): AgentSkillDto[] {
     return {
       ...parseAgentSkillInput(source, path),
       id: text(source.id, `${path}.id`),
+    };
+  });
+}
+
+const RULE_EVENTS = ['REVIEW_REQUESTED', 'PULL_REQUEST_UPDATED', 'ISSUE_ASSIGNED', 'PULL_REQUEST_BEHIND', 'PULL_REQUEST_MERGED'] as const;
+const RULE_ACTIONS = ['REVIEW', 'TASK', 'REBASE', 'BACKPORT'] as const;
+const RULE_AGREEMENTS = ['REVIEWED', 'STARTED_TASK', 'UPDATED_BRANCH', 'OPENED_BACKPORT'] as const;
+const RULE_MODES = ['OBSERVE', 'SUGGEST', 'AUTO'] as const;
+
+export function parseAgentRuleDefinition(value: unknown, path = 'agentRule'): AgentRuleDefinitionDto {
+  const source = object(value, path);
+  const strings = (key: string) => list(source[key], `${path}.${key}`).map((entry, index) => text(entry, `${path}.${key}[${index}]`));
+  return {
+    name: text(source.name, `${path}.name`),
+    event: enumText(source.event, RULE_EVENTS, `${path}.event`),
+    repositories: strings('repositories'),
+    paths: strings('paths'),
+    labels: strings('labels'),
+    authors: strings('authors'),
+    action: enumText(source.action, RULE_ACTIONS, `${path}.action`),
+    agreement: enumText(source.agreement, RULE_AGREEMENTS, `${path}.agreement`),
+    withinDays: count(source.withinDays, `${path}.withinDays`),
+    body: text(source.body, `${path}.body`),
+  };
+}
+
+export function parseAgentRules(value: unknown): AgentRuleDto[] {
+  return list(value, 'agentRules').map((entry, index) => {
+    const path = `agentRules[${index}]`;
+    const source = object(entry, path);
+    return {
+      id: text(source.id, `${path}.id`),
+      text: text(source.text, `${path}.text`),
+      mode: enumText(source.mode, RULE_MODES, `${path}.mode`),
+      paused: flag(source.paused, `${path}.paused`),
+      recordSince: text(source.recordSince, `${path}.recordSince`),
+      rule: parseAgentRuleDefinition(source.rule, `${path}.rule`),
     };
   });
 }

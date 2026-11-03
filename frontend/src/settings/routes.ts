@@ -20,6 +20,7 @@ export type SettingsSection =
   | 'shortcuts'
   | 'models'
   | 'skills'
+  | 'rules'
   | 'workflow'
   | 'features'
   | 'github'
@@ -75,6 +76,7 @@ export const SETTINGS_ENTRIES: SettingsEntry[] = [
     rows: ['Development', 'Review', 'Providers', 'API keys', 'Add API key'],
   },
   { section: 'skills', group: 'Agents', label: 'Skills', slug: 'skills', rows: ['Your instructions', 'Add skill'] },
+  { section: 'rules', group: 'Agents', label: 'Rules', slug: 'rules', rows: ['Your rules', 'Paste a rule'] },
   {
     section: 'github',
     group: 'Integrations',

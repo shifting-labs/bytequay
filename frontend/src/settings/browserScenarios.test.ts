@@ -41,6 +41,11 @@ testBrowserScenarios([
     },
   },
   {
+    name: 'pastes, checks, saves, pauses, edits and removes rules through the Settings controls in Chromium',
+    expected: 3, timeout: 30_000,
+    fixture: { prefix: 'bytequay-rules-', entry: 'src/settings/fixtures/rulesBrowser.tsx', global: 'RulesTests' },
+  },
+  {
     name: 'keeps workspace settings loaded when the picker is used in Chromium',
     expected: 7, timeout: 30_000,
     fixture: {

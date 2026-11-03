@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   DevelopmentAutomationDto,
   AgentModelType,
+  AgentRuleDto,
   AgentSkillDto,
   AppPreferencesDto,
   GitHubAccountDto,
@@ -29,6 +30,7 @@ import UnwatchWorkspaceDialog from '../workspaces/UnwatchWorkspaceDialog';
 import ModelsPage, { type ModelChoice } from './ModelsPage';
 import ProviderSignInDialog from '../agents/ProviderSignInDialog';
 import SkillsPage from './SkillsPage';
+import RulesPage from './RulesPage';
 import ShortcutsPage from './ShortcutsPage';
 import WorkflowPage from './WorkflowPage';
 import FeaturesPage from './FeaturesPage';
@@ -80,6 +82,8 @@ export default function SettingsWindow({ section, workspace, onWorkspacesChanged
   const modelSaves = useRef<Promise<unknown>>(Promise.resolve());
   const [skills, setSkills] = useState<AgentSkillDto[] | null>(null);
   const [skillsBusy, setSkillsBusy] = useState(false);
+  const [rules, setRules] = useState<AgentRuleDto[] | null>(null);
+  const [rulesBusy, setRulesBusy] = useState(false);
   const [account, setAccount] = useState<GitHubAccountDto | null>(null);
   const [login, setLogin] = useState<string | null>(null);
   const [quietHours, setQuietHours] = useState<QuietHoursDto | null>(null);
@@ -128,6 +132,11 @@ export default function SettingsWindow({ section, workspace, onWorkspacesChanged
   useEffect(() => {
     if (section !== 'skills') return;
     void window.bridge.getAgentSkills().then(setSkills).catch(report);
+  }, [section, report]);
+
+  useEffect(() => {
+    if (section !== 'rules') return;
+    void window.bridge.getAgentRules().then(setRules).catch(report);
   }, [section, report]);
 
   useEffect(() => {
@@ -415,6 +424,29 @@ export default function SettingsWindow({ section, workspace, onWorkspacesChanged
                 setSkillsBusy(true);
                 window.bridge.removeAgentSkill(skill.id)
                   .then(setSkills).catch(report).finally(() => setSkillsBusy(false));
+              }}
+            />
+          )}
+          {section === 'rules' && (
+            <RulesPage
+              rules={rules ?? []}
+              busy={rulesBusy}
+              error={error}
+              onCheck={text => window.bridge.checkAgentRule(text)}
+              onSave={(text, id) => {
+                setRulesBusy(true);
+                const saved = id === null ? window.bridge.addAgentRule(text) : window.bridge.updateAgentRule(id, text);
+                return saved.then(setRules).finally(() => setRulesBusy(false));
+              }}
+              onPause={rule => {
+                setRulesBusy(true);
+                window.bridge.pauseAgentRule(rule.id, !rule.paused)
+                  .then(setRules).catch(report).finally(() => setRulesBusy(false));
+              }}
+              onRemove={rule => {
+                setRulesBusy(true);
+                window.bridge.removeAgentRule(rule.id)
+                  .then(setRules).catch(report).finally(() => setRulesBusy(false));
               }}
             />
           )}
