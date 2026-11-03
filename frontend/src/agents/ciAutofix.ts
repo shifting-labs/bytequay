@@ -70,7 +70,7 @@ export function ciAutofixRequest(turn: AgentTurnDto | undefined, text: string) {
   const repository = /^Verified current CI context:\n- Pull request: ([^\s#]+\/[^\s#]+#[1-9]\d*)\n/.exec(text)?.[1];
   if (repository === undefined) return null;
   return {
-    action: 'ByteQuay · Fix CI',
+    action: 'Fix CI',
     topic: repository,
   };
 }

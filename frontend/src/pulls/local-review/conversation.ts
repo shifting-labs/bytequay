@@ -68,7 +68,7 @@ export function findingFixRequest(message: string, taskId?: string): ReviewReque
     const fields = /^Finding: (F-\d+) \(([^()\n]+)\) · revision ([1-9]\d*)\nTitle: ([^\n]+)\nReviewer: ([^\n]+)\nSource development task: ([^\n]+)\nReviewed commit: ([^\n]+)\nLocation: ([^\n]+)$/.exec(header);
     if (fields === null || (taskId !== undefined && fields[6] !== taskId)) return null;
     return {
-      action: 'ByteQuay · Request fix', topic: `#${fields[1]} ${fields[4]}`,
+      action: 'Request fix', topic: `#${fields[1]} ${fields[4]}`,
       target: { kind: 'finding', findingId: fields[2] },
     };
   }
@@ -88,7 +88,7 @@ export function findingFixRequest(message: string, taskId?: string): ReviewReque
   if (title === '') return null;
   const runId = /^Run: (\S+) · /m.exec(header)?.[1];
   return {
-    action: 'ByteQuay · Fix the agent review',
+    action: 'Fix the agent review',
     topic: `#${identity[1]} ${title}`,
     target: { kind: 'finding', findingId: identity[2], runId },
   };

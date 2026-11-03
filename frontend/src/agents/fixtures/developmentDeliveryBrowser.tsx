@@ -208,7 +208,7 @@ async function deliveryResult(outcome: 'ready' | 'draft' | 'sync failure', publi
     render();
     const branch = task.generatedBranch;
     assert(branch !== null, 'Delivery requires a generated branch');
-    await until(() => host.innerText.includes('ByteQuay · Auto commit') && host.innerText.includes('Open draft pull request') && host.innerText.includes(branch)
+    await until(() => host.innerText.includes('Auto commit') && host.innerText.includes('Open draft pull request') && host.innerText.includes(branch)
       && !host.innerText.includes('Push the revision and create its draft'), 'Replay must retain the commit label and fold the exact publication prompt');
     assert(Number(submitted) === 1, 'Reopening final results must never send development or publication again');
     if (outcome === 'ready') {

@@ -324,8 +324,8 @@ describe('generated development request presentation', () => {
 
   it('attributes generated requests using trusted durable origins and names live activity', () => {
     for (const [kind, shown, activity] of [
-      ['AUTO_COMMIT', 'ByteQuay · Auto commit', 'Committing'],
-      ['PRIVACY_REPAIR', 'ByteQuay · Check for private information', 'Checking for private information'],
+      ['AUTO_COMMIT', 'Auto commit', 'Committing'],
+      ['PRIVACY_REPAIR', 'Check for private information', 'Checking for private information'],
       ['CREATE_DRAFT_PR', 'Open draft pull request', 'Creating draft PR'],
       ['REFINE_SUMMARY', 'Refresh the change intention', 'Refining summary'],
     ] as const) {
@@ -338,7 +338,7 @@ describe('generated development request presentation', () => {
       expect(taskHtml(turn, true)).toContain('>Needs approval<');
     }
     expect(() => parseAgentTurn({ ...contracts.turn, developmentOrigin: { kind: 'USER', parentUserTurnId: 'source' } })).toThrow();
-    expect(taskHtml({ ...baseTurn, state: 'COMPLETED' })).not.toContain('ByteQuay · Auto commit');
+    expect(taskHtml({ ...baseTurn, state: 'COMPLETED' })).not.toContain('>Auto commit<');
   });
 
   it('shows the create-PR action and branches over the sent prompt', () => {
@@ -622,7 +622,7 @@ describe('CI automation presentation', () => {
     const turn = parseAgentTurn(contracts.turn);
     const ciTurn = { ...turn, settings: { ...contracts.turn.settings, permissionPolicy: 'CI_AUTOFIX' } };
     const prompt = 'Verified current CI context:\n- Pull request: acme/demo#17\n- Remote head: ' + 'a'.repeat(40);
-    expect(ciAutofixRequest(ciTurn, prompt)).toMatchObject({ action: 'ByteQuay · Fix CI', topic: 'acme/demo#17' });
+    expect(ciAutofixRequest(ciTurn, prompt)).toMatchObject({ action: 'Fix CI', topic: 'acme/demo#17' });
     expect(ciAutofixRequest(turn, prompt)).toBeNull();
     expect(ciAutofixRequest(undefined, prompt)).toBeNull();
     expect(ciAutofixRequest(ciTurn, 'Please retry the failing check')).toBeNull();

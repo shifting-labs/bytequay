@@ -162,7 +162,7 @@ export async function generatedPrompt(kind: 'AUTO_COMMIT' | 'REFINE_SUMMARY' | '
   const action = request.querySelector('.agt-instruction__action')?.textContent;
   if (kind === 'REFINE_SUMMARY') assert(action === undefined && request.innerText.includes('Refresh the change intention'),
     'Refining the summary needs no action: its one line says what it does');
-  else assert(action === (kind === 'AUTO_COMMIT' ? 'ByteQuay · Auto commit' : existing ? 'Update pull request #12' : 'Open draft pull request'),
+  else assert(action === (kind === 'AUTO_COMMIT' ? 'Auto commit' : existing ? 'Update pull request #12' : 'Open draft pull request'),
     'The trusted origin must determine the action');
   assert(content.hidden && !request.innerText.includes('/private/worktree'), 'The prompt must start folded');
   assert(request.getBoundingClientRect().height <= ROW && request.scrollWidth <= request.clientWidth + 1, 'Generated requests must stay one row');
@@ -208,7 +208,7 @@ export async function generatedCi(snapshot = false) {
     onToggle={() => {}} onToggleActivity={() => {}} />));
   await settle();
   const request = card();
-  assert(request.innerText.includes('ByteQuay · Fix CI') && request.innerText.includes('acme/demo#17'), 'CI card must name the repair and PR');
+  assert(request.innerText.includes('Fix CI') && request.innerText.includes('acme/demo#17'), 'CI card must name the repair and PR');
   assert(request.getBoundingClientRect().height <= ROW && !request.innerText.includes('Remote head:'), 'CI request must start as one row');
   assert(host.querySelector('.agt-user__bubble')?.textContent?.includes('Keep the compatibility fix.'), 'User steering must remain visible');
   toggle().click(); await settle();

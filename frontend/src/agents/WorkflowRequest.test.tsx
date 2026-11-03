@@ -41,7 +41,7 @@ it.each(cases)('folds the %s workflow request to its row over the sent prompt', 
   const durable = parseAgentTurn({ ...contracts.turn, workflowRequest: kind });
   const user: TranscriptTurn['users'][number] = { id: 'request', text: prompt, attachments: [], delivery: 'TURN', at: '' };
   const html = render(durable, [user]);
-  expect(html).toContain(`ByteQuay · ${action}`);
+  expect(html).toContain(`class="agt-instruction__action">${action}<`);
   expect(html).toContain(`title="${topic}">${topic}</span>`);
   expect(html).toContain('aria-expanded="false"');
   expect(html).toContain('class="agt-instruction__content" hidden=""');

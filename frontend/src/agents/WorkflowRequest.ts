@@ -20,32 +20,32 @@ export function workflowRequest(turn: AgentTurnDto | undefined, prompt: string):
   switch (turn?.workflowRequest) {
     case 'CHERRY_PICK':
       if (prompt.startsWith('Build and test this cherry-picked range')) return {
-        action: 'ByteQuay · Build and test',
+        action: 'Build and test',
         topic: /^Target branch: (.+)$/m.exec(prompt)?.[1] ?? 'Cherry-picked range',
       };
       // The rebase onto a moved target runs on the cherry-pick's own task.
       if (/^Work branch: /m.test(prompt)) return {
-        action: 'ByteQuay · Resolve rebase',
+        action: 'Resolve rebase',
         topic: /^Work branch: (.+)$/m.exec(prompt)?.[1] ?? 'Conflicting commit',
       };
       return {
-        action: 'ByteQuay · Resolve cherry-pick',
+        action: 'Resolve cherry-pick',
         topic: /^Subject: (.+)$/m.exec(prompt)?.[1] ?? 'Conflicting commit',
       };
     case 'REBASE':
       return {
-        action: 'ByteQuay · Resolve rebase',
+        action: 'Resolve rebase',
         topic: /^Work branch: (.+)$/m.exec(prompt)?.[1] ?? 'Conflicting commit',
       };
     case 'CONTEXT_BUILD':
       if (prompt.startsWith('Check the code')) return {
-        action: 'ByteQuay · Check specifications', topic: 'Candidate gaps',
+        action: 'Check specifications', topic: 'Candidate gaps',
       };
       if (prompt.startsWith('Reproduce one spec check candidate')) return {
-        action: 'ByteQuay · Verify specification gap', topic: 'Reproduction test',
+        action: 'Verify specification gap', topic: 'Reproduction test',
       };
       if (prompt.startsWith('Learn repository memory')) return {
-        action: 'ByteQuay · Learn repository memory', topic: 'Maintainer guidance',
+        action: 'Learn repository memory', topic: 'Maintainer guidance',
       };
       return null;
     default:

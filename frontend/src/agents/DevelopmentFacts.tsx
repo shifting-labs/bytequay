@@ -22,11 +22,11 @@ export function refineSummaryRequest(turn: AgentTurnDto | null | undefined): str
 
 export function developmentTurnRequest(turn: AgentTurnDto | null | undefined) {
   if (turn?.developmentOrigin?.kind === 'PRIVACY_REPAIR') return {
-    action: 'ByteQuay · Check for private information',
+    action: 'Check for private information',
     topic: 'Publication privacy',
   };
   if (turn?.developmentOrigin?.kind === 'AUTO_COMMIT') return {
-    action: 'ByteQuay · Auto commit',
+    action: 'Auto commit',
     topic: 'Working changes',
   };
   return null;
