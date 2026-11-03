@@ -30,6 +30,7 @@ import com.bytequay.core.domain.RepositoryIssue;
 import com.bytequay.core.domain.RepositoryIssuePage;
 import com.google.common.collect.ImmutableList;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -50,10 +51,11 @@ class TestWorkspaceIssueDevelopmentController
 {
     private final WorkspaceIssueService issues = mock(WorkspaceIssueService.class);
     private final IssueDevelopmentService development = mock(IssueDevelopmentService.class);
+    private final WriteVersion writes = new WriteVersion();
     private final MockMvc mvc = standaloneSetup(new WorkspaceController(
             mock(WorkspaceRepositoryService.class), mock(WorkspaceDeletionService.class), mock(OldWorkspaceFolderService.class), mock(PullRequestService.class),
             mock(PullRequestRefreshService.class), mock(WorkspaceMetadataService.class), issues, mock(ModelSettingsService.class), mock(WorkspaceCommitsSettingsService.class),
-            development, mock(WorkspaceRelationships.class), new WriteVersion())).build();
+            development, mock(WorkspaceRelationships.class), writes)).build();
 
     @Test
     void issueProjectionStaysFlatAndRetainsExistingTaskWorkspace()
@@ -106,5 +108,25 @@ class TestWorkspaceIssueDevelopmentController
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.issues").isEmpty());
         verify(development).attention("workspace");
+    }
+
+    @Test
+    void attentionStaysNotModifiedUntilAnIssueTableChanges()
+            throws Exception
+    {
+        when(development.attention("workspace")).thenReturn(new RepositoryIssuePage(1, RepoRef.of("owner", "repo"), ImmutableList.of(), 0, 100, 0, false, Optional.empty()));
+        String etag = mvc.perform(get("/api/workspaces/workspace/issues/attention")).andExpect(status().isOk()).andReturn().getResponse().getHeader(HttpHeaders.ETAG);
+        write("agent_turn");
+        write("pull_requests");
+        mvc.perform(get("/api/workspaces/workspace/issues/attention").header(HttpHeaders.IF_NONE_MATCH, etag)).andExpect(status().isNotModified());
+        write("issue_task");
+        mvc.perform(get("/api/workspaces/workspace/issues/attention").header(HttpHeaders.IF_NONE_MATCH, etag)).andExpect(status().isOk());
+    }
+
+    /** What the statement inspector records for one write. */
+    private void write(String table)
+    {
+        writes.written();
+        writes.written(table);
     }
 }

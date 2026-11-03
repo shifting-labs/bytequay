@@ -42,6 +42,7 @@ import com.bytequay.core.domain.RemoteSource;
 import com.bytequay.core.domain.RepositoryIssueDetail;
 import com.bytequay.core.domain.RepositoryMetadataSnapshot;
 import com.bytequay.core.domain.Workspace.Topology;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -70,6 +71,10 @@ import static java.util.Objects.requireNonNull;
 @RequestMapping("/api/workspaces")
 public class WorkspaceController
 {
+    // Every table the issue attention page reads, so agent and pull request writes leave its version alone. A new read needs its table here.
+    private static final List<String> ISSUE_ATTENTION_TABLES =
+            ImmutableList.of("hosting_issue_rows", "hosting_issue_sync", "issue_goal", "issue_task", "watched_repo_workspaces");
+
     private final WorkspaceRepositoryService workspaces;
     private final WorkspaceDeletionService deletion;
     private final OldWorkspaceFolderService oldFolders;
@@ -211,7 +216,7 @@ public class WorkspaceController
     public WorkspaceIssueHttpContract.Page attentionIssues(@PathVariable String workspaceId, WebRequest request)
     {
         // Home re-reads every open issue on a timer; this page is built from stored rows alone.
-        if (request.checkNotModified(writes.current())) {
+        if (request.checkNotModified(writes.current(ISSUE_ATTENTION_TABLES))) {
             return null;
         }
         return WorkspaceIssueHttpContract.page(workspaceId, issueDevelopment.attention(workspaceId), issueDevelopment);
