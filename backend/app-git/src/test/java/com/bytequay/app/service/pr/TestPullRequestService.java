@@ -1607,13 +1607,13 @@ class TestPullRequestService
             invocation.<Consumer<GitHubNotificationRef>>getArgument(2).accept(notification);
             return null;
         }).when(notifications).poll(eq("pat"), eq("me"), any());
-        when(requests.refresh(session, 20, ref.number(), false)).thenReturn(snapshot(pullRequest()));
+        when(requests.refresh(session, 20, ref.number(), false)).thenReturn(snapshot(askingTeam(pullRequest())));
         when(gitHub.searchPullRequestsPaged(eq("pat"), anyString(), eq(1), eq(100)))
                 .thenThrow(new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Search limit reached"));
 
         service.syncAttentionSummaries();
 
-        verify(requests).saveSummaries(session, 20, ImmutableList.of(pullRequest().withOrigin(PullRequest.Origin.REVIEW_REQUESTED)));
+        verify(requests).saveSummaries(session, 20, ImmutableList.of(askingTeam(pullRequest()).withOrigin(PullRequest.Origin.REVIEW_REQUESTED)));
         verify(store).setDashboardVisible(12L, true);
         verify(store).observeActivity(12L, Optional.empty(), REVIEWED_AT);
         verify(syncSettings, never()).put(anyString(), anyString());
@@ -1883,13 +1883,14 @@ class TestPullRequestService
     }
 
     @ParameterizedTest
-    @ValueSource(booleans = {true, false})
-    void workspaceSyncPreservesNotificationReviewRequestsWithoutPruningRows(boolean notified)
+    @CsvSource({"true,true", "true,false", "false,true"})
+    void workspaceSyncPreservesNotificationReviewRequestsWithoutPruningRows(boolean notified, boolean team)
     {
         WorkspaceHostingRead route = workspaceRoute();
         service = newService(Clock.fixed(REVIEWED_AT, ZoneOffset.UTC));
         PullRequestRef ref = PullRequestRef.of("owner", "repo", 7);
-        FetchedPullRequest fetched = pullRequest().withViewerOrigin("me");
+        // The inbox keeps its reason after a request ends, so it counts only while a team the viewer may belong to is asked.
+        FetchedPullRequest fetched = (team ? askingTeam(pullRequest()) : pullRequest()).withViewerOrigin("me");
         PullRequestCardSummary summary = summary(fetched, PullRequestDetail.CiStatus.PASSING, "v1");
         when(requests.refreshPage(eq(route.session()), eq(1L), anyBoolean(), eq(1), eq(100))).thenAnswer(invocation ->
                 new PullRequestListPage(invocation.<Boolean>getArgument(2) ? ImmutableList.of() : ImmutableList.of(pullRequest()), false));
@@ -1901,7 +1902,7 @@ class TestPullRequestService
         verify(requests).refreshPage(route.session(), 1, false, 1, 100);
         verify(requests).refreshPage(route.session(), 1, true, 1, 100);
         verifyNoInteractions(gitHub);
-        verify(requests).saveSummaries(route.session(), 1, ImmutableList.of(fetched.withOrigin(notified ? PullRequest.Origin.REVIEW_REQUESTED : PullRequest.Origin.OTHER)));
+        verify(requests).saveSummaries(route.session(), 1, ImmutableList.of(fetched.withOrigin(notified && team ? PullRequest.Origin.REVIEW_REQUESTED : PullRequest.Origin.OTHER)));
         verify(store, never()).findDashboardVisible();
         verify(store, never()).setDashboardVisible(anyLong(), anyBoolean());
         verifyNoInteractions(detailStore, diffStore, actions, accounts, metadata);
@@ -2330,8 +2331,8 @@ class TestPullRequestService
         when(diffStore.find(12L, null, null)).thenReturn(Optional.empty());
         when(diffStore.defaultDiffValidated(12L, "base", "head")).thenReturn(false);
         when(notifications.reviewRequests("me")).thenReturn(reviewRequested ? ImmutableSet.of(ref) : ImmutableSet.of());
-        when(requests.refresh(session, 20, ref.number(), false)).thenReturn(snapshot(pullRequest));
-        when(requests.refresh(session, 20, ref.number(), true)).thenReturn(snapshot(pullRequest));
+        when(requests.refresh(session, 20, ref.number(), false)).thenReturn(snapshot(pullRequest, rawAskingTeam()));
+        when(requests.refresh(session, 20, ref.number(), true)).thenReturn(snapshot(pullRequest, rawAskingTeam()));
         when(accounts.fetchViewerCanWrite("pat", RepoRef.of("owner", "repo"))).thenReturn(true);
         when(gitHub.fetchPrReviews("pat", ref)).thenReturn(ImmutableList.of());
         when(gitHub.fetchPrTimeline("pat", ref)).thenReturn(ImmutableList.of());
@@ -2371,17 +2372,19 @@ class TestPullRequestService
         verify(diffStore).saveDefault(eq(12L), any(StoredPrDiff.class), eq(new PrDiffEtags(Optional.of("\"files-1\""), Optional.of("\"commits-1\""))));
     }
 
-    @Test
-    void reviewRequestsFromAnotherConnectedAccountMarkTheRefreshedRequest()
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void reviewRequestsFromAnotherConnectedAccountMarkTheRefreshedRequestWhileATeamIsAsked(boolean team)
     {
         PullRequestRef ref = PullRequestRef.of("owner", "repo", 7);
         HostingInstance github = new HostingInstance(1, GITHUB, URI.create("https://github.com"), URI.create("https://api.github.com"));
-        when(connections.connections()).thenReturn(ImmutableList.of(connection(new HostingAccount(12, 1, "300", "other"), github, true)));
+        // Without a team asked, the other account's inbox is not read.
+        lenient().when(connections.connections()).thenReturn(ImmutableList.of(connection(new HostingAccount(12, 1, "300", "other"), github, true)));
         when(notifications.reviewRequests("me")).thenReturn(ImmutableSet.of());
-        when(notifications.reviewRequests("other")).thenReturn(ImmutableSet.of(ref));
+        lenient().when(notifications.reviewRequests("other")).thenReturn(ImmutableSet.of(ref));
         FetchedPullRequest pullRequest = pullRequest(99, "open", Instant.parse("2026-08-21T00:00:00Z"), null);
         cacheDetail(null, PrDetailFreshness.unknown());
-        when(requests.refresh(session, 20, ref.number(), false)).thenReturn(snapshot(pullRequest));
+        when(requests.refresh(session, 20, ref.number(), false)).thenReturn(snapshot(pullRequest, team ? rawAskingTeam() : raw()));
         when(gitHub.fetchPrReviews("pat", ref)).thenReturn(ImmutableList.of());
         when(gitHub.fetchPrTimeline("pat", ref)).thenReturn(ImmutableList.of());
         when(gitHub.fetchPrIssueComments("pat", ref)).thenReturn(ImmutableList.of());
@@ -2396,7 +2399,7 @@ class TestPullRequestService
 
         ArgumentCaptor<PullRequest.Origin> origin = ArgumentCaptor.forClass(PullRequest.Origin.class);
         verify(store).updateEnrichment(eq(12L), any(), any(), anyInt(), anyInt(), anyInt(), any(), any(), any(), any(), anyList(), origin.capture(), any(), any(), any());
-        assertThat(origin.getValue()).isEqualTo(PullRequest.Origin.REVIEW_REQUESTED);
+        assertThat(origin.getValue()).isEqualTo(team ? PullRequest.Origin.REVIEW_REQUESTED : PullRequest.Origin.OTHER);
     }
 
     @Test
@@ -3917,6 +3920,13 @@ class TestPullRequestService
         return rawAt(pullRequest().updatedAt());
     }
 
+    /** A detail that asks a team, which names none of the members it asks. */
+    private static PrRawDetail rawAskingTeam()
+    {
+        return new PrRawDetail(null, null, null, null, null, null, pullRequest().updatedAt(), null, "body", ImmutableList.of(), null, ImmutableList.of(), null,
+                false, true, "clean", 4, 2, 1, 1, ImmutableList.of("owner/reviewers"), "head", "feature", "main", "base");
+    }
+
     private static PrRawDetail rawAt(Instant updatedAt)
     {
         return rawAt(updatedAt, true, "clean");
@@ -4065,6 +4075,14 @@ class TestPullRequestService
     private static FetchedPullRequest pullRequest()
     {
         return pullRequest("open", Instant.parse("2026-08-21T00:00:00Z"), null);
+    }
+
+    private static FetchedPullRequest askingTeam(FetchedPullRequest pullRequest)
+    {
+        return new FetchedPullRequest(pullRequest.remoteId(), pullRequest.repo(), pullRequest.number(), pullRequest.title(), pullRequest.author(), pullRequest.htmlUrl(),
+                pullRequest.createdAt(), pullRequest.updatedAt(), pullRequest.origin(), pullRequest.labels(), pullRequest.labelColors(), pullRequest.draft(),
+                pullRequest.state(), pullRequest.closedAt(), pullRequest.mergedAt(), ImmutableList.of("owner/reviewers"), pullRequest.mergeable(),
+                pullRequest.mergeableState(), pullRequest.headRef());
     }
 
     private static FetchedPullRequest pullRequest(String state, Instant updatedAt, Instant closedAt)

@@ -436,6 +436,44 @@ class TestSqlitePullRequestWorkspaceScope
     }
 
     @Test
+    void reviewRequestLastsWhileTheListingStillAsksATeam()
+    {
+        PullRequest requested = saveObserved(pullRequest(1, "acme/widgets", 1, null).withOrigin(PullRequest.Origin.REVIEW_REQUESTED));
+        Instant syncedAt = requested.updatedAt().plusSeconds(60);
+
+        saveRepositoryPage(ImmutableList.of(listed(1, syncedAt, ImmutableList.of("carol", "acme/reviewers"))));
+        PullRequest synced = store.findById(requested.id()).orElseThrow();
+        assertThat(synced.origin()).isEqualTo(PullRequest.Origin.REVIEW_REQUESTED);
+        assertThat(synced.reviewRequestedAt()).isEqualTo(requested.reviewRequestedAt());
+
+        // A card summary reads the team as acme/*; the name the listing stored stays.
+        saveRepositoryPage(ImmutableList.of(listed(1, syncedAt.plusSeconds(30), ImmutableList.of("carol", "acme/*"))));
+        PullRequest summarized = store.findById(requested.id()).orElseThrow();
+        assertThat(summarized.origin()).isEqualTo(PullRequest.Origin.REVIEW_REQUESTED);
+        assertThat(summarized.requestedReviewers()).containsExactly("carol", "acme/reviewers");
+
+        saveRepositoryPage(ImmutableList.of(listed(1, syncedAt.plusSeconds(60), ImmutableList.of("carol"))));
+        PullRequest ended = store.findById(requested.id()).orElseThrow();
+        assertThat(ended.origin()).isEqualTo(PullRequest.Origin.OTHER);
+        assertThat(ended.requestedReviewers()).containsExactly("carol");
+    }
+
+    @Test
+    void enrichmentThatMissesATeamRequestDoesNotDateItAgain()
+    {
+        PullRequest requested = saveObserved(pullRequest(1, "acme/widgets", 1).withOrigin(PullRequest.Origin.REVIEW_REQUESTED));
+        store.updateEnrichment(requested.id(), requested.updatedAt(), PullRequestDetail.CiStatus.PASSING, 1, 0, 0, true, "clean", null, "feature",
+                ImmutableList.of("acme/reviewers"), PullRequest.Origin.OTHER, Optional.empty(), Optional.empty(), ImmutableMap.of("raw", "v1"));
+        store.updateEnrichment(requested.id(), requested.updatedAt(), PullRequestDetail.CiStatus.PASSING, 1, 0, 0, true, "clean", null, "feature",
+                ImmutableList.of("acme/*"), PullRequest.Origin.REVIEW_REQUESTED, Optional.empty(), Optional.empty(), ImmutableMap.of("summary", "v1"));
+
+        PullRequest enriched = store.findById(requested.id()).orElseThrow();
+        assertThat(enriched.reviewRequestedAt()).isEqualTo(requested.reviewRequestedAt());
+        assertThat(enriched.origin()).isEqualTo(PullRequest.Origin.REVIEW_REQUESTED);
+        assertThat(enriched.requestedReviewers()).containsExactly("acme/reviewers");
+    }
+
+    @Test
     void attentionIncludesObservedUpdatesAndRetainsPastReviewRequests()
     {
         ImmutableList.Builder<FetchedPullRequest> rows = ImmutableList.builder();
@@ -611,6 +649,14 @@ class TestSqlitePullRequestWorkspaceScope
                 URI.create("https://github.com/" + path), URI.create("https://github.com/" + path + ".git"), Optional.empty(), Optional.of("main")));
         hosted.savePage(account.id(), repository.id(), CONNECTED_ACCOUNT, ImmutableList.of(pullRequest));
         return store.findByHostingRepository(repository.id(), pullRequest.number()).orElseThrow();
+    }
+
+    /** A row of the watched repository's list: it names its requested reviewers, but not the viewer. */
+    private static FetchedPullRequest listed(int number, Instant updatedAt, List<String> requestedReviewers)
+    {
+        return new FetchedPullRequest((long) number, "acme/widgets", number, "PR " + number, "alice", "https://github.com/acme/widgets/pull/" + number,
+                Instant.parse("2026-08-20T00:00:00Z"), updatedAt, PullRequest.Origin.OTHER, ImmutableList.of(), ImmutableMap.of(), false, "open", null, null,
+                requestedReviewers, true, "clean", "feature");
     }
 
     private static FetchedPullRequest pullRequest(long remoteId, String repository, int number)

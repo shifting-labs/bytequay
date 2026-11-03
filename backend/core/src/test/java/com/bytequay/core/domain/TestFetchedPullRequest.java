@@ -35,6 +35,19 @@ class TestFetchedPullRequest
                 .isEqualTo(PullRequest.Origin.OTHER);
     }
 
+    @Test
+    void theInboxAsksTheViewerOnlyWhileATeamIsAsked()
+    {
+        assertThat(pullRequest("bob", ImmutableList.of("carol", "owner/reviewers")).withViewerOrigin("alice").withInboxReviewRequest(true).origin())
+                .isEqualTo(PullRequest.Origin.REVIEW_REQUESTED);
+        assertThat(pullRequest("bob", ImmutableList.of("owner/reviewers")).withViewerOrigin("alice").withInboxReviewRequest(false).origin())
+                .isEqualTo(PullRequest.Origin.OTHER);
+        assertThat(pullRequest("bob", ImmutableList.of("carol")).withViewerOrigin("alice").withInboxReviewRequest(true).origin())
+                .isEqualTo(PullRequest.Origin.OTHER);
+        assertThat(pullRequest("alice", ImmutableList.of("owner/reviewers")).withViewerOrigin("alice").withInboxReviewRequest(true).origin())
+                .isEqualTo(PullRequest.Origin.AUTHORED);
+    }
+
     private static FetchedPullRequest pullRequest(String author, List<String> requestedReviewers)
     {
         Instant now = Instant.parse("2026-08-29T00:00:00Z");

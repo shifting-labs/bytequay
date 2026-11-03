@@ -758,7 +758,7 @@ public class PullRequestService
 
         PullRequestRead route = requestRead(session, ref.repoFullName(), ref.number());
         FetchedPullRequest fetched = refreshMetadata(route, false).pullRequest().withViewerOrigin(login);
-        FetchedPullRequest observed = notice.reason() == ActivityNotice.Reason.REVIEW_REQUESTED && fetched.origin() != AUTHORED ? fetched.withOrigin(REVIEW_REQUESTED) : fetched;
+        FetchedPullRequest observed = fetched.withInboxReviewRequest(notice.reason() == ActivityNotice.Reason.REVIEW_REQUESTED);
         requests.saveSummaries(session, route.repository().id(), ImmutableList.of(observed));
         PullRequest row = rows.find(route).orElseThrow();
         store.setDashboardVisible(row.id(), true);
@@ -977,10 +977,7 @@ public class PullRequestService
                 }
                 FetchedPullRequest fetched = summary.pullRequest();
                 PullRequestRef ref = parseRef(fetched.repo(), fetched.number());
-                if (fetched.origin() != AUTHORED && reviewRequests.contains(ref)) {
-                    fetched = fetched.withOrigin(REVIEW_REQUESTED);
-                }
-                PullRequest row = storeSummary(session, fetched);
+                PullRequest row = storeSummary(session, fetched.withInboxReviewRequest(reviewRequests.contains(ref)));
                 storeCardSummary(session, row, summary, login);
                 if (row.updatedAt().isAfter(summary.pullRequest().updatedAt())) {
                     continue;
@@ -1511,11 +1508,7 @@ public class PullRequestService
         boolean full = missing;
         if (metadataDue) {
             HostingPullRequestSnapshot fetched = refreshMetadata(route, policy.force() || missingCoordinates || missingHead);
-            FetchedPullRequest observed = fetched.pullRequest().withViewerOrigin(login);
-            if (observed.origin() != AUTHORED && detailFetcher.reviewRequested(route, login)) {
-                observed = observed.withOrigin(REVIEW_REQUESTED);
-            }
-            row = rows.observe(route, observed);
+            row = rows.observe(route, fetched.pullRequest().withViewerOrigin(login).withInboxReviewRequest(detailFetcher.reviewRequested(route, login)));
             PrRawDetail raw = fetched.detail();
             full |= previous.filter(value -> !value.raw().equals(raw)).isPresent();
             boolean viewerCanWrite = detailFetcher.viewerCanWrite(route);
@@ -1904,7 +1897,8 @@ public class PullRequestService
                 detail.raw().requestedReviewers(),
                 pullRequest.author().equalsIgnoreCase(currentLogin) ? AUTHORED
                         : detail.raw().requestedReviewers().stream().anyMatch(currentLogin::equalsIgnoreCase)
-                                || polled(PullRequestDiscovery::reviewRequests).contains(parseRef(pullRequest.repo(), pullRequest.number())) ? REVIEW_REQUESTED : OTHER,
+                                || PullRequest.requestsTeam(detail.raw().requestedReviewers())
+                                && polled(PullRequestDiscovery::reviewRequests).contains(parseRef(pullRequest.repo(), pullRequest.number())) ? REVIEW_REQUESTED : OTHER,
                 detail.timeline().stream()
                         .filter(event -> "review_requested".equals(event.event()) && currentLogin.equalsIgnoreCase(event.payload().requestedReviewer()))
                         .map(PrTimelineEvent::timestamp)

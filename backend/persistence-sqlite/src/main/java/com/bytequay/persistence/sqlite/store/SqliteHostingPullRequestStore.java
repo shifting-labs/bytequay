@@ -15,7 +15,6 @@ package com.bytequay.persistence.sqlite.store;
 
 import com.bytequay.core.domain.FetchedPullRequest;
 import com.bytequay.core.domain.PrRawDetail;
-import com.bytequay.core.domain.PullRequest;
 import com.bytequay.core.hosting.HostingPullRequestSnapshot;
 import com.bytequay.core.hosting.PullRequestListPage;
 import com.bytequay.core.store.HostingPullRequestStore;
@@ -168,13 +167,8 @@ public class SqliteHostingPullRequestStore
             boolean changed = !Objects.equals(request.getUpdatedAt(), updated.getUpdatedAt()) || !Objects.equals(request.getTitle(), updated.getTitle())
                     || !Objects.equals(request.getState(), updated.getState()) || request.isDraft() != updated.isDraft()
                     || !ImmutableSet.copyOf(request.getLabels()).equals(ImmutableSet.copyOf(updated.getLabels()));
-            String origin = request.getOrigin();
             request.updateSummary(pullRequest, observedAt);
             request.preserveEnrichmentFrom(updated);
-            // Search has no reviewer list or head ref; only exact detail can remove a known pending request.
-            if (pullRequest.headRef() == null && pullRequest.origin() == PullRequest.Origin.OTHER && PullRequest.Origin.REVIEW_REQUESTED.name().equals(origin)) {
-                request.setOrigin(origin);
-            }
             if (changed) {
                 request.setActivityAt(observedAt);
             }

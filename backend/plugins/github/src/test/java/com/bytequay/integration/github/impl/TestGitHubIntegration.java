@@ -295,7 +295,7 @@ class TestGitHubIntegration
             assertThat(value.updatedAt()).isEqualTo(Instant.parse("2026-10-02T10:00:00Z"));
             assertThat(value.labels()).containsExactly("bug");
             assertThat(value.labelColors()).containsEntry("bug", "ff0000");
-            assertThat(value.requestedReviewers()).containsExactly("charlie");
+            assertThat(value.requestedReviewers()).containsExactly("charlie", "bytequay/maintainers");
             assertThat(value.draft()).isTrue();
             assertThat(value.mergeable()).isNull();
         });
@@ -334,7 +334,7 @@ class TestGitHubIntegration
             assertThat(item.author()).isEqualTo("alice");
             assertThat(item.updatedAt()).isEqualTo(Instant.parse("2026-10-02T10:00:00Z"));
             assertThat(item.labels()).containsExactly("bug");
-            assertThat(item.requestedReviewers()).containsExactly("charlie");
+            assertThat(item.requestedReviewers()).containsExactly("charlie", "bytequay/maintainers");
             assertThat(item.draft()).isTrue();
         });
         assertThat(request.get().path()).isEqualTo(path);

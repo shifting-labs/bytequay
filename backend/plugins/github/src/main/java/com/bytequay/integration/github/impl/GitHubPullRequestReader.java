@@ -102,9 +102,10 @@ public final class GitHubPullRequestReader
             List<String> reviewers = Optional.ofNullable(item.requestedReviewers()).orElse(ImmutableList.of()).stream()
                     .map(GitHubPullRequestResponse.User::login).filter(Objects::nonNull).collect(toImmutableList());
             PrRawDetail detail = toPrRawDetail(target.repository().fullPath(), item, reviewers, state, url);
+            // Name requested teams too: a member asked through one is not named, so without them this read would look like the request ended.
             FetchedPullRequest summary = new FetchedPullRequest(
                     item.id(), target.repository().fullPath(), item.number(), detail.title(), detail.author(), detail.htmlUrl(), detail.createdAt(), detail.updatedAt(),
-                    OTHER, detail.labels(), detail.labelColors(), detail.draft(), detail.state(), item.closedAt(), detail.mergedAt(), reviewers,
+                    OTHER, detail.labels(), detail.labelColors(), detail.draft(), detail.state(), item.closedAt(), detail.mergedAt(), detail.requestedReviewers(),
                     detail.mergeable(), detail.mergeableState(), detail.headRef());
             return new PullRequestFetch(Optional.of(summary), validator, Optional.of(detail));
         }

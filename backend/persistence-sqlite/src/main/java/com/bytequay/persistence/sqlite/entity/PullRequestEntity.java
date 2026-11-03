@@ -43,6 +43,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Stream;
+
+import static com.google.common.collect.ImmutableList.toImmutableList;
 
 @Entity
 @Table(
@@ -189,7 +192,7 @@ public class PullRequestEntity
         this.setHtmlUrl(pr.htmlUrl());
         this.setCreatedAt(pr.createdAt());
         this.setUpdatedAt(pr.updatedAt());
-        this.setOrigin(pr.origin().name());
+        this.observeOrigin(pr.origin(), pr.headRef() != null, pr.requestedReviewers());
         this.setLabels(pr.labels());
         this.setLabelColors(pr.labelColors());
         this.setDraft(pr.draft());
@@ -202,11 +205,35 @@ public class PullRequestEntity
         this.setMergeable(pr.mergeable());
         this.setMergeableState(pr.mergeableState());
         this.setHeadRef(pr.headRef());
-        this.setRequestedReviewers(pr.requestedReviewers());
+        this.observeRequestedReviewers(pr.requestedReviewers());
         this.setActivityAt(pr.updatedAt());
         if (pr.origin() == PullRequest.Origin.REVIEW_REQUESTED) {
             this.setReviewRequestedAt(syncedAt);
         }
+    }
+
+    /**
+     * Takes the viewer's relationship a read reports, except that a read which does not name the viewer keeps a known review request it
+     * cannot see: search lists no reviewers, and a requested team names none of the members it asks.
+     */
+    public void observeOrigin(PullRequest.Origin observed, boolean listsReviewers, List<String> requestedReviewers)
+    {
+        boolean unseen = observed == PullRequest.Origin.OTHER && (!listsReviewers || PullRequest.requestsTeam(requestedReviewers));
+        if (!unseen || !PullRequest.Origin.REVIEW_REQUESTED.name().equals(getOrigin())) {
+            setOrigin(observed.name());
+        }
+    }
+
+    /** Takes the reviewers a read reports; a card summary reads a requested team as owner/*, so the team names an earlier read stored stand in. */
+    public void observeRequestedReviewers(List<String> observed)
+    {
+        List<String> teams = Optional.ofNullable(getRequestedReviewers()).orElse(ImmutableList.of()).stream()
+                .filter(reviewer -> reviewer.contains("/") && !reviewer.endsWith("/*"))
+                .collect(toImmutableList());
+        setRequestedReviewers(observed.stream()
+                .flatMap(reviewer -> reviewer.endsWith("/*") && !teams.isEmpty() ? teams.stream() : Stream.of(reviewer))
+                .distinct()
+                .collect(toImmutableList()));
     }
 
     /** This row as the domain pull request, carrying the given view state. */

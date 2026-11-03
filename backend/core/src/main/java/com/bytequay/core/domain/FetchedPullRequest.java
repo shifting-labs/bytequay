@@ -93,4 +93,13 @@ public record FetchedPullRequest(
         }
         return withOrigin(viewerOrigin);
     }
+
+    /**
+     * This pull request as asked of the viewer when their inbox says so while a team is still asked: GitHub keeps that inbox reason after
+     * the request ends, and a team request names none of its members.
+     */
+    public FetchedPullRequest withInboxReviewRequest(boolean requested)
+    {
+        return requested && origin == PullRequest.Origin.OTHER && PullRequest.requestsTeam(requestedReviewers) ? withOrigin(PullRequest.Origin.REVIEW_REQUESTED) : this;
+    }
 }

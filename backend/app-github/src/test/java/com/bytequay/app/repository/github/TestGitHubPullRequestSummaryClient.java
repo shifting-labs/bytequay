@@ -61,20 +61,27 @@ class TestGitHubPullRequestSummaryClient
                 {"databaseId":42,"state":"APPROVED","submittedAt":"2026-09-20T10:00:00Z",
                   "author":{"login":"viewer","avatarUrl":"https://avatars/viewer"},"commit":{"oid":"reviewed-sha"}}
                 """));
+        row.withObject("/reviewRequests").withArray("nodes")
+                .add(MAPPER.readTree("""
+                        {"requestedReviewer":{"__typename":"Team"}}
+                        """))
+                .add(MAPPER.readTree("""
+                        {"requestedReviewer":{"__typename":"Mannequin"}}
+                        """));
         graphServer.expect(requestTo(ENDPOINT)).andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer pat"))
                 .andExpect(request -> {
                     var payload = MAPPER.readTree(((MockClientHttpRequest) request).getBodyAsString());
                     assertThat(payload.path("query").asText()).contains("databaseId:fullDatabaseId", "reviews(last:1", "checkRunCountsByState", "reviewRequested:timelineItems(last:20")
                             .contains("activity:timelineItems(last:1)")
                             .contains("latestOpinionatedReviews(first:100)")
-                            .doesNotContain("files(", "reviewThreads(");
+                            .doesNotContain("files(", "reviewThreads(", "on Team");
                     assertThat(payload.path("variables").path("login").asText()).isEqualTo("viewer");
                 }).andRespond(withSuccess(response(row), MediaType.APPLICATION_JSON));
 
         PullRequestCardSummary summary = client.fetchSummaries("pat", ImmutableList.of(REF), "viewer").getFirst();
 
         assertThat(summary.pullRequest().origin()).isEqualTo(Origin.REVIEW_REQUESTED);
-        assertThat(summary.pullRequest().requestedReviewers()).containsExactly("viewer");
+        assertThat(summary.pullRequest().requestedReviewers()).containsExactly("viewer", "owner/*");
         assertThat(summary.pullRequest().labels()).containsExactly("bug");
         assertThat(summary.pullRequest().mergeable()).isTrue();
         assertThat(summary.pullRequest().mergeableState()).isEqualTo("clean");

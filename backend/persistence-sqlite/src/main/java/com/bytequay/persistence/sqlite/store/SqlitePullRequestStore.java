@@ -378,11 +378,11 @@ public class SqlitePullRequestStore
             if (origin == PullRequest.Origin.REVIEW_REQUESTED && !origin.name().equals(entity.getOrigin())) {
                 entity.setReviewRequestedAt(Instant.now());
             }
-            entity.setOrigin(origin.name());
+            entity.observeOrigin(origin, true, requestedReviewers);
             reviewRequestedAt.filter(timestamp -> entity.getReviewRequestedAt() == null || timestamp.isAfter(entity.getReviewRequestedAt()))
                     .ifPresent(entity::setReviewRequestedAt);
             entity.setReviewDecision(reviewDecision.orElse(null));
-            entity.setRequestedReviewers(requestedReviewers);
+            entity.observeRequestedReviewers(requestedReviewers);
             entity.setCiStatus(ciStatus);
             entity.setAdditions(additions);
             entity.setDeletions(deletions);

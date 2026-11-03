@@ -106,6 +106,12 @@ public record PullRequest(
         return "blocked".equalsIgnoreCase(mergeableState);
     }
 
+    /** Whether a reviewer list asks a team, named owner/slug or, by a read that cannot name it, owner/*; a team request names none of its members. */
+    public static boolean requestsTeam(List<String> requestedReviewers)
+    {
+        return requestedReviewers.stream().anyMatch(reviewer -> reviewer.contains("/"));
+    }
+
     public enum Origin
     {
         AUTHORED,

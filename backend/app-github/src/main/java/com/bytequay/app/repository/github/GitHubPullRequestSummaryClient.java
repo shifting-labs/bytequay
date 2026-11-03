@@ -299,10 +299,14 @@ public class GitHubPullRequestSummaryClient
             throw incomplete("Pull request identity differs from the requested reference");
         }
         List<Label> labels = completeNodes(row.labels(), "labels");
+        // A member asked through a requested team is not named, so the team must show. GraphQL names a team only with read:org, which a
+        // token may lack; owner/* still says one of the owner's teams is asked, where REST reads name it owner/slug.
+        String owner = repository.substring(0, repository.indexOf('/'));
         List<String> reviewers = completeNodes(row.reviewRequests(), "reviewRequests").stream()
                 .map(ReviewRequest::requestedReviewer)
-                .filter(reviewer -> "User".equals(text(reviewer.type())))
-                .map(reviewer -> text(reviewer.login().orElse(null)))
+                .filter(reviewer -> ImmutableSet.of("User", "Team").contains(text(reviewer.type())))
+                .map(reviewer -> "Team".equals(reviewer.type()) ? owner + "/*" : text(reviewer.login().orElse(null)))
+                .distinct()
                 .collect(toImmutableList());
         String state = text(row.state());
         if (!ImmutableSet.of("OPEN", "CLOSED", "MERGED").contains(state)) {
