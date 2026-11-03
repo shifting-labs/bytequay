@@ -16,6 +16,7 @@ package com.bytequay.app.workspace;
 import com.bytequay.app.service.hosting.HostingIntegrationFixtures;
 import com.bytequay.app.service.hosting.HostingIntegrations;
 import com.bytequay.app.service.hosting.HostingReadSession;
+import com.bytequay.app.workspace.WorkspaceRelationships.LineNode;
 import com.bytequay.core.domain.FetchedPullRequest;
 import com.bytequay.core.domain.RepositoryIssue;
 import com.bytequay.core.hosting.HostingAccess;
@@ -66,7 +67,8 @@ class TestComposerSuggestionService
     private final HostingIntegrations integrations = mock(HostingIntegrations.class);
     private final PullRequestReader requests = mock(PullRequestReader.class);
     private final IssueClient issues = mock(IssueClient.class);
-    private final ComposerSuggestionService service = new ComposerSuggestionService(hosting, integrations);
+    private final WorkspaceRelationships relationships = mock(WorkspaceRelationships.class);
+    private final ComposerSuggestionService service = new ComposerSuggestionService(hosting, integrations, relationships);
 
     @BeforeEach
     void setUp()
@@ -114,6 +116,25 @@ class TestComposerSuggestionService
         assertThat(service.list("workspace", BACKPORT, "")).extracting(ComposerSuggestion::number).containsExactly(2, 6, 1, 5);
         assertThat(service.list("workspace", BACKPORT, "sact")).extracting(ComposerSuggestion::number).containsExactly(5);
         verify(requests, times(2)).list(any(), eq(false), anyInt(), eq(100));
+    }
+
+    @Test
+    void backportSearchesTheRepoLineUpstreamFromEitherEnd()
+    {
+        List<LineNode> line = ImmutableList.of(new LineNode("upstream", Optional.empty()), new LineNode("fork", Optional.of("upstream")));
+        when(relationships.line("fork")).thenReturn(line);
+        when(relationships.line("upstream")).thenReturn(line);
+        when(hosting.storedRead("upstream")).thenReturn(route(1, "account", 11, "alice"));
+        when(hosting.storedRead("fork")).thenReturn(route(1, "account", 12, "alice"));
+        when(requests.list(any(), eq(false), eq(1), eq(100))).thenReturn(new PullRequestListPage(ImmutableList.of(pr(7, "Upstream fix", "bob", "merged", 1, 1)), false));
+        when(issues.list(any(), eq(Optional.empty()), eq(1))).thenReturn(new IssueSyncPage(ImmutableList.of(issue(8, "Fork bug", 1)), ImmutableList.of(), false));
+
+        assertThat(service.list("fork", BACKPORT, "")).extracting(ComposerSuggestion::number).containsExactly(7);
+        assertThat(service.list("upstream", BACKPORT, "")).extracting(ComposerSuggestion::number).containsExactly(7);
+        assertThat(service.list("fork", FIX, "")).extracting(ComposerSuggestion::number).containsExactly(8);
+        verify(hosting, times(2)).storedRead("upstream");
+        verify(hosting).storedRead("fork");
+        verify(requests).list(any(), eq(false), eq(1), eq(100));
     }
 
     @Test
@@ -187,7 +208,7 @@ class TestComposerSuggestionService
     void rejectsUnboundedSearchBeforeReading()
     {
         assertThatThrownBy(() -> service.list("workspace", FIX, "x".repeat(501))).isInstanceOf(IllegalArgumentException.class);
-        verifyNoInteractions(hosting, integrations);
+        verifyNoInteractions(hosting, integrations, relationships);
     }
 
     private static WorkspaceHostingRead route(long account, String scope, long repository, String login)

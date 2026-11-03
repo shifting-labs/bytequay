@@ -47,13 +47,15 @@ public class ComposerSuggestionService
 {
     private final WorkspaceHostingService hosting;
     private final HostingIntegrations integrations;
+    private final WorkspaceRelationships relationships;
     private final Cache<CacheKey, CandidatePage> pages = CacheBuilder.newBuilder()
             .maximumSize(500).expireAfterWrite(Duration.ofMinutes(1)).build();
 
-    public ComposerSuggestionService(WorkspaceHostingService hosting, HostingIntegrations integrations)
+    public ComposerSuggestionService(WorkspaceHostingService hosting, HostingIntegrations integrations, WorkspaceRelationships relationships)
     {
         this.hosting = requireNonNull(hosting, "hosting is null");
         this.integrations = requireNonNull(integrations, "integrations is null");
+        this.relationships = requireNonNull(relationships, "relationships is null");
     }
 
     public List<ComposerSuggestion> list(String workspaceId, Command command, String search)
@@ -62,7 +64,7 @@ public class ComposerSuggestionService
         requireNonNull(search, "search is null");
         checkArgument(search.length() <= 500, "search must be at most 500 characters");
         String query = search.strip().toLowerCase(Locale.ROOT);
-        WorkspaceHostingRead route = hosting.storedRead(workspaceId);
+        WorkspaceHostingRead route = hosting.storedRead(command == Command.BACKPORT ? backportSource(workspaceId) : workspaceId);
         Map<Integer, Candidate> found = new HashMap<>();
         for (int page = 1; ; page++) {
             CandidatePage result = page(route, command, page);
@@ -78,6 +80,16 @@ public class ComposerSuggestionService
                 return newest.stream().map(Candidate::suggestion).collect(toImmutableList());
             }
         }
+    }
+
+    /** Backports come down the repo line, so a workspace with an upstream searches that upstream's merged PRs; the top of a line searches its own. */
+    private String backportSource(String workspaceId)
+    {
+        return relationships.line(workspaceId).stream()
+                .filter(node -> node.workspaceId().equals(workspaceId))
+                .findFirst()
+                .flatMap(WorkspaceRelationships.LineNode::parentWorkspaceId)
+                .orElse(workspaceId);
     }
 
     private CandidatePage page(WorkspaceHostingRead route, Command command, int page)
