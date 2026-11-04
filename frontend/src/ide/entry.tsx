@@ -88,7 +88,7 @@ function reviewOptions(context: IdeContext): CodeCommentsOptions | undefined {
   if (!source) return undefined;
   return {
     ...source,
-    onPendingChange: pending => { void request('comments.pending', pending); },
+    onPendingChange: async pending => { await request('comments.pending', pending); },
     onDetailChange: detail => { void request('comments.detail', detail); },
     onAskAgent: source.askAgent ? async comment => { await request('comments.ask', comment); } : undefined,
     onOpenFindingInReview: source.openFinding ? finding => { void request('comments.finding', finding); } : undefined,

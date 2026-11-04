@@ -23,6 +23,7 @@ import { carriedPanelTab } from '../pulls/PullsScreen';
 import { useLocalReviewThreads } from '../pulls/local-review/useLocalReviewThreads';
 import { pullRequestDiffRevision, usePullRequestChanges } from '../pulls/usePullRequestChanges';
 import { gitHubRetryAt, usePullRequestDetail } from '../pulls/usePullRequestDetail';
+import { usePendingReviewComments } from '../pulls/usePendingReviewComments';
 import { errorMessage } from '../errorMessage';
 import { isDeepSeekKeyLane, laneLabel, providerAvailable } from '../settings/model';
 import { settingsRoute } from '../settings/routes';
@@ -37,7 +38,6 @@ import type {
   AgentTaskDto,
   AgentTurnDto,
   DevelopmentAutomationDto,
-  InlineReviewCommentDto,
   ModelOptionDto,
   PullRequestDto,
   WorkspaceDto
@@ -594,26 +594,19 @@ export default function AgentTaskScreen({
     active: panelOpen && (panelTab === 'files' || panelTab === 'changes'),
     revision: diffRevision,
   });
+  const pendingReview = usePendingReviewComments(taskPr);
   const pullRequestDetail = {
     ...detailSource,
     refresh: async () => {
-      await detailSource.refresh();
+      await Promise.all([detailSource.refresh(), pendingReview.refresh()]);
       if (currentReviewKey.current === reviewKey) pullRequestChanges.refresh();
     },
   };
   const pullRequestCommitRange = pullRequestChanges.commitRange;
-  // A staged review is the reader's unsent writing, so it lasts as long as the panel shows this
-  // pull request. Nothing the pull request itself does — a new head, a refresh, a narrowed commit
-  // range — may throw it away; a comment written against an older head carries that head's SHA and
-  // is refused at submission instead.
   const reviewKey = taskPr === null ? null : `${taskPr.repo.toLowerCase()}#${taskPr.number}`;
   const currentReviewKey = useRef(reviewKey);
   currentReviewKey.current = reviewKey;
-  const [pullRequestReview, setPullRequestReview] = useState<{
-    key: string | null;
-    pendingComments: InlineReviewCommentDto[];
-  }>({ key: reviewKey, pendingComments: [] });
-  const pullRequestPendingComments = pullRequestReview.key === reviewKey ? pullRequestReview.pendingComments : [];
+  const pullRequestPendingComments = pendingReview.comments;
 
   /** Runs one bridge command, surfacing its failure in the notice strip instead of losing it. */
   const run = useCallback(async (action: (current: () => boolean) => Promise<void>, requestRef = actionRequestRef) => {
@@ -1406,20 +1399,21 @@ export default function AgentTaskScreen({
         setOpenAgent(null);
       }}
       pullRequests={pullRequests}
-      pullRequestError={pullRequestError}
+      pullRequestError={pullRequestError ?? pendingReview.error}
       pullRequestLoading={pullRequestLoading}
       pullRequestChecked={pullRequestChecked.current}
       ciPollingError={ciPollingError}
       ciSubmissionBlocked={confirmation !== null || confirming}
-      onRefreshPullRequests={canRefreshPullRequests ? () => setPullRequestRefresh((revision) => revision + 1) : undefined}
+      onRefreshPullRequests={canRefreshPullRequests ? () => {
+        setPullRequestRefresh((revision) => revision + 1);
+        void pendingReview.refresh();
+      } : undefined}
       pullRequestDetail={pullRequestDetail}
       pullRequestChanges={pullRequestChanges}
       pullRequestCommitRange={pullRequestCommitRange}
       pullRequestPendingComments={pullRequestPendingComments}
       onPullRequestCommitRangeChange={pullRequestChanges.changeCommitRange}
-      onPullRequestPendingCommentsChange={pendingComments => setPullRequestReview(current => currentReviewKey.current !== reviewKey
-        ? current
-        : { key: reviewKey, pendingComments })}
+      onPullRequestPendingCommentsChange={pendingReview.onChange}
       repository={workspace === undefined ? null : `${workspace.monitoredOwner}/${workspace.monitoredRepo}`}
       onTogglePanel={() => {
         if (!panelOpen) setPanelChoice(true);

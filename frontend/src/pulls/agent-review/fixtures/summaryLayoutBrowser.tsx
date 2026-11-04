@@ -53,7 +53,7 @@ export function preview(host: HTMLElement) {
     return <>
       <PullDetailHeader pr={pr({ number: 30304, repo: value.repo })} detail={null} tab={tab} review={value}
         onTab={next => setTab(next === 'review' ? 'review' : 'files')}
-        onRefresh={async () => {}} onReviewSubmitted={() => {}} refreshing={false} pendingComments={[]} onPendingCommentsChange={() => {}} />
+        onRefresh={async () => {}} onReviewSubmitted={() => {}} refreshing={false} pendingComments={[]} />
       <div className="pull-detail__body pull-detail__review" hidden={tab !== 'review'}>
         <AgentReviewTab review={value} workspaceId={value.workspaceId} viewer={null} ownStream={false}
           onReviewChange={() => {}} focusFindingId={null} onNavigateToChanges={() => {}}

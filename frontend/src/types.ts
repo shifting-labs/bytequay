@@ -180,6 +180,8 @@ export type GitHubIssuePreviewDto = {
 };
 
 export type InlineReviewCommentDto = {
+  /** Present after Add to review saves this comment in the local review draft. */
+  draftItemId?: string;
   replyToCommentId?: number | null;
   path: string;
   body: string;

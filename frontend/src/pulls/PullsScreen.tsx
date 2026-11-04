@@ -69,7 +69,7 @@ import {
   type PullTab,
 } from './model';
 import { usePrivateThreads, type PrivateThreadSource } from './PrivateThread';
-import PullChanges, { pullReviewThreads, updatePendingReviewComment, type CommitRange, type DiffAgentComment } from './PullChanges';
+import PullChanges, { pullReviewThreads, type CommitRange, type DiffAgentComment } from './PullChanges';
 import PullOverview, { commentedCodeLines, isAutoMergeEnabled, isQueued, useViewer } from './PullOverview';
 import { mergePullRequestWriteDetail, type PullDetailUpdater } from './pullDetail';
 import { errorMessage } from '../errorMessage';
@@ -80,6 +80,7 @@ import { PullRequestChip } from './PullRequestChip';
 import PullRequestTaskActions from './PullRequestTaskActions';
 import PullRowItem, { PullRequestIcon } from './PullRowItem';
 import { PendingReviewComments } from './ReviewDrafts';
+import { reviewDraftChanged, usePendingReviewComments } from './usePendingReviewComments';
 import { ReviewThreadCard, ReviewThreadMessage } from './ReviewThreadCard';
 import { usePrCommentCommand } from './usePrCommentCommand';
 import { usePullCommentThreads } from './usePullCommentThreads';
@@ -427,7 +428,6 @@ function PullsContent({
     onClose?.();
     window.location.hash = route;
   });
-  const [pendingReviewComments, setPendingReviewComments] = useState<InlineReviewCommentDto[]>([]);
   const [paneOpen, setPaneOpen] = useState(true);
   const [detailZoomed, setDetailZoomed] = useState(false);
   // One layer for both hosts: the list zooms its own pane, a preview opens already zoomed.
@@ -760,6 +760,8 @@ function PullsContent({
   const awaitingInitialPr = initialPr !== undefined && selected === null;
   const visibleSelected = singlePullRequest || awaitingInitialPr ? selected : visibleSelectedId(rows, selected);
   const selectedPr = prs.find(pr => pr.id === visibleSelected) ?? null;
+  const pendingReview = usePendingReviewComments(selectedPr);
+  const { comments: pendingReviewComments, onChange: setPendingReviewComments } = pendingReview;
   const selectedPrId = selectedPr?.id;
   const selectedPrNumber = selectedPr?.number;
   const selectedPrRepo = selectedPr?.repo;
@@ -822,7 +824,7 @@ function PullsContent({
     revision: diffRevision,
   });
   const { files: diffs, commits: diffCommits, commitRange: diffRange, loading: diffLoading } = changes;
-  const displayedDetailError = detailError ?? (detailTab === 'files' ? changes.error : null) ?? error;
+  const displayedDetailError = detailError ?? pendingReview.error ?? (detailTab === 'files' ? changes.error : null) ?? error;
 
   const updateSelectedDetail = useCallback<PullDetailUpdater>((repo, number, update) => {
     updateDetail(repo, number, current => {
@@ -839,14 +841,6 @@ function PullsContent({
   useEffect(() => {
     manualDetailRefreshRequest.current += 1;
     setError(null);
-  }, [selectedPrNumber, selectedPrRepo]);
-
-  // A staged review is the reader's unsent writing, so it lasts as long as the pull request is
-  // open here. Nothing the pull request itself does — a new head, a refresh, a narrowed commit
-  // range — may throw it away; a comment written against an older head carries that head's SHA and
-  // is refused at submission instead.
-  useEffect(() => {
-    setPendingReviewComments([]);
   }, [selectedPrNumber, selectedPrRepo]);
 
   const requestedReviewId = selectedPrRepo?.toLowerCase() === initialPr?.repo.toLowerCase() && selectedPrNumber === initialPr?.number
@@ -951,6 +945,7 @@ function PullsContent({
   };
 
   const refreshChanges = changes.refresh;
+  const refreshPendingReview = pendingReview.refresh;
   const refresh = useCallback(async () => {
     if (!selectedPr || detailLoading) return;
     const selectedKey = `${selectedPr.repo.toLowerCase()}#${selectedPr.number}`;
@@ -958,7 +953,7 @@ function PullsContent({
     const request = ++manualDetailRefreshRequest.current;
     let listVersion = listRequest.current;
     const requestMutationVersion = detailMutationVersion.current;
-    await refreshDetail();
+    await Promise.all([refreshDetail(), refreshPendingReview()]);
     if (request !== manualDetailRefreshRequest.current
         || selectedPullRequest.current?.key !== selectedKey) return;
     refreshChanges();
@@ -976,7 +971,7 @@ function PullsContent({
           && selectedPullRequest.current?.key === selectedKey
           && listVersion === listRequest.current) setError(errorMessage(failure));
     }
-  }, [applyPage, readList, detailLoading, singlePullRequest, refreshChanges, refreshDetail, selectedPr]);
+  }, [applyPage, readList, detailLoading, singlePullRequest, refreshChanges, refreshDetail, refreshPendingReview, selectedPr]);
 
   const applyPostedDetail = useCallback((value: PullRequestDetailDto, kind: 'discussion' | 'review') => {
     const current = selectedPullRequest.current;
@@ -1199,7 +1194,6 @@ function PullsContent({
             onReviewSubmitted={applySubmittedReview}
             refreshing={detailLoading}
             pendingComments={pendingReviewComments}
-            onPendingCommentsChange={setPendingReviewComments}
             zoom={zoomLayer ? zoom : undefined}
             onZoom={zoomLayer ? undefined : () => setDetailZoomed(true)}
             onNavigate={navigate}
@@ -1394,7 +1388,6 @@ export function PullDetailHeader({
   onReviewSubmitted,
   refreshing,
   pendingComments,
-  onPendingCommentsChange,
   onZoom,
   zoom,
   onClose,
@@ -1422,7 +1415,6 @@ export function PullDetailHeader({
   ) => void;
   refreshing: boolean;
   pendingComments: InlineReviewCommentDto[];
-  onPendingCommentsChange: (comments: InlineReviewCommentDto[]) => void;
   /** Opens the zoom layer; inside the layer its own controls take over. */
   onZoom?: () => void;
   zoom?: ZoomControls;
@@ -1442,7 +1434,11 @@ export function PullDetailHeader({
   const [reviewOpen, setReviewOpen] = useState(false);
   const canReview = pr !== null && detail?.state?.toLowerCase() === 'open';
   // Promoted findings are outgoing comments too, so the count the button shows covers both.
-  const pendingCommentCount = pendingComments.length + pendingDraftCount(review?.draft ?? null);
+  const savedIds = new Set(pendingComments.map(comment => comment.draftItemId));
+  const savedReviewDraft = review?.draft;
+  const pendingCommentCount = pendingComments.length + pendingDraftCount(savedReviewDraft == null ? null : {
+    ...savedReviewDraft, items: savedReviewDraft.items.filter(item => !savedIds.has(item.id)),
+  });
   const reviewChip = review === null ? null : reviewStatus(review);
   const developerTask = review?.sourceTaskId == null ? suppliedDeveloperTask
     : { workspaceId: review.workspaceId, taskId: review.sourceTaskId };
@@ -1594,8 +1590,6 @@ export function PullDetailHeader({
       </div>}
       {reviewOpen && detail && pr && (
         <ReviewDialog pr={pr} detail={detail} review={review} onReviewChange={onReviewChange}
-          pendingComments={pendingComments}
-          onPendingCommentsChange={onPendingCommentsChange}
           onClose={() => setReviewOpen(false)} onReviewSubmitted={onReviewSubmitted} />
       )}
       {mergeOpen && detail && pr && (
@@ -1693,8 +1687,6 @@ export function ReviewDialog({
   detail,
   review = null,
   onReviewChange = () => undefined,
-  pendingComments = [],
-  onPendingCommentsChange = () => undefined,
   onReviewSubmitted,
   onClose,
 }: {
@@ -1703,8 +1695,6 @@ export function ReviewDialog({
   /** Findings the user added to their review wait in its draft and go out with this review. */
   review?: AgentReviewDto | null;
   onReviewChange?: (review: AgentReviewDto) => void;
-  pendingComments?: InlineReviewCommentDto[];
-  onPendingCommentsChange?: (comments: InlineReviewCommentDto[]) => void;
   onReviewSubmitted: (
     detail: PullRequestDetailDto,
     event: 'COMMENT' | 'APPROVE' | 'REQUEST_CHANGES',
@@ -1712,10 +1702,9 @@ export function ReviewDialog({
   onClose: () => void;
 }) {
   const bridge = usePullRequestBridge();
-  // Without an agent review the sheet loads the draft itself: every review leaves through it, so a
-  // send whose outcome is unknown stays recorded and cannot go out twice.
+  // The saved draft includes manual comments staged from any PR surface.
   const [loadedDraft, setLoadedDraft] = useState<ReviewDraftDto | null>(null);
-  const draft = review?.draft ?? loadedDraft;
+  const draft = loadedDraft !== null && loadedDraft.version >= (review?.draft?.version ?? -1) ? loadedDraft : review?.draft ?? null;
   // A background refresh must not turn this verdict into approval of a later push.
   const reviewedHead = useRef(detail.headSha).current;
   const [body, setBody] = useState(draft?.body ?? '');
@@ -1737,32 +1726,32 @@ export function ReviewDialog({
   const [commentEdit, setCommentEdit] = useState<{ key: string; body: string; version: number } | null>(null);
   const busy = submitting || saving || command.loading;
   const [error, setError] = useState<string | null>(null);
-  const promoted = draft?.items.filter(item => !item.published && (item.included || item.publication !== null)) ?? [];
+  const draftComments = draft?.items.filter(item => !item.published && (item.included || item.publication !== null)) ?? [];
   // Review text in a send stays as sent until the user says whether it reached the provider.
   const reviewSend = draft?.reviewPublication?.state ?? null;
   const unconfirmed = reviewSend !== null || (draft?.items.some(item => item.publication?.state === 'UNCERTAIN' || item.publication?.state === 'RESERVED') ?? false);
-  const earlierCommentsNeedText = event === 'REQUEST_CHANGES' && pendingComments.length + promoted.length > 0
-    && ![...pendingComments, ...promoted].some(comment => comment.replyToCommentId != null || comment.commitId === reviewedHead);
-  const bodyRequired = earlierCommentsNeedText || (event !== 'APPROVE' && pendingComments.length === 0 && promoted.length === 0);
+  const earlierCommentsNeedText = event === 'REQUEST_CHANGES' && draftComments.length > 0
+    && !draftComments.some(comment => comment.replyToCommentId != null || comment.commitId === reviewedHead);
+  const bodyRequired = earlierCommentsNeedText || (event !== 'APPROVE' && draftComments.length === 0);
   const failed = useCallback((value: unknown) => setError(errorMessage(value)), []);
-  const hasReviewDraft = Boolean(review?.draft);
 
   useEffect(() => {
-    if (hasReviewDraft) return;
     let live = true;
     bridge.getReviewDraft(detail.repo, detail.number).then(value => { if (live) setLoadedDraft(value); }, failed);
     return () => { live = false; };
-  }, [hasReviewDraft, detail.repo, detail.number, failed, bridge]);
+  }, [detail.repo, detail.number, failed, bridge]);
 
   // A draft write can leave the draft changed even when it fails, so the sheet re-reads it.
   const reloadReview = useCallback(() => {
+    reviewDraftChanged();
     if (review !== null) void bridge.getAgentReview(review.id).then(onReviewChange, () => {});
-    else void bridge.getReviewDraft(detail.repo, detail.number).then(setLoadedDraft, () => {});
+    void bridge.getReviewDraft(detail.repo, detail.number).then(setLoadedDraft, () => {});
   }, [review, bridge, onReviewChange, detail.repo, detail.number]);
 
   const showDraft = (updated: ReviewDraftDto) => {
+    setLoadedDraft(updated);
+    reviewDraftChanged();
     if (review !== null) onReviewChange({ ...review, draft: updated });
-    else setLoadedDraft(updated);
   };
 
   useEffect(() => {
@@ -1819,7 +1808,7 @@ export function ReviewDialog({
     }
   }, [commentEdit, reviewSend, body, event, draft, reloadReview, onClose, bridge, detail.repo, detail.number, failed]);
 
-  const removePromoted = async (itemId: string) => {
+  const removeComment = async (itemId: string) => {
     if (draft === null || inFlight.current) return;
     inFlight.current = true;
     setSaving(true);
@@ -1827,6 +1816,7 @@ export function ReviewDialog({
     try {
       const updated = await bridge.removeReviewDraftComment(detail.repo, detail.number, savedDraft.current?.version ?? draft.version, itemId);
       if (updated.body === savedDraft.current?.body && updated.event === savedDraft.current?.event) savedDraft.current = updated;
+      showDraft(updated);
     }
     catch (value) {
       failed(value);
@@ -1886,21 +1876,14 @@ export function ReviewDialog({
     }
   };
 
-  const outgoing = [
-    ...pendingComments.map((comment, index) => ({
-      key: `${comment.path}:${comment.side}:${comment.startLine ?? comment.line}:${comment.line}:${index}`,
-      comment,
-      remove: () => onPendingCommentsChange(pendingComments.filter((_, commentIndex) => commentIndex !== index)),
-      save: (text: string) => onPendingCommentsChange(updatePendingReviewComment(pendingComments, comment, text)),
-    })),
-    ...promoted.map(item => ({ key: item.id, comment: { ...item, commitId: draftCommentCommit(item, review?.findings ?? []) },
-      remove: () => { void removePromoted(item.id); },
-      save: async (text: string, version: number) => {
-        const updated = await bridge.editReviewDraftComment(detail.repo, detail.number, version, item.id, text, item.included);
-        if (updated.body === savedDraft.current?.body && updated.event === savedDraft.current?.event) savedDraft.current = updated;
-        showDraft(updated);
-      } })),
-  ];
+  const outgoing = draftComments.map(item => ({ key: item.id, comment: { ...item, commitId: draftCommentCommit(item, review?.findings ?? []) },
+    remove: () => { void removeComment(item.id); },
+    save: async (text: string, version: number) => {
+      const updated = await bridge.editReviewDraftComment(detail.repo, detail.number, version, item.id, text, item.included);
+      if (updated.body === savedDraft.current?.body && updated.event === savedDraft.current?.event) savedDraft.current = updated;
+      showDraft(updated);
+    },
+  }));
   const cancelCommentEdit = () => { setCommentEdit(null); setError(null); };
   const saveComment = async (save: (text: string, version: number) => void | Promise<void>) => {
     if (inFlight.current || commentEdit === null || !commentEdit.body.trim()) return;
@@ -1953,19 +1936,9 @@ export function ReviewDialog({
       const saved = savedDraft.current;
       if (saved === null) throw new Error('The review draft loaded after you started editing. Close and reopen to review its latest text.');
       savedDraft.current = await bridge.saveReviewDraft(detail.repo, detail.number, saved.version, body, event);
-      let remaining = pendingComments;
-      let version = savedDraft.current.version;
-      for (const comment of remaining) {
-        savedDraft.current = await bridge.addReviewDraftComment(detail.repo, detail.number, version, {
-          path: comment.path, side: comment.side, line: comment.line, startLine: comment.startLine, body: comment.body, commitId: comment.commitId, replyToCommentId: comment.replyToCommentId,
-        });
-        version = savedDraft.current.version;
-        remaining = remaining.filter(value => value !== comment);
-        onPendingCommentsChange(remaining);
-      }
-      await bridge.submitReviewDraft(detail.repo, detail.number, version, body.trim(), event, reviewedHead);
+      await bridge.submitReviewDraft(detail.repo, detail.number, savedDraft.current.version, body.trim(), event, reviewedHead);
       recordAttentionAction(pullRequestAttentionKey(detail), event === 'COMMENT' ? 'comment' : 'review',
-        event === 'COMMENT' ? Math.max(1, pendingComments.length + promoted.length + Number(body.trim().length > 0)) : 1);
+        event === 'COMMENT' ? Math.max(1, draftComments.length + Number(body.trim().length > 0)) : 1);
       reloadReview();
       // The draft answers with itself alone; the stored detail already carries the new review.
       void bridge.fetchPullRequestDetailByRef(detail.repo, detail.number)
@@ -2307,7 +2280,7 @@ function DetailBody({
   diffLoading: boolean;
   pendingComments: InlineReviewCommentDto[];
   onCommitRangeChange: (range: CommitRange) => void;
-  onPendingCommentsChange: (comments: InlineReviewCommentDto[]) => void;
+  onPendingCommentsChange: (comments: InlineReviewCommentDto[]) => void | Promise<void>;
   contributorsWorkspaceId?: string;
   /** The workspace watching this pull request's repository, wherever the page opens. */
   workspaceId?: string;

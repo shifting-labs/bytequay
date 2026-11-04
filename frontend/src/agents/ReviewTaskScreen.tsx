@@ -121,7 +121,7 @@ function LocalReviewWorkspace({ review, onReviewChange, onBack, headerAction }: 
         agentTab={<span ref={setAgentTabTarget} />}
         onChangesToolbar={setChangesToolbar}
         onRefresh={async () => onReviewChange(await window.bridge.getAgentReview(review.id))} refreshing={false}
-        onReviewSubmitted={() => {}} pendingComments={[]} onPendingCommentsChange={() => {}}
+        onReviewSubmitted={() => {}} pendingComments={[]}
         onNavigate={route => leave(() => { window.location.hash = route; })} agent="reviewer" />
       <div className="agt-panel__scroll" ref={setAgentBodyTarget} hidden={tab !== 'agents' && tab !== 'discussions'} />
       <div className="pull-detail__body pull-detail__review" hidden={tab !== 'review'}>

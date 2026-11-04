@@ -138,7 +138,7 @@ export default function TaskSidePanel({
   pullRequestCommitRange: CommitRange;
   pullRequestPendingComments: InlineReviewCommentDto[];
   onPullRequestCommitRangeChange: (range: CommitRange) => void;
-  onPullRequestPendingCommentsChange: (comments: InlineReviewCommentDto[]) => void;
+  onPullRequestPendingCommentsChange: (comments: InlineReviewCommentDto[]) => void | Promise<void>;
   workspaceId?: string;
   /** The task's result branch and the repository a draft would target, for the empty state. */
   branch: string | null;
@@ -299,7 +299,6 @@ export default function TaskSidePanel({
       onReviewSubmitted={pullRequestDetail.replace}
       onDetailUpdate={pullRequestDetail.update}
       pendingComments={pullRequestPendingComments}
-      onPendingCommentsChange={onPullRequestPendingCommentsChange}
       onZoom={onOpenPullRequest === undefined || pullRequest === null
         ? undefined
         : () => onOpenPullRequest(pullRequest.number)}

@@ -158,7 +158,7 @@ export function TaskChangesView({
   onAskAgent?: (comment: DiffAgentComment) => Promise<void>;
   onAskAgentDisabled?: string | null;
   onCommitRangeChange: (range: CommitRange) => void;
-  onPendingCommentsChange: (comments: InlineReviewCommentDto[]) => void;
+  onPendingCommentsChange: (comments: InlineReviewCommentDto[]) => void | Promise<void>;
   onRefresh: () => Promise<void>;
   onDetailUpdate: PullDetailUpdater;
   onDetailChange: (detail: PullRequestDetailDto) => void;

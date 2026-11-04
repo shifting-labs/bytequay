@@ -583,16 +583,16 @@ describe('PullOverview', () => {
     expect(html).toContain('<input type="radio" name="review-event" checked=""/><span><strong>Comment</strong>');
   });
 
-  it.each(['pending', 'draft'] as const)('requires review text before requesting changes with only earlier %s comments', source => {
+  it.each(['MANUAL', 'AGENT_FINDING'] as const)('requires review text before requesting changes with only earlier %s comments', source => {
     const review = reviewFixture();
     const comment: InlineReviewCommentDto = { path: 'Example.java', side: 'RIGHT', line: 10,
       startLine: null, startSide: null, commitId: 'old-head', body: 'An earlier commit comment.' };
     review.draft = reviewDraftFixture({ repo: 'owner/repo', number: 42, event: 'REQUEST_CHANGES',
       version: 7, updatedAt: review.createdAt,
-      items: source === 'draft' ? [{ ...comment, id: 'older', source: 'AGENT_FINDING', findingId: 'finding', findingRevision: 1,
-        included: true, published: false, publication: null }] : [] });
+      items: [{ ...comment, id: 'older', source, findingId: source === 'AGENT_FINDING' ? 'finding' : null,
+        findingRevision: source === 'AGENT_FINDING' ? 1 : null, included: true, published: false, publication: null }] });
     const props: Parameters<typeof ReviewDialog>[0] = { pr: { ...pullRequest(), origin: 'OTHER' }, detail: detail(), review,
-      pendingComments: source === 'pending' ? [comment] : [], onClose: () => {}, onReviewSubmitted: () => {} };
+      onClose: () => {}, onReviewSubmitted: () => {} };
     const blocked = renderToStaticMarkup(<ReviewDialog {...props} />);
     expect(blocked).toContain('class="is-primary" type="button" disabled="">Submit review');
     expect(blocked).toContain('Add review text to request changes when your comments are on earlier commits.');
@@ -610,10 +610,11 @@ describe('PullOverview', () => {
     { event: 'REQUEST_CHANGES', commitId: null, replyToCommentId: 61 },
   ] as const)('allows $event without prose for a comment at $commitId or reply $replyToCommentId', comment => {
     const review = reviewFixture();
-    review.draft = reviewDraftFixture({ repo: 'owner/repo', number: 42, event: comment.event, version: 7, updatedAt: review.createdAt });
+    review.draft = reviewDraftFixture({ repo: 'owner/repo', number: 42, event: comment.event, version: 7, updatedAt: review.createdAt,
+      items: [{ id: 'manual', source: 'MANUAL', findingId: null, findingRevision: null, included: true, published: false, publication: null,
+        path: 'Example.java', side: 'RIGHT', line: 10, startLine: null,
+        commitId: comment.commitId, replyToCommentId: comment.replyToCommentId, body: 'A comment.' }] });
     const html = renderToStaticMarkup(<ReviewDialog pr={{ ...pullRequest(), origin: 'OTHER' }} detail={detail()} review={review}
-      pendingComments={[{ path: 'Example.java', side: 'RIGHT', line: 10, startLine: null, startSide: null,
-        commitId: comment.commitId, replyToCommentId: comment.replyToCommentId, body: 'A comment.' }]}
       onClose={() => {}} onReviewSubmitted={() => {}} />);
 
     expect(html).toContain('class="is-primary" type="button">Submit review');
@@ -661,7 +662,7 @@ describe('PullOverview', () => {
     const submitReviewDraft = vi.fn(async () => {});
     const onReviewChange = vi.fn();
     const onClose = vi.fn();
-    vi.stubGlobal('window', { bridge: { saveReviewDraft, submitReviewDraft,
+    vi.stubGlobal('window', { dispatchEvent: vi.fn(), bridge: { saveReviewDraft, submitReviewDraft, getReviewDraft: vi.fn(async () => cleared.draft),
       getAgentReview: vi.fn(async () => cleared), fetchPullRequestDetailByRef: vi.fn(async () => detail()) } });
     const controls = captureReviewControls({ pr: pullRequest(), detail: detail(), review,
       onReviewChange, onClose, onReviewSubmitted: () => {} });
@@ -682,7 +683,7 @@ describe('PullOverview', () => {
     });
     const getAgentReview = vi.fn(async () => saved);
     const onClose = vi.fn();
-    vi.stubGlobal('window', { bridge: { saveReviewDraft, getAgentReview } });
+    vi.stubGlobal('window', { dispatchEvent: vi.fn(), bridge: { saveReviewDraft, getAgentReview, getReviewDraft: vi.fn(async () => saved.draft) } });
     const controls = captureReviewControls({ pr: pullRequest(), detail: detail(), review,
       onClose, onReviewSubmitted: () => {} });
     controls.close();
@@ -693,24 +694,22 @@ describe('PullOverview', () => {
 
   it.each(['A review summary.', ''])('preserves selected-commit comments with review prose %j', async body => {
     const review = reviewFixture();
-    review.draft = reviewDraftFixture({ repo: 'owner/repo', number: 42, body, version: 7, updatedAt: review.createdAt });
     const selected: InlineReviewCommentDto = { path: 'Example.java', side: 'RIGHT', line: 10,
       startLine: null, startSide: null, commitId: 'old-head', body: 'An earlier commit comment.' };
+    review.draft = reviewDraftFixture({ repo: 'owner/repo', number: 42, body, version: 7, updatedAt: review.createdAt,
+      items: [{ ...selected, id: 'saved-manual', source: 'MANUAL', findingId: null, findingRevision: null,
+        included: true, published: false, publication: null }] });
     const saveReviewDraft = vi.fn(async () => ({ ...review.draft, version: 8 }));
-    const addReviewDraftComment = vi.fn(async () => ({ ...review.draft, version: 9 }));
+    const addReviewDraftComment = vi.fn();
     const submitReviewDraft = vi.fn(async () => {});
-    const onPendingCommentsChange = vi.fn();
     const onClose = vi.fn();
-    vi.stubGlobal('window', { bridge: { saveReviewDraft, addReviewDraftComment, submitReviewDraft,
+    vi.stubGlobal('window', { dispatchEvent: vi.fn(), bridge: { saveReviewDraft, addReviewDraftComment, submitReviewDraft, getReviewDraft: vi.fn(async () => review.draft),
       getAgentReview: vi.fn(async () => review), fetchPullRequestDetailByRef: vi.fn(async () => detail()) } });
-    captureReviewControls({ pr: pullRequest(), detail: detail(), review, pendingComments: [selected],
-      onPendingCommentsChange, onClose, onReviewSubmitted: () => {} }).submit();
+    captureReviewControls({ pr: pullRequest(), detail: detail(), review, onClose, onReviewSubmitted: () => {} }).submit();
     await vi.waitFor(() => expect(onClose).toHaveBeenCalledOnce());
-    expect(addReviewDraftComment).toHaveBeenCalledWith('owner/repo', 42, 8, {
-      path: selected.path, side: selected.side, line: selected.line, startLine: selected.startLine, body: selected.body, commitId: 'old-head',
-    });
-    expect(onPendingCommentsChange).toHaveBeenCalledWith([]);
-    expect(submitReviewDraft).toHaveBeenCalledWith('owner/repo', 42, 9, body, 'COMMENT', 'displayed-head');
+    expect(addReviewDraftComment).not.toHaveBeenCalled();
+    expect((await saveReviewDraft.mock.results[0].value).items).toEqual([expect.objectContaining({ id: 'saved-manual', commitId: 'old-head', body: selected.body })]);
+    expect(submitReviewDraft).toHaveBeenCalledWith('owner/repo', 42, 8, body, 'COMMENT', 'displayed-head');
   });
 
   it('limits an authored pull request review to a comment', () => {
@@ -1768,7 +1767,7 @@ function detail(): PullRequestDetailDto {
 function headerMarkup(props: Partial<ComponentProps<typeof PullDetailHeader>> = {}): string {
   return renderToStaticMarkup(<PullDetailHeader pr={pullRequest()} detail={detail()} tab="overview" onTab={() => {}}
     onRefresh={async () => {}} onReviewSubmitted={() => {}} refreshing={false} pendingComments={[]}
-    onZoom={() => {}} onPendingCommentsChange={() => {}} {...props} />);
+    onZoom={() => {}} {...props} />);
 }
 
 describe('the pane tab row', () => {

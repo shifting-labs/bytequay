@@ -15,6 +15,7 @@ import { readPullRequestViewer, usePullRequestBridge, useHostingPresentation } f
 import { shortSha } from '@bytequay/ui/displayText';
 import { Check, Copy, Ellipsis, ExternalLink, Eye, GitCommitHorizontal, Link, LoaderCircle, Pencil, Quote, Tag } from 'lucide-react';
 import { errorMessage } from '../errorMessage';
+import { useAsyncAction } from '../useAsyncAction';
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { TaskDiscussionDto } from '../agents/discussions/contracts';
 import CopyLinkButton from '@bytequay/ui/CopyLinkButton';
@@ -671,6 +672,8 @@ export function ReviewThread({ activity, viewerLogin, privateThreads, pr, worksp
   const [body, setBody] = useReviewDraft(`remote:${activity.remoteId}:body`, '');
   const [preview, setPreview] = useState(false);
   const [posting, setPosting] = useState(false);
+  const staging = useAsyncAction();
+  const busy = posting || staging.busy;
   const [changingResolution, setChangingResolution] = useState(false);
   const [optimisticResolved, setOptimisticResolved] = useState<boolean | null>(null);
   const [edit, setEdit] = useReviewDraft<{ commentId: number; draft: string } | null>(`remote:${activity.remoteId}:edit`, null);
@@ -775,9 +778,9 @@ export function ReviewThread({ activity, viewerLogin, privateThreads, pr, worksp
       setDrafting(false);
     }
   };
-  const addToReview = () => {
+  const addToReview = async () => {
     if (!pending || !rootCommentId || !body.trim()) return;
-    pending.onChange([...pending.comments, {
+    await pending.onChange([...pending.comments, {
       replyToCommentId: rootCommentId, body: body.trim(), path: payload.path ?? '',
       line: targetLine ?? 1, side: payload.side === 'LEFT' ? 'LEFT' : 'RIGHT',
       startLine: null, startSide: null, commitId: null,
@@ -793,7 +796,7 @@ export function ReviewThread({ activity, viewerLogin, privateThreads, pr, worksp
     <footer className="lrc__foot is-composing">
       <MarkdownEditor value={body} onChange={setBody} repository={pr.repo} suggestion={suggestion}
         textareaRef={textareaRef} autoFocus={!drafted} preview={preview} onPreviewChange={setPreview}
-        ariaLabel="Reply to review thread" placeholder="Reply to this thread…" busy={posting} error={error}
+        ariaLabel="Reply to review thread" placeholder="Reply to this thread…" busy={busy} error={error || staging.error}
         // Agent drafts require an explicit button click, never the private composer's send key.
         onSubmit={drafted ? undefined : () => { void submit(); }}
         header={drafted && <div className="pr-thread-draft__head">
@@ -802,12 +805,12 @@ export function ReviewThread({ activity, viewerLogin, privateThreads, pr, worksp
         </div>}
         note={drafted && <span className="pr-thread-draft__note">Posts as you</span>}>
         <BetterWordsButton text={body} textareaRef={textareaRef} repository={pr.repo} workspaceId={workspaceId}
-          disabled={preview || posting}
+          disabled={preview || busy}
           onError={failure => setError(failure === null ? '' : errorMessage(failure))} />
-        <button type="button" disabled={posting} onClick={discard}>{drafted ? 'Discard' : 'Cancel'}</button>
-        {pending && pr.state?.toLowerCase() === 'open' && <button type="button" disabled={posting || !body.trim()}
-          onClick={addToReview}>Add to review</button>}
-        <button className="is-primary" type="button" disabled={posting || !body.trim()}
+        <button type="button" disabled={busy} onClick={discard}>{drafted ? 'Discard' : 'Cancel'}</button>
+        {pending && pr.state?.toLowerCase() === 'open' && <button type="button" disabled={busy || !body.trim()}
+          onClick={() => { void staging.run(addToReview); }}>Add to review</button>}
+        <button className="is-primary" type="button" disabled={busy || !body.trim()}
           onClick={() => { void submit(); }}>{drafted ? posting ? 'Commenting…' : 'Comment' : posting ? 'Replying…' : 'Reply'}</button>
       </MarkdownEditor>
     </footer>
@@ -815,10 +818,10 @@ export function ReviewThread({ activity, viewerLogin, privateThreads, pr, worksp
     <footer className="lrc__foot">
       <button className="lrc__ask" type="button" disabled={!rootCommentId}
         onClick={() => { setError(''); setPreview(false); setReplying(true); }}>Reply</button>
-      {error && <span className="pr-thread-reply__error" role="alert">{error}</span>}
+      {(error || staging.error) && <span className="pr-thread-reply__error" role="alert">{error || staging.error}</span>}
       {pendingReplies.map((comment, index) => <button key={index} className="lrc__action" type="button"
         title={comment.body} aria-label={`Remove pending reply${pendingReplies.length > 1 ? ` ${index + 1}` : ''}`}
-        onClick={() => pending?.onChange(pending.comments.filter(value => value !== comment))}>
+        disabled={busy} onClick={() => { void staging.run(async () => { await pending?.onChange(pending.comments.filter(value => value !== comment)); }); }}>
         {pendingReplies.length > 1 ? `Remove reply ${index + 1}` : 'Remove'}
       </button>)}
       <button className="lrc__action" type="button" disabled={!rootCommentId || changingResolution}

@@ -326,7 +326,7 @@ export function AgentTaskBody({
   pullRequestCommitRange?: CommitRange;
   pullRequestPendingComments?: InlineReviewCommentDto[];
   onPullRequestCommitRangeChange?: (range: CommitRange) => void;
-  onPullRequestPendingCommentsChange?: (comments: InlineReviewCommentDto[]) => void;
+  onPullRequestPendingCommentsChange?: (comments: InlineReviewCommentDto[]) => void | Promise<void>;
   /** The repository a pull request from this task targets, named in the no-pull-request state. */
   repository?: string | null;
   onSelectPanelTab?: (tab: PanelTab) => void;

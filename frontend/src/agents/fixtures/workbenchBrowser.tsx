@@ -28,7 +28,7 @@ import DevelopmentLearningPanel from '../DevelopmentLearningPanel';
 import type { TaskReviewOptions } from '../../pulls/agent-review/TaskReviewSummary';
 import { useLocalReviewThreads } from '../../pulls/local-review/useLocalReviewThreads';
 import { carriedPanelTab, PullDetailHeader } from '../../pulls/PullsScreen';
-import { reviewFixture } from '../../pulls/agent-review/fixtures/review';
+import { reviewDraftFixture, reviewFixture } from '../../pulls/agent-review/fixtures/review';
 import { pr } from '../../pulls/fixtures/pullRequest';
 import { workspaceAgentTaskRoute, workspaceReviewTaskRoute } from '../../workspaces/model';
 import { loadHandled } from '../../home/attention';
@@ -173,7 +173,7 @@ export async function run(keepMounted = false, showChanges = false, zoomChanges 
         return <section className="pull-detail is-zoomed zoom-card is-full">
           <PullDetailHeader pr={null} detail={null} tab="changes"
             onChangesToolbar={setToolbar} onTab={() => {}} onRefresh={async () => {}} refreshing={false}
-            onReviewSubmitted={() => {}} pendingComments={[]} onPendingCommentsChange={() => {}}
+            onReviewSubmitted={() => {}} pendingComments={[]}
             zoom={{ full: true, toggle: () => {}, close: () => {} }} />
           <div className="pull-detail__body pull-detail__changes"><WorktreeChanges host={{ kind: 'task', taskId: task.id, workspaceId: task.workspaceId }}
             toolbarTarget={toolbar} defaultTreeOpen selection={{ commitSha: 'commit123', token: 1 }} /></div>
@@ -270,6 +270,7 @@ export async function agentSwitch(published = false, utility = false): Promise<s
   Object.defineProperty(window, 'bridge', { configurable: true, value: { ...bridge,
     findTaskAgentReview: async () => published ? null : review,
     findAgentReview: async () => review,
+    getReviewDraft: async (): ReturnType<Bridge['getReviewDraft']> => reviewDraftFixture({ repo: publishedPr.repo, number: publishedPr.number }),
     fetchPullRequestDetailByRef: async () => { throw new Error('Details unavailable'); },
     refreshPullRequestDetailByRef: async () => { throw new Error('Details unavailable'); },
     fetchPrDiffFiles: async (): ReturnType<Bridge['fetchPrDiffFiles']> => [],
@@ -295,7 +296,7 @@ export async function agentSwitch(published = false, utility = false): Promise<s
   try {
     // The reviewer's header, on the pull request tab.
     flushSync(() => root.render(<PullDetailHeader pr={null} detail={null} tab={utility ? null : 'overview'} review={review} developerTask={{ workspaceId: review.workspaceId, taskId }} agent="reviewer" onTab={() => {}}
-      onRefresh={async () => {}} onReviewSubmitted={() => {}} refreshing={false} pendingComments={[]} onPendingCommentsChange={() => {}}
+      onRefresh={async () => {}} onReviewSubmitted={() => {}} refreshing={false} pendingComments={[]}
       onNavigate={(route) => { void go(route); }} />));
     await settle();
     assert(agent('Reviewer')?.getAttribute('aria-current') === 'true' && agent('Developer')?.getAttribute('aria-current') === null, 'The reviewer screen must mark Reviewer as the current agent');

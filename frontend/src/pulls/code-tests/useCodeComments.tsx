@@ -51,7 +51,7 @@ export type CodeCommentsOptions = {
   canReview: boolean;
   viewer: PullRequestViewer | null;
   pending: InlineReviewCommentDto[];
-  onPendingChange: (comments: InlineReviewCommentDto[]) => void;
+  onPendingChange: (comments: InlineReviewCommentDto[]) => void | Promise<void>;
   threads: ReviewThreads;
   onDetailChange: (detail: PullRequestDetailDto) => void;
   localReview: LocalReviewThreads;
@@ -116,7 +116,9 @@ export function useCodeComments(options: CodeCommentsOptions | undefined, contex
   const [posting, setPosting] = useState(false);
   const [sending, setSending] = useState(false);
   const [pendingEdit, setPendingEdit] = useReviewDraft<{ comment: InlineReviewCommentDto; body: string } | null>('codeComment:pendingEdit', null);
-  const editing = (item: InlineReviewCommentDto) => pendingEdit !== null && ['path', 'side', 'line', 'startLine', 'commitId', 'body'].every(key => pendingEdit.comment[key as keyof InlineReviewCommentDto] === item[key as keyof InlineReviewCommentDto]);
+  const editing = (item: InlineReviewCommentDto) => pendingEdit !== null && (item.draftItemId !== undefined
+    ? pendingEdit.comment.draftItemId === item.draftItemId
+    : ['path', 'side', 'line', 'startLine', 'commitId', 'body'].every(key => pendingEdit.comment[key as keyof InlineReviewCommentDto] === item[key as keyof InlineReviewCommentDto]));
   // Made on the first Post now and kept as long as the box's text, so a retry is never a second comment.
   const [commentKey, setCommentKey] = useReviewDraft<string | null>('codeComment:key', null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
@@ -221,13 +223,13 @@ export function useCodeComments(options: CodeCommentsOptions | undefined, contex
           suggestion={{ startLine: item.startLine ?? item.line, lines: lines.slice((item.startLine ?? item.line) - 1, item.line) }}
           editBody={editing(item) && pendingEdit !== null ? pendingEdit.body : null}
           onEdit={value => setPendingEdit(value === null ? null : { comment: item, body: value })}
-          onSave={() => {
+          onSave={async () => {
             if (!editing(item) || pendingEdit === null || !pendingEdit.body.trim()) return;
-            options.onPendingChange(updatePendingReviewComment(options.pending, item, pendingEdit.body));
+            await options.onPendingChange(updatePendingReviewComment(options.pending, item, pendingEdit.body));
             setPendingEdit(null);
           }}
-          onDiscard={() => {
-            options.onPendingChange(updatePendingReviewComment(options.pending, item, null));
+          onDiscard={async () => {
+            await options.onPendingChange(updatePendingReviewComment(options.pending, item, null));
             if (editing(item)) setPendingEdit(null);
           }} />
       );
@@ -266,10 +268,10 @@ export function useCodeComments(options: CodeCommentsOptions | undefined, contex
           },
         }}
         onCancel={close}
-        onAddPending={() => {
+        onAddPending={async () => {
           const value = comment(context.sourceHead);
           if (value === null || blocker !== null) return;
-          options.onPendingChange([...options.pending, value]);
+          await options.onPendingChange([...options.pending, value]);
           close();
         }}
         onPostNow={() => {

@@ -40,7 +40,7 @@ const commits: DiffCommitDto[] = [
 ];
 
 /**
- * A staged review lasts as long as the pull request page.
+ * Saved review comments survive leaving the pull request.
  *
  * A background refresh used to drop it: the staged comments were keyed to the diff revision, and
  * GitHub restates a busy pull request's totals within seconds of opening it, so the comments were
@@ -52,7 +52,10 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
   let reviewedReads = 0;
   // The review has no draft yet, so the sheet loads one; every review leaves through it.
   let saved: ReviewDraftDto = reviewDraftFixture({ repo: stored.repo, number: stored.number, version: 0, updatedAt: '2026-09-07T00:00:00Z' });
-  const added: Parameters<Bridge['addReviewDraftComment']>[3][] = [];
+  let nextId = 0;
+  let failAdd = true;
+  let failNextRead = false;
+  let submittedItems: ReviewDraftItemDto[] = [];
   const submissions: Parameters<Bridge['submitReviewDraft']>[] = [];
   let polls: (() => void)[] = [];
   const originalTimeout = window.setTimeout;
@@ -94,16 +97,34 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
     listAgentReviews: async () => [review],
     subscribeAgentReview: async () => () => {},
     fetchMergeMode: async () => ({ mergeQueue: false }),
-    getReviewDraft: async () => saved,
+    getReviewDraft: async () => { if (failNextRead) { failNextRead = false; throw new Error('Reload unavailable'); } return saved; },
     saveReviewDraft: async (_repo, _number, version, body, event) => (saved = { ...saved, body, event, version: version + 1 }),
-    addReviewDraftComment: async (_repo, _number, version, comment) => { added.push(comment); return (saved = { ...saved, version: version + 1 }); },
-    submitReviewDraft: async (...request) => { submissions.push(request); },
+    addReviewDraftComment: async (_repo, _number, version, comment) => {
+      if (failAdd) throw new Error('Could not save this comment');
+      assert(version === saved.version, 'Adding a comment must use the current saved version');
+      if (nextId === 0) failNextRead = true;
+      return (saved = { ...saved, version: version + 1, items: [...saved.items, { ...comment, id: `manual-${++nextId}`,
+        source: 'MANUAL', findingId: null, findingRevision: null, included: true, published: false, publication: null }] });
+    },
+    editReviewDraftComment: async (_repo, _number, version, id, body, included) => {
+      assert(version === saved.version, 'Editing a comment must use the current saved version');
+      return (saved = { ...saved, version: version + 1, items: saved.items.map(item => item.id === id ? { ...item, body, included } : item) });
+    },
+    removeReviewDraftComment: async (_repo, _number, version, id) => {
+      assert(version === saved.version, 'Removing a comment must use the current saved version');
+      return (saved = { ...saved, version: version + 1, items: saved.items.filter(item => item.id !== id) });
+    },
+    submitReviewDraft: async (...request) => {
+      submissions.push(request); submittedItems = saved.items;
+      saved = { ...saved, items: saved.items.map(item => ({ ...item, published: true })) };
+    },
     recordRecentTouch: async () => {},
   } satisfies Pick<Bridge, 'getUserProfile' | 'getWorkspaceHostingViewer' | 'fetchWorkspaceHostingAttention' | 'readAgentReviewHistory' | 'fetchAttentionPrs' | 'fetchPullRequestDetailByRef'
     | 'refreshPullRequestDetailByRef' | 'refreshAllPullRequestDetailByRef' | 'fetchPrDiffFiles' | 'fetchPrDiffCommits'
     | 'refreshPrDiffFiles' | 'readWorktreeChanges' | 'getAgentReview' | 'findAgentReview' | 'findPullRequestTask' | 'listWorkspaces'
     | 'listLocalReviewComments' | 'listCodeFiles' | 'listCodeRuns' | 'listAgentReviews' | 'subscribeAgentReview'
-    | 'fetchMergeMode' | 'getReviewDraft' | 'saveReviewDraft' | 'addReviewDraftComment' | 'submitReviewDraft' | 'recordRecentTouch'>;
+    | 'fetchMergeMode' | 'getReviewDraft' | 'saveReviewDraft' | 'addReviewDraftComment' | 'editReviewDraftComment'
+    | 'removeReviewDraftComment' | 'submitReviewDraft' | 'recordRecentTouch'>;
   const previous = window.bridge;
   Object.assign(window, { bridge: { ...agent, ...stubs } });
   const { host, root, dispose } = createFixtureRoot('main');
@@ -133,9 +154,10 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
     for (let attempt = 0; attempt < 10 && polls.length === 0; attempt++) await settle();
     assert(polls.length > 0, 'The detail refresh must finish and schedule the next poll');
   };
+  const render = () => flushSync(() => root.render(<PullsScreen initialPr={{ repo: review.repo, number: review.number }} initialReviewId={review.id}
+    repositoryScope={{ workspaceId: review.workspaceId, repository: review.repo }} reviewWorkspace={{ onBack: () => {} }} />));
   try {
-    flushSync(() => root.render(<PullsScreen initialPr={{ repo: review.repo, number: review.number }} initialReviewId={review.id}
-      repositoryScope={{ workspaceId: review.workspaceId, repository: review.repo }} reviewWorkspace={{ onBack: () => {} }} />));
+    render();
     for (let attempt = 0; attempt < 60 && !named('WorkBench'); attempt++) await settle();
     button('WorkBench').click(); await settle();
     button('Changes').click(); await settle();
@@ -148,9 +170,32 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
     const input = fixtureElement<HTMLTextAreaElement>('.pull-diff-review textarea', host, 'Selecting a line must open a composer');
     changeInput(input, 'Keep this pending review');
     await settle();
-    button('Add to review').click();
-    await settle();
-    assert(await staged(), 'Adding an inline comment must stage it on the diff');
+    button('Add to review').click(); await settle();
+    assert(input.value === 'Keep this pending review' && !input.disabled && saved.items.length === 0
+      && host.textContent?.includes('Could not save this comment'), 'A failed save must retain the inline editor and explain retry');
+    failAdd = false;
+    button('Add to review').click(); await settle();
+    assert(await staged(), 'Adding an inline comment must save it on the diff');
+    assert(saved.items[0]?.body === 'Keep this pending review' && submissions.length === 0,
+      'Add to review must save locally before the editor closes without publishing');
+    flushSync(() => root.render(<p>Another page</p>)); await settle();
+    render();
+    for (let attempt = 0; attempt < 60 && !named('WorkBench'); attempt++) await settle();
+    button('WorkBench').click(); await settle();
+    button('Changes').click(); await settle();
+    assert(await staged(), 'Leaving the PR and reopening it must restore saved comments');
+    fixtureElement<HTMLButtonElement>('[aria-label="Add a comment on new line 1"]', host).click(); await settle();
+    changeInput(fixtureElement<HTMLTextAreaElement>('.pull-diff-review textarea', host), 'Remove this extra comment'); await settle();
+    button('Add to review').click(); await settle();
+    const rows = [...host.querySelectorAll('.is-pending-review')];
+    assert(rows.length === 2, 'The saved version must support another comment after the failed reload');
+    textButton('Edit', rows[0]).click(); await settle();
+    const retainedEdit = fixtureElement<HTMLTextAreaElement>('[aria-label="Edit pending review comment"]', rows[0]);
+    changeInput(retainedEdit, 'Unfinished edit'); await settle();
+    textButton('Discard', rows[1]).click(); await settle();
+    assert(fixtureElement<HTMLTextAreaElement>('[aria-label="Edit pending review comment"]', host).value === 'Unfinished edit',
+      'Removing another comment must preserve an unsaved edit across saved-draft reloads');
+    textButton('Cancel', rows[0]).click(); await settle();
 
     assert(reviewedReads === 0 && !host.textContent?.includes('Unpublished reviewer edit'),
       'A different reviewer working copy must not replace the published diff');
@@ -228,16 +273,16 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
     submit.click(); await settle();
     assert(Number(submissions.length) === 1, 'The explicit submit action must publish the review exactly once');
     const [repo, number, version, , event, headSha] = submissions[0];
-    assert(repo === detail.repo && number === detail.number && version === saved.version && event === 'COMMENT' && headSha === stored.headSha && added.length === 2
-      && added[0].path === files[0].filename && added[0].side === 'RIGHT' && added[0].line === 1
-      && added[0].commitId === 'two' && added[0].body === editedBody
-      && added[1].replyToCommentId === 61 && added[1].body === 'Include this reply in my review',
+    assert(repo === detail.repo && number === detail.number && version === saved.version && event === 'COMMENT' && headSha === stored.headSha && submittedItems.length === 2
+      && submittedItems[0].path === files[0].filename && submittedItems[0].side === 'RIGHT' && submittedItems[0].line === 1
+      && submittedItems[0].commitId === 'two' && submittedItems[0].body === editedBody
+      && submittedItems[1].replyToCommentId === 61 && submittedItems[1].body === 'Include this reply in my review',
     'Submitting from WorkBench must preserve the PR, revision, line, and staged comment');
     assert(host.querySelector('.pr-review-sheet') === null && host.querySelector('[aria-label^="Submit review, 2 pending"]') === null,
       'Successful submission must close the dialog and clear the staged comment');
-    return [{ name: 'A staged review lasts as long as the pull request page' }];
+    return [{ name: 'Saved review comments survive leaving the pull request' }];
   }
-  catch (error) { return [{ name: 'A staged review lasts as long as the pull request page', error: errorMessage(error) }]; }
+  catch (error) { return [{ name: 'Saved review comments survive leaving the pull request', error: errorMessage(error) }]; }
   finally {
     window.setTimeout = originalTimeout;
     dispose();
@@ -271,6 +316,7 @@ export async function runDraftCommentEdit(): Promise<string> {
     fetchPrDiffFiles: async () => files,
     fetchPrDiffCommits: async () => commits,
     getAgentReview: async () => currentReview,
+    getReviewDraft: async () => draft,
     editReviewDraftComment: async (...request) => {
       edits.push(request);
       await new Promise<void>(resolve => { finishSave = resolve; });
@@ -300,7 +346,7 @@ export async function runDraftCommentEdit(): Promise<string> {
       published++;
     },
     fetchPullRequestDetailByRef: async () => stored,
-  } satisfies Pick<Bridge, 'getUserProfile' | 'getWorkspaceHostingViewer' | 'fetchWorkspaceHostingAttention' | 'fetchPrDiffFiles' | 'fetchPrDiffCommits' | 'getAgentReview' | 'editReviewDraftComment'
+  } satisfies Pick<Bridge, 'getUserProfile' | 'getWorkspaceHostingViewer' | 'fetchWorkspaceHostingAttention' | 'fetchPrDiffFiles' | 'fetchPrDiffCommits' | 'getAgentReview' | 'getReviewDraft' | 'editReviewDraftComment'
     | 'saveReviewDraft' | 'submitReviewDraft' | 'fetchPullRequestDetailByRef' | 'betterWords' | 'confirmReviewDraftCommentNotPosted'>;
   const previous = window.bridge;
   Object.assign(window, { bridge });
@@ -405,12 +451,13 @@ export async function runConfirmedPublication(): Promise<string> {
         fetchPrDiffFiles: async () => files,
         fetchPrDiffCommits: async () => commits,
         getAgentReview: async () => { reads++; return savedReview; },
+        getReviewDraft: async () => savedReview.draft ?? draft,
         confirmReviewDraftCommentPosted: async () => confirm(),
         confirmReviewDraftReview: async (_repo, _number, _version, posted) => {
           assert(posted, 'This scenario confirms a posted review');
           return confirm();
         },
-      } satisfies Pick<Bridge, 'getUserProfile' | 'getWorkspaceHostingViewer' | 'fetchWorkspaceHostingAttention' | 'fetchPrDiffFiles' | 'fetchPrDiffCommits' | 'getAgentReview'
+      } satisfies Pick<Bridge, 'getUserProfile' | 'getWorkspaceHostingViewer' | 'fetchWorkspaceHostingAttention' | 'fetchPrDiffFiles' | 'fetchPrDiffCommits' | 'getAgentReview' | 'getReviewDraft'
         | 'confirmReviewDraftCommentPosted' | 'confirmReviewDraftReview'>;
       Object.assign(window, { bridge });
       const render = () => root.render(<ReviewDialog key={String(summary)} pr={remotePullRequest(stored, 'bob')} detail={stored}
@@ -442,8 +489,9 @@ export async function runApprovalCommitBinding(): Promise<string> {
     saveReviewDraft: async (_repo, _number, version, body, event) => { writes++; return (draft = { ...draft, body, event, version: version + 1 }); },
     submitReviewDraft: async (...request) => { submissions.push(request); },
     getAgentReview: async () => ({ ...review, draft }),
+    getReviewDraft: async () => draft,
     fetchPullRequestDetailByRef: async () => stored,
-  } satisfies Pick<Bridge, 'saveReviewDraft' | 'submitReviewDraft' | 'getAgentReview' | 'fetchPullRequestDetailByRef'>;
+  } satisfies Pick<Bridge, 'saveReviewDraft' | 'submitReviewDraft' | 'getAgentReview' | 'getReviewDraft' | 'fetchPullRequestDetailByRef'>;
   Object.assign(window, { bridge });
   const render = (key: string, headSha: string | null) => flushSync(() => root.render(<ReviewDialog key={key}
     pr={remotePullRequest(stored, 'bob')} detail={{ ...stored, headSha }} review={{ ...review, draft }}

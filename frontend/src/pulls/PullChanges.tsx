@@ -34,6 +34,7 @@ import type {
 } from '../types';
 import { usePopoverDismiss } from '@bytequay/ui/usePopoverDismiss';
 import { useResizablePane } from '../useResizablePane';
+import { useAsyncAction } from '../useAsyncAction';
 import type { ReviewNavigationTarget } from './agent-review/AgentReviewTab';
 import { findingLines, type AgentReviewDto, type ReviewFindingDto, type ReviewSide } from './agent-review/contracts';
 import { findingInResults } from './agent-review/model';
@@ -119,7 +120,7 @@ type ReviewOptions = {
   workspaceId?: string;
   canReview: boolean;
   pendingComments: InlineReviewCommentDto[];
-  onPendingCommentsChange: (comments: InlineReviewCommentDto[]) => void;
+  onPendingCommentsChange: (comments: InlineReviewCommentDto[]) => void | Promise<void>;
   onDetailChange: (detail: PullRequestDetailDto) => void;
 };
 
@@ -646,7 +647,7 @@ export type ReviewLineComposerProps = {
   posting: boolean;
   askAgent?: { sending: boolean; disabledReason?: string | null; onSend: () => void };
   onCancel: () => void;
-  onAddPending: () => void;
+  onAddPending: () => void | Promise<void>;
   onPostNow: () => void;
 };
 
@@ -661,17 +662,20 @@ export function ReviewLineComposer({
   onBodyChange,
   preview,
   onPreviewChange,
-  error,
+  error: parentError,
   onError,
   bodyRef,
   suggestion,
-  submitting,
+  submitting: parentSubmitting,
   posting,
   askAgent,
   onCancel,
   onAddPending,
   onPostNow,
 }: ReviewLineComposerProps) {
+  const staging = useAsyncAction();
+  const submitting = parentSubmitting || staging.busy;
+  const error = parentError ?? staging.error;
   if (askAgent?.sending) return <p className="pr-local-review__note" role="status">Sending…</p>;
 
   return (
@@ -716,7 +720,7 @@ export function ReviewLineComposer({
         onClick={askAgent.onSend}>Send to agent</button>}
       {canReview && <>
         <button type="button" disabled={!body.trim() || submitting || reviewDisabledReason !== null} title={reviewDisabledReason ?? undefined}
-          onClick={onAddPending}>Add to review</button>
+          onClick={() => { void staging.run(async () => { await onAddPending(); }); }}>Add to review</button>
         <button className="is-primary" type="button" disabled={!body.trim() || submitting || reviewDisabledReason !== null}
           title={reviewDisabledReason ?? undefined} onClick={onPostNow}>{posting ? 'Posting…' : 'Post now'}</button>
       </>}
@@ -791,6 +795,8 @@ function DiffFileCard({
   const commentKey = useRef<string | null>(null);
   const submitting = posting || sendingToAgent;
   const [pendingEdit, setPendingEdit] = useState<{ comment: InlineReviewCommentDto; body: string } | null>(null);
+  const editing = (comment: InlineReviewCommentDto) => pendingEdit !== null && (pendingEdit.comment === comment
+    || (comment.draftItemId !== undefined && pendingEdit.comment.draftItemId === comment.draftItemId));
   const oldLines = sourceLines(content?.oldContent);
   const newLines = sourceLines(content?.newContent);
   const canReview = review?.canReview ?? false;
@@ -914,10 +920,10 @@ function DiffFileCard({
     commentKey.current = null;
   };
 
-  const addPending = () => {
+  const addPending = async () => {
     const value = comment();
     if (value === null || !review?.canReview || submissionInFlight.current) return;
-    review.onPendingCommentsChange([...review.pendingComments, value]);
+    await review.onPendingCommentsChange([...review.pendingComments, value]);
     closeComposer();
   };
 
@@ -1066,7 +1072,7 @@ function DiffFileCard({
         </tr>)}
         {review && rowComments.map((comment, index) => (
           <PendingReviewCommentRow
-            key={`${comment.side}:${comment.startLine ?? comment.line}:${comment.line}:${index}`}
+            key={comment.draftItemId ?? `${comment.side}:${comment.startLine ?? comment.line}:${comment.line}:${index}`}
             comment={comment}
             rowKind={displayRow.kind}
             viewer={viewer}
@@ -1075,16 +1081,16 @@ function DiffFileCard({
               startLine: comment.startLine ?? comment.line,
               lines: headLines(hunks, newLines, comment.startLine ?? comment.line, comment.line),
             } : undefined}
-            editBody={pendingEdit?.comment === comment ? pendingEdit.body : null}
+            editBody={editing(comment) ? pendingEdit?.body ?? null : null}
             onEdit={body => setPendingEdit(body === null ? null : { comment, body })}
-            onSave={() => {
-              if (pendingEdit?.comment !== comment || !pendingEdit.body.trim()) return;
-              review.onPendingCommentsChange(updatePendingReviewComment(review.pendingComments, comment, pendingEdit.body));
+            onSave={async () => {
+              if (!editing(comment) || pendingEdit === null || !pendingEdit.body.trim()) return;
+              await review.onPendingCommentsChange(updatePendingReviewComment(review.pendingComments, comment, pendingEdit.body));
               setPendingEdit(null);
             }}
-            onDiscard={() => {
-              review.onPendingCommentsChange(updatePendingReviewComment(review.pendingComments, comment, null));
-              if (pendingEdit?.comment === comment) setPendingEdit(null);
+            onDiscard={async () => {
+              await review.onPendingCommentsChange(updatePendingReviewComment(review.pendingComments, comment, null));
+              if (editing(comment)) setPendingEdit(null);
             }}
           />
         ))}
@@ -1295,8 +1301,8 @@ type PendingReviewCardProps = {
   suggestion?: SuggestionBase;
   editBody: string | null;
   onEdit: (body: string | null) => void;
-  onSave: () => void;
-  onDiscard: () => void;
+  onSave: () => void | Promise<void>;
+  onDiscard: () => void | Promise<void>;
 };
 
 export function PendingReviewCommentRow({ rowKind, ...card }: PendingReviewCardProps & { rowKind: DisplayRow['kind'] }) {
@@ -1310,6 +1316,8 @@ export function PendingReviewCommentRow({ rowKind, ...card }: PendingReviewCardP
 }
 
 export function PendingReviewCard({ comment, viewer, repository, suggestion, editBody, onEdit, onSave, onDiscard }: PendingReviewCardProps) {
+  const { busy, error, run } = useAsyncAction();
+  const save = () => { void run(async () => { await onSave(); }); };
   const endLabel = `${comment.side === 'RIGHT' ? 'R' : 'L'}${comment.line}`;
   const isRange = comment.startLine !== null && comment.startLine !== comment.line;
   const startSide = comment.startSide ?? comment.side;
@@ -1320,17 +1328,18 @@ export function PendingReviewCard({ comment, viewer, repository, suggestion, edi
       title={<span className="lrc__title">Comment on {isRange ? 'lines' : 'line'} <strong>{isRange ? `${startLabel}–${endLabel}` : endLabel}</strong></span>}
       badges={<span className="pull-diff-pending__badge">Pending</span>}
       controls={editBody === null && <footer className="lrc__foot pull-diff-pending__actions">
-        <button type="button" className="lrc__action" onClick={() => onEdit(comment.body)}>Edit</button>
-        <button type="button" className="lrc__action is-destructive" onClick={onDiscard}>Discard</button>
+        <button type="button" className="lrc__action" disabled={busy} onClick={() => onEdit(comment.body)}>Edit</button>
+        <button type="button" className="lrc__action is-destructive" disabled={busy} onClick={() => { void run(async () => { await onDiscard(); }); }}>Discard</button>
+        {error && <span role="alert">{error}</span>}
       </footer>}>
       <ReviewThreadMessage timestamp={null} author={<strong>{viewer?.login || 'You'}</strong>}
         avatar={<Avatar login={viewer?.login ?? ''} avatarUrl={viewer?.avatarUrl} size={22} allowGitHubFallback={false} />}>
         {editBody === null ? <MarkdownBody body={comment.body} repository={repository} suggestion={suggestion} />
           : <MarkdownEditor value={editBody} onChange={onEdit} repository={repository} suggestion={suggestion}
-            autoFocus ariaLabel="Edit pending review comment"
-            onSubmit={() => { if (editBody.trim()) onSave(); }}>
-            <button type="button" onClick={() => onEdit(null)}>Cancel</button>
-            <button type="button" className="is-primary" disabled={!editBody.trim()} onClick={onSave}>Save</button>
+            autoFocus ariaLabel="Edit pending review comment" busy={busy} error={error}
+            onSubmit={() => { if (editBody.trim()) save(); }}>
+            <button type="button" disabled={busy} onClick={() => onEdit(null)}>Cancel</button>
+            <button type="button" className="is-primary" disabled={busy || !editBody.trim()} onClick={save}>Save</button>
           </MarkdownEditor>}
       </ReviewThreadMessage>
     </ReviewThreadCard>

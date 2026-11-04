@@ -23,9 +23,9 @@ beforeAll(async () => {
 }, deadline(30_000));
 afterAll(() => fixture?.dispose());
 
-it('keeps and edits staged review comments across panel tabs in Chromium', async () => {
+it('saves review comments before navigating away and retains failed edits in Chromium', async () => {
   const results = await fixture.run<ScenarioResult[]>();
-  expect(results).toEqual([{ name: 'A staged review lasts as long as the pull request page' }]);
+  expect(results).toEqual([{ name: 'Saved review comments survive leaving the pull request' }]);
 }, deadline(40_000));
 
 it('edits saved review comments and retries unconfirmed delivery only after confirmation in Chromium', async () => {
