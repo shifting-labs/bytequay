@@ -80,7 +80,7 @@ function layerKey(layer: ZoomedReference): string {
   if (layer.kind === 'task') return `task:${layer.workspaceId}:${layer.taskId}`;
   return layer.kind === 'jira'
     ? `jira:${layer.connectionId}/${layer.cloudId}/${layer.issueId}`
-    : `${layer.kind}:${layer.workspaceId ?? ''}:${layer.repo}#${layer.number}`;
+    : `${layer.kind}:${layer.workspaceId ?? (layer.kind === 'pull' && layer.accountId !== undefined ? `account:${layer.accountId}` : '')}:${layer.repo}#${layer.number}`;
 }
 
 function pageFromRoute(hash: string): AppPage {

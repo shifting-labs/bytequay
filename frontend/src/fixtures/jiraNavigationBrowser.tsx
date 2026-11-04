@@ -17,8 +17,9 @@ import App from '../App';
 import type { AppNavigationTarget } from '../appNavigation';
 import { createPreviewBridge } from '../agents/fixtures/previewBridge';
 import { zoomReference } from '../githubReference';
+import { prDetail } from '../pulls/fixtures/pullRequest';
 import { JIRA_CHANGED, type JiraConnection } from '../jira/contracts';
-import type { Bridge, InAppBrowserState, WorkspaceDto } from '../types';
+import type { Bridge, InAppBrowserState, PullRequestRoute, WorkspaceDto } from '../types';
 import { assert, settle, until, element, changeInput } from './harness';
 import '../css/base.css';
 
@@ -41,12 +42,19 @@ export async function run(): Promise<{ name: string }[]> {
   let connections = [connected];
   let navigate: (target: AppNavigationTarget) => void = () => {};
   let assistantOpens: (target: { hash: string }) => void = () => {};
+  let notificationOpens: Parameters<Bridge['onPrNotificationOpen']>[0] = () => {};
   let browserChanged: (state: InAppBrowserState) => void = () => {};
   let browser: InAppBrowserState = { tabs: [], activeTabId: null };
   let browserHidden = 0;
   let deferBrowserHide = false;
   let finishStartup: (connected: boolean) => void = () => {};
   const startup = new Promise<boolean>(resolve => { finishStartup = resolve; });
+  const pullReads: number[] = [];
+  const readPull = async (repo: string, number: number, route?: PullRequestRoute) => {
+    assert(typeof route === 'object', 'A notification preview must retain its hosting account');
+    pullReads.push(route.accountId);
+    return prDetail({ id: route.accountId, repo, number, title: `Account ${route.accountId} request`, viewerCanWrite: false });
+  };
   const bridge = {
     ...createPreviewBridge('workspace'),
     listHostingAccounts: async () => [],
@@ -68,7 +76,7 @@ export async function run(): Promise<{ name: string }[]> {
     onFullScreenChange: () => () => {},
     setPrAttentionHandled: async () => {},
     onPrAttentionUpdated: () => () => {},
-    onPrNotificationOpen: () => () => {},
+    onPrNotificationOpen: callback => { notificationOpens = callback; return () => { notificationOpens = () => {}; }; },
     onFindResult: () => () => {},
     stopFindInPage: async () => {},
     listJiraConnections: async () => connections,
@@ -88,6 +96,10 @@ export async function run(): Promise<{ name: string }[]> {
     fetchWorkspaceHostingAttention: async () => ({ login: (await window.bridge.getUserProfile?.().catch(() => null))?.login ?? null, pullRequests: await window.bridge.fetchAttentionPrs?.().catch(() => []) ?? [] }),
     getUserProfile: async () => { throw new Error('No profile in this navigation fixture'); },
     fetchPrs: async () => ({ pullRequests: [], page: 0, pageSize: 50, totalPullRequests: 0, openPullRequests: 0, hasMore: false }),
+    fetchPullRequestDetailByRef: readPull,
+    refreshPullRequestDetailByRef: async (repo, number, _checks, _opened, route) => ({ full: true, detail: await readPull(repo, number, route), status: null }),
+    findAgentReview: async () => null, findPullRequestTask: async () => null, listLocalReviewComments: async () => [],
+    fetchPrDiffFiles: async () => [], fetchPrDiffCommits: async () => [],
   } satisfies Partial<Bridge>;
   window.bridge = bridge as unknown as Bridge;
   window.history.replaceState({ fixture: true }, '', '#/recent');
@@ -346,6 +358,22 @@ export async function run(): Promise<{ name: string }[]> {
     await until(() => document.querySelector('[aria-label="Task"][data-navigation-layer]') === null,
       'Opening the page under a layer closes the layer');
 
+    await go('recent');
+    const reference = { repo: 'team/project', number: 7 };
+    const pullLayers = () => [...document.querySelectorAll<HTMLElement>('[aria-label="Pull request team/project #7"]')];
+    notificationOpens({ ...reference, accountId: 11 });
+    await until(() => pullLayers()[0]?.textContent?.includes('Account 11 request') === true, 'First account preview did not load');
+    notificationOpens({ ...reference, accountId: 22 });
+    await until(() => pullLayers().length === 2 && pullLayers()[1]?.textContent?.includes('Account 22 request') === true,
+      'Matching repository paths on different accounts must open their own previews');
+    const firstLayer = pullLayers()[0];
+    notificationOpens({ ...reference, accountId: 11 });
+    await settle();
+    assert(pullLayers().length === 2 && pullLayers()[1] === firstLayer, 'Reopening the same account preserves its existing preview');
+    assert(pullReads.includes(11) && pullReads.includes(22), 'Both previews must read through their own account routes');
+    window.location.hash = '#/workspaces/workspace';
+    await until(() => document.querySelector('.agt-home [aria-label="Describe a task"]') !== null, 'Workspace Home returns after account previews');
+
     deferBrowserHide = true;
     browser = { ...browser, activeTabId: 'docs' };
     browserChanged(browser);
@@ -360,7 +388,8 @@ export async function run(): Promise<{ name: string }[]> {
     assert(!bridge.commands.some(command => command.name === 'createAgentTask'), 'Task shortcuts never sent either draft');
     return [{ name: 'connected-site navigation loads, updates and fits the collapsed sidebar' },
       { name: 'native navigation reaches app pages, protects modal forms and preserves browser tabs and workspace context' },
-      { name: 'task shortcuts focus an unsent draft and open the current workspace switcher' }];
+      { name: 'task shortcuts focus an unsent draft and open the current workspace switcher' },
+      { name: 'notification previews keep matching pull requests from separate hosting accounts distinct' }];
   }
   finally { disposeRoot(); }
 }

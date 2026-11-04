@@ -23,5 +23,5 @@ it('updates Jira visibility, history and native shortcut navigation in the runni
     width: 1000,
     height: 700,
   });
-  expect(results).toHaveLength(3);
+  expect(results).toHaveLength(4);
 }, deadline(30_000));
