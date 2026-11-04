@@ -362,13 +362,14 @@ export async function runComposerSuggestions() {
     number, title, author: 'contributor', updatedAt: '2026-01-01T00:00:00Z',
     url: `https://github.com/example/repository/${command === 'FIX' ? 'issues' : 'pull'}/${number}`,
   });
-  const calls: { workspaceId: string; command: Command; search: string }[] = [];
+  const calls: { workspaceId: string; command: Command; search: string; page: number }[] = [];
   const opened: string[] = [];
   const pending = new Map<string, (items: ComposerSuggestionDto[]) => void>();
   Object.defineProperty(window, 'bridge', { configurable: true, value: {
     openInAppBrowser: async (url: string) => { opened.push(url); },
-    getComposerSuggestions: (workspaceId: string, command: Command, search: string): Promise<ComposerSuggestionDto[]> => {
-      calls.push({ workspaceId, command, search });
+    getComposerSuggestions: (workspaceId: string, command: Command, search: string, page = 1): Promise<ComposerSuggestionDto[]> => {
+      calls.push({ workspaceId, command, search, page });
+      if (search === 'paged') return Promise.resolve(page === 1 ? Array.from({ length: 20 }, (_, index) => item(command, 200 - index)) : [item(command, 150), item(command, 149)]);
       if (['old', 'new', 'waiting', 'firstword'].includes(search)) return new Promise(resolve => pending.set(search, resolve));
       if (search === 'failed') return Promise.reject(new Error('Could not load suggestions'));
       if (search === 'missing') return Promise.resolve([]);
@@ -587,6 +588,21 @@ export async function runComposerSuggestions() {
       assert(view.host.querySelector('.agt-compose__reference') === null && view.draft() === replacement, 'A multiline pasted target replaces the hidden reference');
       await key('Enter');
       assert(sendCount() === 2 && view.sends[1] === replacement, 'A multiline pasted request submits only its replacement target');
+      const paged = () => calls.filter(call => call.search === 'paged').length;
+      const pagedBefore = paged();
+      await type('');
+      await type('@fix paged');
+      await until(() => options().length === 20, 'A full first page shows twenty results');
+      const scroller = list() as HTMLElement;
+      scroller.scrollTop = scroller.scrollHeight;
+      scroller.dispatchEvent(new Event('scroll'));
+      await until(() => options().length === 22, 'Scrolling to the end appends the next page');
+      assert(calls.at(-1)?.search === 'paged' && calls.at(-1)?.page === 2 && paged() === pagedBefore + 2,
+        'Only the next page is read, once');
+      scroller.scrollTop = scroller.scrollHeight;
+      scroller.dispatchEvent(new Event('scroll'));
+      await settle();
+      assert(paged() === pagedBefore + 2, 'A short page ends the list');
     } finally { view.close(); }
   }
   const view = mountComposer('Home', 'workspace-without-backports', false);

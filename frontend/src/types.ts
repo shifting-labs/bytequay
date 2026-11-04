@@ -2013,7 +2013,7 @@ export type Bridge = LabBridge & WorkItemBridge & JiraBridge & GoogleBridge & Ar
   previewCherryPickPullRequest: (request: CherryPickPullRequestPreviewRequest) => Promise<CherryPickPreview>;
   /** Merged pull requests stored for a workspace's repository, newest merge first. */
   listMergedPullRequests: (workspaceId: string, search: string) => Promise<PullRequestDto[]>;
-  getComposerSuggestions: (workspaceId: string, command: ComposerSuggestionCommand, search: string) => Promise<ComposerSuggestionDto[]>;
+  getComposerSuggestions: (workspaceId: string, command: ComposerSuggestionCommand, search: string, page?: number) => Promise<ComposerSuggestionDto[]>;
   /**
    * Probes every configured provider and returns its readiness.
    *

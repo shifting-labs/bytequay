@@ -27,6 +27,8 @@ const COMMANDS = [
 const LIST_LABELS: Record<ComposerSuggestionCommand, string> = {
   BACKPORT: 'Merged pull requests', FIX: 'Open issues', REVIEW: 'Open pull requests from others',
 };
+/** The backend's page size: a full page means there may be more. */
+const PAGE_SIZE = 20;
 type Cursor = { value: string; caret: number; end: number };
 type Search = { command: ComposerSuggestionCommand; query: string; start: number; end: number };
 
@@ -58,7 +60,8 @@ export function useTaskSuggestions({ draft, onDraftChange, workspaceId, inputRef
   const dismissed = useRef<Cursor | null>(null);
   const [cursor, setCursor] = useState<Cursor | null>(null);
   const [chosen, setChosen] = useState(0);
-  const [loaded, setLoaded] = useState<{ key: string; items: ComposerSuggestionDto[]; error: string | null } | null>(null);
+  const [loaded, setLoaded] = useState<{ key: string; items: ComposerSuggestionDto[]; error: string | null; page: number; more: boolean } | null>(null);
+  const [loadingMore, setLoadingMore] = useState<string | null>(null);
   const offered = COMMANDS.filter(entry => entry.name === 'artifacts' ? artifacts : entry.name !== 'backport' || backport);
   const current = !disabled && cursor?.value === draft && cursor.caret === cursor.end ? cursor : null;
   const match = current === null ? null : /^\s*@([^\s@]*)$/.exec(draft.slice(0, current.caret));
@@ -70,6 +73,7 @@ export function useTaskSuggestions({ draft, onDraftChange, workspaceId, inputRef
   const key = command === undefined ? null : JSON.stringify([workspaceId, command, query]);
   const result = loaded?.key === key ? loaded : null;
   const items = result?.items ?? [];
+  const more = result !== null && loadingMore === result.key;
   const open = commands.length > 0 || search !== null;
   const count = search === null ? commands.length : items.length;
   const active = chosen < count ? chosen : 0;
@@ -81,12 +85,23 @@ export function useTaskSuggestions({ draft, onDraftChange, workspaceId, inputRef
     let live = true;
     const timer = window.setTimeout(() => {
       void window.bridge.getComposerSuggestions(workspaceId, command, query).then(
-        items => { if (live) setLoaded({ key, items: items.slice(0, 10), error: null }); },
-        failure => { if (live) setLoaded({ key, items: [], error: errorMessage(failure) }); },
+        items => { if (live) setLoaded({ key, items, error: null, page: 1, more: items.length === PAGE_SIZE }); },
+        failure => { if (live) setLoaded({ key, items: [], error: errorMessage(failure), page: 1, more: false }); },
       );
     }, query === '' ? 0 : 180);
     return () => { live = false; window.clearTimeout(timer); };
   }, [command, key, query, workspaceId]);
+
+  const loadMore = () => {
+    if (result === null || !result.more || more || command === undefined || query === undefined || !workspaceId) return;
+    const { key: from, page } = result;
+    setLoadingMore(from);
+    void window.bridge.getComposerSuggestions(workspaceId, command, query, page + 1).then(
+      next => setLoaded(current => current?.key !== from ? current : { ...current, page: page + 1, more: next.length === PAGE_SIZE,
+        items: [...current.items, ...next.filter(item => !current.items.some(each => each.number === item.number))] }),
+      () => setLoaded(current => current?.key !== from ? current : { ...current, more: false }),
+    ).finally(() => setLoadingMore(current => current === from ? null : current));
+  };
 
   const update = (input: HTMLTextAreaElement) => {
     const position = { value: input.value, caret: input.selectionStart, end: input.selectionEnd };
@@ -146,6 +161,10 @@ export function useTaskSuggestions({ draft, onDraftChange, workspaceId, inputRef
         if (event.key === 'Enter' || count > 0) event.preventDefault();
         if (count > 0) choose(active);
       }
+      else if (event.key === 'ArrowDown' && search !== null && active === count - 1 && result?.more) {
+        event.preventDefault();
+        loadMore();
+      }
       else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
         if (count > 0) setChosen((active + (event.key === 'ArrowDown' ? 1 : count - 1)) % count);
@@ -155,7 +174,8 @@ export function useTaskSuggestions({ draft, onDraftChange, workspaceId, inputRef
   return {
     inputProps,
     list: open && <div className={`agt-mentions${search === null ? '' : ' is-items'}`} id={listId} role="listbox"
-      aria-label={search === null ? 'Task suggestions' : LIST_LABELS[search.command]} aria-busy={search !== null && result === null}>
+      aria-label={search === null ? 'Task suggestions' : LIST_LABELS[search.command]} aria-busy={search !== null && (result === null || more)}
+      onScroll={event => { const list = event.currentTarget; if (search !== null && list.scrollTop + list.clientHeight >= list.scrollHeight - 48) loadMore(); }}>
       {search === null ? commands.map((entry, index) => <button key={entry.name} type="button" id={optionId(index)} role="option" aria-selected={index === active}
         tabIndex={-1} onMouseDown={event => event.preventDefault()} onClick={() => choose(index)}>
         <entry.icon size={15} strokeWidth={1.8} aria-hidden="true" />@{entry.name}<span>{entry.detail}</span>
@@ -166,6 +186,7 @@ export function useTaskSuggestions({ draft, onDraftChange, workspaceId, inputRef
           {search.command === 'FIX' ? <CircleDot size={15} aria-hidden="true" /> : <GitPullRequest size={15} aria-hidden="true" />}
           <span className="agt-mentions__item"><strong>{item.title}</strong><span>#{item.number} · {item.author}</span></span>
         </button>)}
+        {more && <div className="agt-mentions__status" role="status">Loading more…</div>}
         {items.length === 0 && <div className="agt-mentions__status" role="status">
           {result === null ? 'Loading suggestions…' : result.error !== null ? `Could not load suggestions: ${result.error}` : 'No matching results'}
         </div>}

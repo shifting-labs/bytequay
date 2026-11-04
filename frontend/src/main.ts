@@ -1663,10 +1663,11 @@ function registerIpc(): void {
 
   ipcMain.handle('prs:merged', (_event, workspaceId: string, search: string) =>
     backendJson(`${backendBase()}/api/workspaces/${encodeURIComponent(workspaceId)}/pull-requests/merged?${new URLSearchParams({ search })}`));
-  ipcMain.handle('composer:suggestions', (_event, workspaceId: string, command: unknown, search: unknown) => {
+  ipcMain.handle('composer:suggestions', (_event, workspaceId: string, command: unknown, search: unknown, page: unknown = 1) => {
     if (command !== 'BACKPORT' && command !== 'FIX' && command !== 'REVIEW') throw new Error('Invalid composer command');
     if (typeof search !== 'string' || search.length > 500) throw new Error('Invalid composer search');
-    return backendJson(`${workspaceUrl(workspaceId, '/composer-suggestions')}?${new URLSearchParams({ command, search })}`);
+    if (typeof page !== 'number' || !Number.isInteger(page) || page < 1 || page > 50) throw new Error('Invalid composer page');
+    return backendJson(`${workspaceUrl(workspaceId, '/composer-suggestions')}?${new URLSearchParams({ command, search, page: String(page) })}`);
   });
   ipcMain.handle('prs:list', (_event, workspaceId: string | undefined, page: number, pageSize: number) =>
     backendJson(`${workspaceId ? workspaceUrl(workspaceId, '/pull-requests') : `${backendBase()}/prs`}?${new URLSearchParams({ page: String(page), size: String(pageSize) })}`));

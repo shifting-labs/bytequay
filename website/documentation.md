@@ -468,14 +468,14 @@ Existing tasks keep the account they started with.
 
 Choose **Backport**, **Fix issues and failures**, or **Review code and suggest
 changes** above the composer, or type **@backport**, **@fix**, or **@review**
-followed by a space. The picker suggests up to 10 items: for Backport, the most
-recently merged PRs of this repository's upstream in its repo line, or of this
-repository at the top of the line; for Fix, this repository's newest open
-issues; and for Review, its newest open PRs by other authors. Type part of a
-title or number to
-search within that category; matching ignores capitalization and includes
-text anywhere in the title or number. Only the first word after the command
-is searched; adding a space after it closes the picker so you can continue
+followed by a space. The picker lists 20 items at a time; scroll down for more.
+Backport lists recently merged PRs of this repository's upstream in its repo
+line, or of this repository at the top of the line; Fix lists this repository's
+newest open issues; and Review lists its newest open PRs by other authors. Type
+a word of a title, or a number, to search within that category. Matching
+ignores capitalization, and a number also finds items that mention it. Only the
+first word after the command is searched; adding a space after it closes the
+picker so you can continue
 writing instructions. Click a result, or use the arrow keys and Enter or Tab,
 to insert its title and number as blue text in the composer. Titles longer than
 40 characters are shortened. Hover over the blue text to see the full title;
