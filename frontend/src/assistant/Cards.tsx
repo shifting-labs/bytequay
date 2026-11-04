@@ -13,8 +13,8 @@
  */
 import { useEffect, useState, type ReactNode } from 'react';
 import {
-  CircleCheck, CircleX, Clock, ExternalLink, Eye, GitPullRequest, Hand, Hourglass, ListTodo, LoaderCircle, MessageCircleQuestion, Terminal, TimerOff, TriangleAlert,
-  X, type LucideIcon,
+  CircleArrowUp, CircleCheck, CircleX, Clock, ExternalLink, Eye, GitPullRequest, Hand, Hourglass, ListTodo, LoaderCircle, MessageCircleQuestion, Terminal, TimerOff,
+  TriangleAlert, X, type LucideIcon,
 } from 'lucide-react';
 import { latestStep, PendingApprovalCard, type ApprovalDecider, type TaskStep } from '../agents/AgentConversation';
 import type { RunningTask } from '../agents/runningTaskModel';
@@ -22,11 +22,12 @@ import { formatDuration } from '../agents/transcript';
 import { IconButton } from '../cards/Card';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { pollVisible } from '../ide/pollVisible';
-import { APPROVAL_NOTICE, NOTICE_ACTIONS, noticeLabel, type AppNotice } from '../notices/contracts';
+import { APPROVAL_NOTICE, NOTICE_ACTIONS, RULE_NOTICE, RULE_RESULT_NOTICE, noticeLabel, type AppNotice } from '../notices/contracts';
 import { errorMessage } from '../errorMessage';
 import { laneLabel } from '../settings/model';
 import type { AgentEventEnvelope } from '../agents/events';
 import type { AgendaTargetDto, AgentPendingApprovalDto } from '../types';
+import { useAsyncAction } from '../useAsyncAction';
 import { useNow, useTimeLeft } from '../useNow';
 
 const STEP_POLL_MS = 2000;
@@ -154,11 +155,62 @@ export function ApprovalCard({ notice, focused, conversation, onAnswered, onOpen
 
 const NOTICE_ICONS: Partial<Record<AppNotice['kind'], LucideIcon>> = { QUESTION: MessageCircleQuestion, RECOVERY: Hourglass, STUCK: TimerOff, QUEUE_PAUSED: Clock };
 
+type NoticeCardProps = { notice: AppNotice; focused: boolean; onOpen: () => void; onClear: () => void };
+
+/** A decision waiting on the user: a rule's card is answered here, any other in its task. */
+export function NoticeCard(props: NoticeCardProps) {
+  if (props.notice.id.startsWith(RULE_NOTICE)) return <RuleCard {...props} />;
+  if (props.notice.id.startsWith(RULE_RESULT_NOTICE)) return <RuleResultCard {...props} />;
+  return <TaskNoticeCard {...props} />;
+}
+
+/** A rule whose record lets it do the work itself: move it up to Suggest, or keep it observing for now. */
+function RuleCard({ notice, focused, onClear }: NoticeCardProps) {
+  const { busy, error, run } = useAsyncAction();
+  const rule = notice.taskId.slice(RULE_NOTICE.length);
+  const answer = (choose: (id: string) => Promise<unknown>) => void run(async () => { await choose(rule); onClear(); });
+  return (
+    <CardRow id={notice.id} focused={focused} icon={CircleArrowUp} tone="accent" title={notice.title} meta="Rule"
+      right={<StatePill text={noticeLabel(notice)} />}
+      body={<>
+        <div className="assistant-card__why">{notice.message}</div>
+        {error !== null && <div className="assistant-card__fail" role="alert">{error}</div>}
+        <div className="assistant-card__buttons">
+          <button type="button" className="assistant-button" disabled={busy} onClick={() => answer(id => window.bridge.moveAgentRuleUp(id))}>Move to Suggest</button>
+          <button type="button" className="assistant-button" disabled={busy} onClick={() => answer(id => window.bridge.keepAgentRuleObserving(id))}>Keep observing</button>
+        </div>
+      </>} />
+  );
+}
+
+/** A rule's finished work: open it to keep or change it, which its record then counts, or dismiss it as not wanted. */
+function RuleResultCard({ notice, focused, onOpen, onClear }: NoticeCardProps) {
+  const { busy, error, run } = useAsyncAction();
+  // The rule's id holds no colon; the run's key, which follows it, can.
+  const rest = notice.id.slice(RULE_RESULT_NOTICE.length);
+  const rule = rest.slice(0, rest.indexOf(':'));
+  const key = rest.slice(rest.indexOf(':') + 1);
+  const review = notice.reviewId !== null;
+  return (
+    <CardRow id={notice.id} focused={focused} icon={review ? Eye : CircleCheck} tone="accent" title={review ? `Review · ${heading(notice)}` : heading(notice)}
+      meta={where(notice)} right={<StatePill text={noticeLabel(notice)} />}
+      body={<>
+        <div className="assistant-card__why">{notice.message}</div>
+        {error !== null && <div className="assistant-card__fail" role="alert">{error}</div>}
+        <div className="assistant-card__buttons">
+          <button type="button" className="assistant-button" disabled={busy} onClick={onOpen}>Open</button>
+          <button type="button" className="assistant-button" disabled={busy}
+            onClick={() => void run(async () => { await window.bridge.dismissAgentRuleRun(rule, key); onClear(); })}>Dismiss</button>
+        </div>
+      </>} />
+  );
+}
+
 /**
  * A decision the task's own page answers, such as a question asked at the end of a turn or a blocked task: why, then where to answer. A
  * turn that looks stuck can also be stopped here.
  */
-export function NoticeCard({ notice, focused, onOpen, onClear }: { notice: AppNotice; focused: boolean; onOpen: () => void; onClear: () => void }) {
+function TaskNoticeCard({ notice, focused, onOpen, onClear }: NoticeCardProps) {
   const left = useTimeLeft(notice.expiresAt);
   const warn = notice.kind === 'RECOVERY' || notice.kind === 'STUCK';
   return (

@@ -84,6 +84,31 @@ public class AgentRulesController
         return rules.remove(id);
     }
 
+    @PostMapping("/{id}/move-up")
+    public List<AgentRuleView> moveUp(@PathVariable String id)
+    {
+        return rules.moveUp(id);
+    }
+
+    @PostMapping("/{id}/move-down")
+    public List<AgentRuleView> moveDown(@PathVariable String id)
+    {
+        return rules.moveDown(id);
+    }
+
+    @PostMapping("/{id}/keep-observing")
+    public List<AgentRuleView> keepObserving(@PathVariable String id)
+    {
+        return rules.keepObserving(id);
+    }
+
+    @PostMapping("/{id}/dismiss")
+    public List<AgentRuleView> dismiss(@PathVariable String id, @RequestBody DismissRequest request)
+    {
+        rules.dismiss(id, request.key());
+        return rules.list();
+    }
+
     public record RuleRequest(String text)
     {
         public RuleRequest
@@ -93,4 +118,12 @@ public class AgentRulesController
     }
 
     public record PauseRequest(boolean paused) {}
+
+    public record DismissRequest(String key)
+    {
+        public DismissRequest
+        {
+            checkText(key, "Run key");
+        }
+    }
 }

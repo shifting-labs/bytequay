@@ -14,18 +14,25 @@
 package com.bytequay.core.domain;
 
 import java.time.Instant;
+import java.util.Optional;
 
 import static com.bytequay.core.domain.Checks.checkText;
+import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 /**
- * One time a saved rule's event happened, and whether the user then did what the rule would have done.
+ * One time a saved rule's event happened, and whether the user then did what the rule would have done, or, for a suggestion, what they
+ * did with the work the rule did.
  *
  * @param key names the event within its rule, so a rule fires once per event
  * @param subject the pull request or issue it was about, such as "acme/warehouse#4521"
  * @param occurredAt when the event happened; the user's action counts only after it
+ * @param suggestion whether the rule did the work itself, in Suggest, rather than only recording it
+ * @param work the work a suggestion started, "review:" and the review's id or "task:" and the task's id
+ * @param skipped why a suggestion has no work to judge, such as the daily limit
  */
-public record RuleRun(String ruleId, String key, String subject, String title, Instant occurredAt, Verdict verdict)
+public record RuleRun(String ruleId, String key, String subject, String title, Instant occurredAt, Verdict verdict, boolean suggestion, Optional<String> work,
+        Optional<String> skipped)
 {
     public RuleRun
     {
@@ -35,17 +42,52 @@ public record RuleRun(String ruleId, String key, String subject, String title, I
         requireNonNull(title, "title is null");
         requireNonNull(occurredAt, "occurredAt is null");
         requireNonNull(verdict, "verdict is null");
+        requireNonNull(work, "work is null");
+        requireNonNull(skipped, "skipped is null");
+        checkArgument(suggestion || work.isEmpty() && skipped.isEmpty(), "only a suggestion has work or a reason it was skipped");
+        checkArgument(work.isEmpty() || skipped.isEmpty(), "a suggestion either has work or was skipped");
+        checkArgument(verdict != Verdict.EDITED || suggestion, "only a suggestion can be edited");
+    }
+
+    /** A run that only records what the rule would have done. */
+    public static RuleRun observed(String ruleId, String key, String subject, String title, Instant occurredAt)
+    {
+        return new RuleRun(ruleId, key, subject, title, occurredAt, Verdict.PENDING, false, Optional.empty(), Optional.empty());
+    }
+
+    /** A run whose rule starts the work, before it has started. */
+    public static RuleRun suggested(String ruleId, String key, String subject, String title, Instant occurredAt)
+    {
+        return new RuleRun(ruleId, key, subject, title, occurredAt, Verdict.PENDING, true, Optional.empty(), Optional.empty());
     }
 
     public RuleRun decide(Verdict decided)
     {
-        return new RuleRun(ruleId, key, subject, title, occurredAt, decided);
+        return new RuleRun(ruleId, key, subject, title, occurredAt, decided, suggestion, work, skipped);
+    }
+
+    public RuleRun started(String startedWork)
+    {
+        return new RuleRun(ruleId, key, subject, title, occurredAt, verdict, suggestion, Optional.of(startedWork), Optional.empty());
+    }
+
+    public RuleRun skip(String reason)
+    {
+        return new RuleRun(ruleId, key, subject, title, occurredAt, verdict, suggestion, Optional.empty(), Optional.of(reason));
+    }
+
+    /** A suggestion still starting: neither its work nor a reason it was skipped is known yet. */
+    public boolean starting()
+    {
+        return suggestion && work.isEmpty() && skipped.isEmpty();
     }
 
     public enum Verdict
     {
         PENDING,
         AGREED,
+        /** The user kept a suggestion only after changing it. */
+        EDITED,
         DISAGREED
     }
 }

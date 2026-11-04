@@ -15,8 +15,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from
 import { X } from 'lucide-react';
 import { ago } from '@bytequay/ui/relativeTime';
 import { useNow, useTimeLeft } from '../useNow';
-import { APPROVAL_NOTICE, NOTICE_ACTIONS as ACTIONS, needsAction, noticeLabel as label, shownAlert, type AppNotice, type NoticeBridge,
-  type NoticeSnapshot } from './contracts';
+import { needsAction, noticeAction, noticeLabel as label, shownAlert, type AppNotice, type NoticeBridge, type NoticeSnapshot } from './contracts';
 
 const describe = (notice: AppNotice): string => `${label(notice)}: ${notice.pullRequestTitle ?? notice.title}`;
 const count = (value: number, noun: string): string => `${value} ${noun}${value === 1 ? '' : 's'}`;
@@ -53,7 +52,7 @@ function NoticeCard({ notice, active, onDismiss, onOpen }: { notice: AppNotice; 
     {changes ? <div className="app-notice__changes">{changes.update && <span>Update</span>}<span>{count(changes.commits, 'commit')}</span>
       <span>{count(changes.files, 'file')}</span><span className="is-added">+{changes.additions}</span><span className="is-deleted">−{changes.deletions}</span></div>
       : (actionable || delivered || notice.kind === 'NEXT_WORK') && <p className="app-notice__message" title={notice.message}>{notice.message}</p>}
-    <div className="app-notice__actions"><button type="button" onClick={onOpen}>{notice.id.startsWith(APPROVAL_NOTICE) ? 'Answer' : ACTIONS[notice.kind]}</button>
+    <div className="app-notice__actions"><button type="button" onClick={onOpen}>{noticeAction(notice)}</button>
       <span title={notice.repository}>{notice.repository}</span></div>
   </article>;
 }

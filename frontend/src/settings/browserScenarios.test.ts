@@ -41,8 +41,8 @@ testBrowserScenarios([
     },
   },
   {
-    name: 'pastes, checks, saves, pauses, edits and removes rules, and shows their records, through the Settings controls in Chromium',
-    expected: 4, timeout: 30_000,
+    name: 'pastes, checks, saves, pauses, edits and removes rules, shows their records and moves them down, through the Settings controls in Chromium',
+    expected: 5, timeout: 30_000,
     fixture: { prefix: 'bytequay-rules-', entry: 'src/settings/fixtures/rulesBrowser.tsx', global: 'RulesTests' },
   },
   {

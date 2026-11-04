@@ -158,6 +158,12 @@ public class ItemTaskStarter
      */
     public Optional<Started> start(Start start, Optional<String> agent, TaskId taskId, String key)
     {
+        return start(start, agent, taskId, key, settings.developmentAutomation());
+    }
+
+    /** Starts it with this automation rather than the user's saved one, such as a rule's work, which only commits locally. */
+    public Optional<Started> start(Start start, Optional<String> agent, TaskId taskId, String key, DevelopmentAutomation automation)
+    {
         AgentModelSetting development = models.agentModel(AgentModelType.DEVELOPMENT, Optional.of(start.workspaceId()));
         String lane = agent.orElse(development.configId());
         Optional<ModelSettingsService.Provider> provider = models.get().providers().stream().filter(candidate -> candidate.id().equals(lane)).findFirst();
@@ -168,7 +174,6 @@ public class ItemTaskStarter
         Optional<String> model = Optional.ofNullable(usual ? development.model() : provider.orElseThrow().selectedModel()).filter(value -> !value.isBlank());
         Optional<String> effort = model.isEmpty() ? Optional.empty()
                 : (usual ? development.effort() : Optional.ofNullable(provider.orElseThrow().selectedEffort())).filter(value -> !value.isBlank());
-        DevelopmentAutomation automation = settings.developmentAutomation();
         AgentTask task = starter.start(new InteractiveTaskStart(taskId, start.workspaceId(), start.message(), new AgentLaneId(lane),
                 new AgentTaskDefaults(model, effort, AgentPermissionPolicy.AUTO, Optional.empty(), Optional.of(automation)),
                 key, Optional.of(automation), start.issue(), start.jira(), start.workItemId(), ImmutableList.of()));

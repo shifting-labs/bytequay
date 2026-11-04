@@ -28,7 +28,11 @@ import com.bytequay.agent.core.store.AgentTaskStore;
 import com.bytequay.agent.core.store.AgentTurnStore;
 import com.bytequay.agent.core.store.QueuedInputStore;
 import com.bytequay.agent.spi.AgentPermissionPolicy;
+import com.bytequay.app.rules.RuleWork;
 import com.bytequay.app.service.epic.EpicNextWork;
+import com.bytequay.app.service.rules.AgentRule;
+import com.bytequay.app.service.rules.AgentRuleService;
+import com.bytequay.app.service.rules.AgentRuleView;
 import com.bytequay.app.utils.ContextText;
 import com.bytequay.app.workspace.TaskPullRequestOwnership;
 import com.bytequay.core.ci.CiAutofixRun;
@@ -36,6 +40,7 @@ import com.bytequay.core.ci.CiAutofixStore;
 import com.bytequay.core.domain.Artifact;
 import com.bytequay.core.domain.PullRequest;
 import com.bytequay.core.domain.PullRequestDetail;
+import com.bytequay.core.domain.RuleRun;
 import com.bytequay.core.review.AgentReview;
 import com.bytequay.core.review.AgentReviewStore;
 import com.bytequay.core.review.ReviewRun;
@@ -52,6 +57,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -69,6 +75,11 @@ public class AppNoticeService
 {
     // Marks a notice that opens an Artifacts conversation, whose id the notice's task id holds; the app reads the same prefix.
     private static final String ARTIFACT_NOTICE = "artifact:";
+    // A rule whose record lets it move up, and a rule's finished work asking what the user makes of it; the app reads the same prefixes.
+    // The move-up card belongs to no task or repository, so it names the rules in their place.
+    private static final String RULE_NOTICE = "rule:";
+    private static final String RULE_RESULT_NOTICE = "rule-result:";
+    private static final String RULES = "rules";
 
     private final AgentTaskStore tasks;
     private final AgentTurnStore turns;
@@ -82,6 +93,8 @@ public class AppNoticeService
     private final ArtifactStore artifacts;
     private final WorkspaceStore workspaces;
     private final TaskWatchdog watchdog;
+    private final AgentRuleService rules;
+    private final RuleWork ruleWork;
     private final ObjectMapper mapper;
 
     public AppNoticeService(
@@ -97,6 +110,8 @@ public class AppNoticeService
             ArtifactStore artifacts,
             WorkspaceStore workspaces,
             TaskWatchdog watchdog,
+            AgentRuleService rules,
+            RuleWork ruleWork,
             ObjectMapper mapper)
     {
         this.tasks = requireNonNull(tasks, "tasks is null");
@@ -111,13 +126,29 @@ public class AppNoticeService
         this.artifacts = requireNonNull(artifacts, "artifacts is null");
         this.workspaces = requireNonNull(workspaces, "workspaces is null");
         this.watchdog = requireNonNull(watchdog, "watchdog is null");
+        this.rules = requireNonNull(rules, "rules is null");
+        this.ruleWork = requireNonNull(ruleWork, "ruleWork is null");
         this.mapper = requireNonNull(mapper, "mapper is null");
     }
 
-    /** What the app alerts on: the task notices, and each Artifacts conversation whose question timed out unanswered. */
+    /**
+     * What the app alerts on: the task notices, each Artifacts conversation whose question timed out unanswered, and the rules that wait on
+     * the user: a rule whose record lets it move up, and a rule's finished work, asked about in place of its task's own result.
+     */
     public List<AppNotice> alerts()
     {
-        ImmutableList.Builder<AppNotice> alerts = ImmutableList.<AppNotice>builder().addAll(current());
+        Map<String, Suggestion> suggestions = suggestions();
+        ImmutableList.Builder<AppNotice> alerts = ImmutableList.builder();
+        for (AppNotice notice : current()) {
+            Optional<Suggestion> suggestion = Optional.ofNullable(suggestions.get(notice.taskId())).filter(any -> notice.kind() == AppNotice.Kind.TURN_FINISHED);
+            alerts.add(suggestion.map(found -> suggested(notice, found)).orElse(notice));
+        }
+        for (AgentRuleView rule : rules.movable()) {
+            alerts.add(new AppNotice(RULE_NOTICE + rule.id() + ":" + rule.keptObserving().orElse(rule.recordSince()).toEpochMilli(), AppNotice.Kind.QUESTION,
+                    RULE_NOTICE + rule.id(), RULES, Optional.empty(), Optional.empty(), clip(rule.rule().name(), 160), Optional.empty(), Optional.empty(), Optional.empty(),
+                    Optional.empty(), "Agreed " + rule.agreed() + " of " + rule.answered() + " times. Move it to Suggest?", "Rules", RULES, Optional.empty(),
+                    rules.record(rule.id()).stream().findFirst().map(RuleRun::occurredAt).orElse(rule.recordSince()), Optional.empty()));
+        }
         for (Artifact artifact : artifacts.missed()) {
             Artifact.MissedQuestion missed = artifact.missed().orElseThrow();
             workspaces.findById(artifact.workspaceId()).ifPresent(workspace -> alerts.add(new AppNotice(ARTIFACT_NOTICE + missed.approvalId(), AppNotice.Kind.QUESTION,
@@ -126,6 +157,32 @@ public class AppNoticeService
                     missed.laneId(), Optional.empty(), missed.at(), Optional.empty())));
         }
         return alerts.build();
+    }
+
+    /** A rule's suggestion whose work waits on the user. */
+    private record Suggestion(AgentRuleView rule, RuleRun run) {}
+
+    /** The suggestions waiting on the user, by the task whose finished turn is their result. */
+    private Map<String, Suggestion> suggestions()
+    {
+        Map<String, Suggestion> waiting = new HashMap<>();
+        for (AgentRuleView rule : rules.list()) {
+            if (rule.mode() != AgentRule.Mode.SUGGEST) {
+                continue;
+            }
+            rules.record(rule.id()).stream().filter(run -> run.verdict() == RuleRun.Verdict.PENDING && run.work().isPresent())
+                    .forEach(run -> ruleWork.resultTask(run).ifPresent(taskId -> waiting.put(taskId, new Suggestion(rule, run))));
+        }
+        return waiting;
+    }
+
+    private static AppNotice suggested(AppNotice result, Suggestion suggestion)
+    {
+        String done = result.reviewId().isPresent() ? "drafted its findings; nothing is posted until you publish them"
+                : "committed on this Mac; nothing is pushed until you do";
+        return new AppNotice(RULE_RESULT_NOTICE + suggestion.rule().id() + ":" + suggestion.run().key(), AppNotice.Kind.QUESTION, result.taskId(), result.workspaceId(),
+                result.turnId(), result.reviewId(), result.title(), result.pullRequest(), result.pullRequestTitle(), result.branch(), result.changes(),
+                clip(suggestion.rule().rule().name() + " · " + done, 280), result.repository(), result.laneId(), Optional.empty(), result.occurredAt(), Optional.empty());
     }
 
     /** The task notices, which the Assistant and the agenda read as tasks. */

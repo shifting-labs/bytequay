@@ -461,6 +461,11 @@ export default function SettingsWindow({ section, workspace, onWorkspacesChanged
                 window.bridge.pauseAgentRule(rule.id, !rule.paused)
                   .then(setRules).catch(report).finally(() => setRulesBusy(false));
               }}
+              onMoveDown={rule => {
+                setRulesBusy(true);
+                window.bridge.moveAgentRuleDown(rule.id)
+                  .then(setRules).catch(report).finally(() => setRulesBusy(false));
+              }}
               onRemove={rule => {
                 setRulesBusy(true);
                 window.bridge.removeAgentRule(rule.id)

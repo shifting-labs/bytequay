@@ -1399,17 +1399,25 @@ export type AgentRuleDto = {
   rule: AgentRuleDefinitionDto;
   runs: number;
   agreed: number;
+  /** Suggestions the user kept only after changing them. */
+  edited: number;
   disagreed: number;
 };
 
-export type AgentRuleVerdict = 'PENDING' | 'AGREED' | 'DISAGREED';
+export type AgentRuleVerdict = 'PENDING' | 'AGREED' | 'EDITED' | 'DISAGREED';
 
-/** One time a rule's event happened, and whether the user then did what the rule would have done. */
+/**
+ * One time a rule's event happened, and whether the user then did what the rule would have done; for a suggestion, what they did with
+ * the work the rule did.
+ */
 export type AgentRuleRunDto = {
   subject: string;
   title: string;
   occurredAt: string;
   verdict: AgentRuleVerdict;
+  suggestion: boolean;
+  /** Why a suggestion has no work to judge, such as the daily limit. */
+  skipped: string | null;
 };
 
 
@@ -2098,6 +2106,12 @@ export type Bridge = LabBridge & WorkItemBridge & JiraBridge & GoogleBridge & Ar
   removeAgentRule: (id: string) => Promise<AgentRuleDto[]>;
   /** The rule's runs since its record began, newest first. */
   getAgentRuleRuns: (id: string) => Promise<AgentRuleRunDto[]>;
+  /** Moves a rule up to Suggest, which its record must allow, as the Assistant's card offers. */
+  moveAgentRuleUp: (id: string) => Promise<AgentRuleDto[]>;
+  moveAgentRuleDown: (id: string) => Promise<AgentRuleDto[]>;
+  keepAgentRuleObserving: (id: string) => Promise<AgentRuleDto[]>;
+  /** Marks the work a suggestion did as not wanted, so its run disagrees. */
+  dismissAgentRuleRun: (id: string, key: string) => Promise<AgentRuleDto[]>;
   getQuietHours: () => Promise<QuietHoursDto>;
   saveQuietHours: (quietHours: QuietHoursDto) => Promise<QuietHoursDto>;
   getDevelopmentAutomation: () => Promise<DevelopmentAutomationDto>;

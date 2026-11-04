@@ -60,6 +60,15 @@ public record RuleDefinition(
                 && authors.equals(other.authors) && action == other.action && agreement == other.agreement && withinDays == other.withinDays;
     }
 
+    /**
+     * Whether ByteQuay can do this rule's work in Suggest today: a review, or a task for an issue, which cannot push. Rebases, backports and
+     * tasks for pull requests keep observing until each has a step that stops before publishing.
+     */
+    public boolean suggests()
+    {
+        return action == Action.REVIEW || action == Action.TASK && event == Event.ISSUE_ASSIGNED;
+    }
+
     /** An event ByteQuay matches in code, with the jobs and the agreeing actions that fit it. */
     public enum Event
     {

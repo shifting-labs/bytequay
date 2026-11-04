@@ -79,7 +79,7 @@ class TestAgentRulesController
                 .andExpect(jsonPath("$[0].rule.name").value("Review PRs that need me"))
                 .andExpect(jsonPath("$[0].runs").value(0));
         String id = service.list().getFirst().id();
-        runs.save(new RuleRun(id, "pr:7:requested:1", "acme/warehouse#7", "Fix the flaky test", Instant.parse("2026-11-03T09:00:00Z"), RuleRun.Verdict.AGREED));
+        runs.save(RuleRun.observed(id, "pr:7:requested:1", "acme/warehouse#7", "Fix the flaky test", Instant.parse("2026-11-03T09:00:00Z")).decide(RuleRun.Verdict.AGREED));
         mvc.perform(get("/api/settings/agent-rules")).andExpect(jsonPath("$[0].runs").value(1)).andExpect(jsonPath("$[0].agreed").value(1));
         mvc.perform(get("/api/settings/agent-rules/" + id + "/runs"))
                 .andExpect(status().isOk())
@@ -94,6 +94,30 @@ class TestAgentRulesController
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].rule.body").value("Review it for correctness first, then style. Draft comments only."));
         mvc.perform(delete("/api/settings/agent-rules/" + id)).andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void movesARuleUpOnlyWhenItsRecordAllowsThenDownAndDismissesASuggestion()
+            throws Exception
+    {
+        String id = service.add(RULE).getFirst().id();
+        mvc.perform(post("/api/settings/agent-rules/" + id + "/move-up"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("does not let it move up yet")));
+        for (int i = 1; i <= 10; i++) {
+            runs.save(RuleRun.observed(id, "pr:" + i + ":requested:0", "acme/warehouse#" + i, "Change " + i, Instant.parse("2026-11-03T09:00:00Z").plusSeconds(i))
+                    .decide(RuleRun.Verdict.AGREED));
+        }
+        mvc.perform(post("/api/settings/agent-rules/" + id + "/move-up")).andExpect(status().isOk()).andExpect(jsonPath("$[0].mode").value("SUGGEST"));
+        mvc.perform(post("/api/settings/agent-rules/" + id + "/move-down")).andExpect(status().isOk()).andExpect(jsonPath("$[0].mode").value("OBSERVE"));
+        mvc.perform(post("/api/settings/agent-rules/" + id + "/keep-observing")).andExpect(status().isOk()).andExpect(jsonPath("$[0].mode").value("OBSERVE"));
+
+        runs.save(RuleRun.suggested(id, "pr:11:requested:0", "acme/warehouse#11", "Change 11", Instant.parse("2026-11-03T10:00:00Z")).started("review:review-1"));
+        mvc.perform(post("/api/settings/agent-rules/" + id + "/dismiss").contentType(MediaType.APPLICATION_JSON).content("{\"key\":\"pr:11:requested:0\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].disagreed").value(1));
+        mvc.perform(post("/api/settings/agent-rules/" + id + "/dismiss").contentType(MediaType.APPLICATION_JSON).content("{\"key\":\"pr:11:requested:0\"}"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

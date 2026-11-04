@@ -13,7 +13,7 @@
  */
 import { app, ipcMain, Notification, shell, WebContentsView, type BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import path from 'node:path';
-import { APPROVAL_NOTICE, NOTICE_WIDTH, isDecision, noticeLabel, parseNotices, type AppNotice, type NoticeSnapshot } from './contracts';
+import { APPROVAL_NOTICE, NOTICE_WIDTH, RULE_NOTICE, isDecision, noticeLabel, parseNotices, type AppNotice, type NoticeSnapshot } from './contracts';
 import { NoticeStore } from './store';
 
 /** One trusted app surface above native browser/editor views; its bridge cannot execute task actions. */
@@ -152,8 +152,9 @@ export class NoticeHost {
     const notice = this.snapshot().notices.find(item => item.id === id);
     if (!notice) return;
     const window = this.window();
-    // An alert's Answer opens the panel at the card, whose own buttons answer it; the panel's Open still opens the task.
-    if (fromAlert && notice.id.startsWith(APPROVAL_NOTICE) && window && !window.isDestroyed()) {
+    // An alert's Answer opens the panel at the card, whose own buttons answer it; the panel's Open still opens the task. A rule's
+    // move-up card has no task to open, so it always opens at its card.
+    if ((fromAlert && notice.id.startsWith(APPROVAL_NOTICE) || notice.id.startsWith(RULE_NOTICE)) && window && !window.isDestroyed()) {
       window.webContents.focus();
       window.webContents.send('assistant:open-card', notice.id);
     }

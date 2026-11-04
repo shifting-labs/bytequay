@@ -59,6 +59,9 @@ public record ReviewFinding(
         Origin origin,
         Optional<String> resolvedByTaskId)
 {
+    /** Why a finding is resolved once its text was posted as the user's own review comment. */
+    public static final String POSTED = "Accepted and posted to the remote";
+
     public ReviewFinding
     {
         requireNonNull(id, "id is null");

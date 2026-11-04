@@ -44,7 +44,12 @@ import com.bytequay.agent.spi.DevelopmentResultReport;
 import com.bytequay.agent.spi.ProviderAgentEventSource;
 import com.bytequay.agent.spi.ProviderApprovalRequest;
 import com.bytequay.agent.spi.ProviderTurnRef;
+import com.bytequay.app.rules.RuleWork;
+import com.bytequay.app.service.InMemoryAppSettingsStore;
 import com.bytequay.app.service.epic.EpicNextWork;
+import com.bytequay.app.service.rules.AgentRule;
+import com.bytequay.app.service.rules.AgentRuleService;
+import com.bytequay.app.service.rules.InMemoryRuleRunStore;
 import com.bytequay.app.workspace.TaskPullRequestOwnership;
 import com.bytequay.core.ci.CiAutofixRun;
 import com.bytequay.core.ci.CiAutofixRunId;
@@ -55,6 +60,7 @@ import com.bytequay.core.domain.PullRequest;
 import com.bytequay.core.domain.PullRequestDetail;
 import com.bytequay.core.domain.PullRequestRef;
 import com.bytequay.core.domain.RepoRef;
+import com.bytequay.core.domain.RuleRun;
 import com.bytequay.core.domain.Workspace;
 import com.bytequay.core.hosting.HostingServer;
 import com.bytequay.core.review.AgentReview;
@@ -73,8 +79,10 @@ import com.google.common.collect.ImmutableSet;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Optional;
 
 import static com.bytequay.agent.core.AgentTaskFixtures.created;
@@ -106,10 +114,68 @@ class TestAppNoticeService
     private final ArtifactStore artifacts = mock(ArtifactStore.class);
     private final WorkspaceStore workspaces = mock(WorkspaceStore.class);
     private final TaskWatchdog watchdog = mock(TaskWatchdog.class);
+    private final InMemoryAppSettingsStore settings = new InMemoryAppSettingsStore();
+    private final InMemoryRuleRunStore ruleRuns = new InMemoryRuleRunStore();
+    private final AgentRuleService rules = new AgentRuleService(settings, ruleRuns, new ObjectMapper().findAndRegisterModules(), Clock.fixed(NOW, ZoneOffset.UTC));
+    private final RuleWork ruleWork = mock(RuleWork.class);
     private final AppNoticeService service = new AppNoticeService(tasks, turns, approvals, queues, reviews, pullRequests, ownership, ciRuns, next, artifacts, workspaces,
-            watchdog, new ObjectMapper());
+            watchdog, rules, ruleWork, new ObjectMapper());
     private final AgentTask task = created(TaskId.random(), Optional.of("workspace"), true, "Fix recovery", new AgentLaneId("codex"),
             new RepositoryIdentity("owner", "repo"), Path.of("/tmp/notice-worktree"), AgentTaskDefaults.forPermission(AgentPermissionPolicy.AUTO), NOW);
+
+    @Test
+    void asksToMoveUpARuleWhoseRecordAllowsIt()
+    {
+        show(task);
+        String id = rules.add("""
+                ---
+                name: Review PRs that need me
+                when: review-requested
+                does: review
+                agrees-when: reviewed
+                ---
+                Review it.
+                """).getFirst().id();
+        for (int i = 1; i <= 10; i++) {
+            ruleRuns.save(RuleRun.observed(id, "pr:" + i + ":requested:0", "acme/warehouse#" + i, "Change " + i, NOW.plusSeconds(i)).decide(RuleRun.Verdict.AGREED));
+        }
+        assertThat(service.alerts()).singleElement().satisfies(notice -> {
+            assertThat(notice.id()).isEqualTo("rule:" + id + ":" + NOW.toEpochMilli());
+            assertThat(notice.kind()).isEqualTo(AppNotice.Kind.QUESTION);
+            assertThat(notice.taskId()).isEqualTo("rule:" + id);
+            assertThat(notice.title()).isEqualTo("Review PRs that need me");
+            assertThat(notice.message()).isEqualTo("Agreed 10 of 10 times. Move it to Suggest?");
+            assertThat(notice.occurredAt()).isEqualTo(NOW.plusSeconds(10));
+        });
+        assertThat(service.current()).isEmpty();
+    }
+
+    @Test
+    void asksAboutARulesFinishedWorkInPlaceOfItsTasksOwnResult()
+            throws Exception
+    {
+        show(task, turn().finish(TurnState.COMPLETED, AgentMetrics.empty(), Optional.empty(), NOW.plusSeconds(10)));
+        settings.put("agent.rules", new ObjectMapper().findAndRegisterModules().writeValueAsString(ImmutableList.of(new AgentRule("rule-1", """
+                ---
+                name: Start work on assigned issues
+                when: issue-assigned
+                does: task
+                agrees-when: started-task
+                ---
+                Draft a plan.
+                """, AgentRule.Mode.SUGGEST, false, NOW.minusSeconds(60), Optional.empty()))));
+        RuleRun run = RuleRun.suggested("rule-1", "issue:900:github.com", "acme/warehouse#12", "Fix the importer", NOW).started("task:" + task.id());
+        ruleRuns.save(run);
+        when(ruleWork.resultTask(run)).thenReturn(Optional.of(task.id().toString()));
+
+        assertThat(service.alerts()).singleElement().satisfies(notice -> {
+            assertThat(notice.id()).isEqualTo("rule-result:rule-1:issue:900:github.com");
+            assertThat(notice.kind()).isEqualTo(AppNotice.Kind.QUESTION);
+            assertThat(notice.taskId()).isEqualTo(task.id().toString());
+            assertThat(notice.message()).isEqualTo("Start work on assigned issues · committed on this Mac; nothing is pushed until you do");
+        });
+        assertThat(service.current()).singleElement().extracting(AppNotice::kind).isEqualTo(AppNotice.Kind.TURN_FINISHED);
+    }
 
     @Test
     void finishesOnlyWhenTheTaskIsSettledAndCoalescesFailuresWithPausedMessages()

@@ -17,13 +17,19 @@ import com.bytequay.core.domain.RuleRun;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 import static com.bytequay.core.domain.Checks.checkText;
 import static java.util.Objects.requireNonNull;
 
-/** A saved rule as Settings shows it: the rule itself, what its text says, and how its record counts so far. */
-public record AgentRuleView(String id, String text, AgentRule.Mode mode, boolean paused, Instant recordSince, RuleDefinition rule, int runs, int agreed,
-        int disagreed)
+/**
+ * A saved rule as Settings shows it: the rule itself, what its text says, and how its record counts so far.
+ *
+ * @param keptObserving when the user last kept it observing or moved it down
+ * @param edited suggestions the user kept only after changing them
+ */
+public record AgentRuleView(String id, String text, AgentRule.Mode mode, boolean paused, Instant recordSince, Optional<Instant> keptObserving, RuleDefinition rule,
+        int runs, int agreed, int edited, int disagreed)
 {
     public AgentRuleView
     {
@@ -31,13 +37,20 @@ public record AgentRuleView(String id, String text, AgentRule.Mode mode, boolean
         checkText(text, "text");
         requireNonNull(mode, "mode is null");
         requireNonNull(recordSince, "recordSince is null");
+        requireNonNull(keptObserving, "keptObserving is null");
         requireNonNull(rule, "rule is null");
     }
 
     static AgentRuleView of(AgentRule saved, List<RuleRun> record)
     {
-        return new AgentRuleView(saved.id(), saved.text(), saved.mode(), saved.paused(), saved.recordSince(), RuleText.parse(saved.text()), record.size(),
-                count(record, RuleRun.Verdict.AGREED), count(record, RuleRun.Verdict.DISAGREED));
+        return new AgentRuleView(saved.id(), saved.text(), saved.mode(), saved.paused(), saved.recordSince(), saved.keptObserving(), RuleText.parse(saved.text()), record.size(),
+                count(record, RuleRun.Verdict.AGREED), count(record, RuleRun.Verdict.EDITED), count(record, RuleRun.Verdict.DISAGREED));
+    }
+
+    /** The runs the user answered, one way or another. */
+    public int answered()
+    {
+        return agreed + edited + disagreed;
     }
 
     private static int count(List<RuleRun> record, RuleRun.Verdict verdict)

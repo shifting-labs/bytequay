@@ -30,11 +30,17 @@ Review it for correctness first, then nits. Draft comments only.`;
 
 const NOT_A_RULE = 'Add a "does" line to the header';
 
+const SUGGESTIONS: AgentRuleRunDto[] = [
+  { subject: 'acme/warehouse#4533', title: 'Cache block reads', occurredAt: '2026-11-05T11:00:00Z', verdict: 'PENDING', suggestion: true, skipped: 'Daily limit' },
+  { subject: 'acme/warehouse#4532', title: 'Retry flaky uploads', occurredAt: '2026-11-05T10:00:00Z', verdict: 'EDITED', suggestion: true, skipped: null },
+  { subject: 'acme/warehouse#4531', title: 'Split the storage writer', occurredAt: '2026-11-05T09:00:00Z', verdict: 'DISAGREED', suggestion: true, skipped: null },
+];
+
 const RUNS: AgentRuleRunDto[] = [
-  { subject: 'acme/warehouse#4524', title: 'Cache block reads', occurredAt: '2026-11-04T09:00:00Z', verdict: 'PENDING' },
-  { subject: 'acme/warehouse#4523', title: 'Retry flaky uploads', occurredAt: '2026-11-03T16:00:00Z', verdict: 'DISAGREED' },
-  { subject: 'acme/warehouse#4522', title: 'Split the storage writer', occurredAt: '2026-11-03T12:00:00Z', verdict: 'AGREED' },
-  { subject: 'acme/warehouse#4521', title: 'Fix the page cache', occurredAt: '2026-11-03T10:00:00Z', verdict: 'AGREED' },
+  { subject: 'acme/warehouse#4524', title: 'Cache block reads', occurredAt: '2026-11-04T09:00:00Z', verdict: 'PENDING', suggestion: false, skipped: null },
+  { subject: 'acme/warehouse#4523', title: 'Retry flaky uploads', occurredAt: '2026-11-03T16:00:00Z', verdict: 'DISAGREED', suggestion: false, skipped: null },
+  { subject: 'acme/warehouse#4522', title: 'Split the storage writer', occurredAt: '2026-11-03T12:00:00Z', verdict: 'AGREED', suggestion: false, skipped: null },
+  { subject: 'acme/warehouse#4521', title: 'Fix the page cache', occurredAt: '2026-11-03T10:00:00Z', verdict: 'AGREED', suggestion: false, skipped: null },
 ];
 
 /** The backend's reading, reduced to what these scenarios use: a name line, and refusal without a "does" line. */
@@ -47,7 +53,7 @@ function read(text: string): AgentRuleDefinitionDto {
 }
 
 function saved(id: string, text: string, paused = false): AgentRuleDto {
-  return { id, text, mode: 'OBSERVE', paused, recordSince: '2026-11-03T08:00:00Z', rule: read(text), runs: 0, agreed: 0, disagreed: 0 };
+  return { id, text, mode: 'OBSERVE', paused, recordSince: '2026-11-03T08:00:00Z', rule: read(text), runs: 0, agreed: 0, edited: 0, disagreed: 0 };
 }
 
 /** The shell's own save wiring around the real page, with a backend that answers at once. */
@@ -59,13 +65,14 @@ function Harness({ initial }: { initial: AgentRuleDto[] }) {
       busy={false}
       error={null}
       onCheck={async text => read(text)}
-      onRecord={async id => (id === 'rule-1' ? RUNS : [])}
+      onRecord={async id => (id === 'rule-1' ? RUNS : id === 'rule-3' ? SUGGESTIONS : [])}
       onSave={async (text, id) => {
         read(text);
         setRules(current => (id === null ? [...current, saved(`rule-${current.length}`, text)]
           : current.map(rule => (rule.id === id ? saved(id, text, rule.paused) : rule))));
       }}
       onPause={rule => setRules(current => current.map(each => (each.id === rule.id ? { ...each, paused: !each.paused } : each)))}
+      onMoveDown={rule => setRules(current => current.map(each => (each.id === rule.id ? { ...each, mode: 'OBSERVE' } : each)))}
       onRemove={rule => setRules(current => current.filter(each => each.id !== rule.id))}
     />
   );
@@ -160,6 +167,19 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
     await view.click('Edit Review PRs that ask for me');
     assert(view.record().length === 0, 'A rule with no runs shows no record');
   }, [{ ...saved('rule-1', RULE), runs: 4, agreed: 2, disagreed: 1 }, saved('rule-2', RULE.replace('need me', 'ask for me'))]);
+
+  await check('moves a rule in Suggest back to Observe and shows what you did with its suggestions', async view => {
+    assert(view.rows()[0].includes('A review is requested from you · 3 runs · 0% agree · Suggest'), `The row shows the rule in Suggest: ${view.rows()[0]}`);
+    await view.click('Edit Review PRs that suggest');
+    const record = view.record();
+    assert(record.length === 3 && record[0].startsWith('Daily limit acme/warehouse#4533') && record[1].startsWith('You changed it first acme/warehouse#4532')
+      && record[2].startsWith('You did not take it acme/warehouse#4531'),
+    `The box shows a skipped suggestion's reason, an edited one and one turned down: ${record.join(' | ')}`);
+    await view.click('Move down to Observe');
+    assert(view.dialog() === null && view.rows()[0].includes('· Observe'), `Move down closes the box and observes again: ${view.rows()[0]}`);
+    await view.click('Edit Review PRs that need me');
+    assert(!(view.dialog()?.textContent ?? '').includes('Move down to Observe'), 'A rule in Observe has nothing to move down');
+  }, [{ ...saved('rule-3', RULE.replace('need me', 'suggest')), mode: 'SUGGEST', runs: 3, edited: 1, disagreed: 1 }, saved('rule-1', RULE)]);
 
   return results;
 }

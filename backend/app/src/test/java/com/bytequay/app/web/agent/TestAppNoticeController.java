@@ -16,6 +16,7 @@ package com.bytequay.app.web.agent;
 import com.bytequay.app.config.WriteVersion;
 import com.bytequay.app.notices.AppNoticeService;
 import com.bytequay.app.service.epic.EpicNextWork;
+import com.bytequay.app.service.rules.AgentRuleService;
 import com.google.common.collect.ImmutableList;
 import org.junit.jupiter.api.Test;
 
@@ -39,7 +40,8 @@ class TestAppNoticeController
         EpicNextWork next = mock(EpicNextWork.class);
         WriteVersion writes = new WriteVersion();
         when(notices.alerts()).thenReturn(ImmutableList.of());
-        var mvc = standaloneSetup(new AppNoticeController(notices, writes, next)).build();
+        AgentRuleService rules = mock(AgentRuleService.class);
+        var mvc = standaloneSetup(new AppNoticeController(notices, writes, next, rules)).build();
 
         String etag = mvc.perform(get("/agent/notices")).andExpect(status().isOk()).andExpect(content().json("[]"))
                 .andReturn().getResponse().getHeader("ETag");
@@ -48,8 +50,11 @@ class TestAppNoticeController
         String written = mvc.perform(get("/agent/notices").header("If-None-Match", etag)).andExpect(status().isOk())
                 .andReturn().getResponse().getHeader("ETag");
         when(next.revision()).thenReturn(1L);
-        mvc.perform(get("/agent/notices").header("If-None-Match", written)).andExpect(status().isOk()).andExpect(header().exists("ETag"));
+        String picked = mvc.perform(get("/agent/notices").header("If-None-Match", written)).andExpect(status().isOk()).andExpect(header().exists("ETag"))
+                .andReturn().getResponse().getHeader("ETag");
+        when(rules.revision()).thenReturn(1L);
+        mvc.perform(get("/agent/notices").header("If-None-Match", picked)).andExpect(status().isOk());
 
-        verify(notices, times(3)).alerts();
+        verify(notices, times(4)).alerts();
     }
 }

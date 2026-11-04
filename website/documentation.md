@@ -571,6 +571,18 @@ lists each run. A run agrees when you review the pull request, start a task,
 update the branch, or open the backport in time. Records keep 30 days, and
 changing the header starts a new one. The switch pauses a rule.
 
+When a rule’s record shows you agree with it (at least 10 answered runs, 80%
+agreeing), the Assistant asks whether to move it to **Suggest**. Choose **Move
+to Suggest** or **Keep observing**; nothing moves up by itself. **Move down to
+Observe** in the rule’s box moves it back.
+
+In Suggest, a review rule reviews the pull request with its instructions as the
+focus and keeps the findings as drafts, and an issue rule starts a task that
+only commits on your Mac. The result waits in the Assistant’s **Decision**
+view: **Open** it to publish, push, or continue it, or **Dismiss** it. A
+finding published as written agrees; changing the work first counts as edited.
+A rule starts at most 3 suggestions a day, and all rules together 10.
+
 <a id="issues-and-jira"></a>
 
 ## Start from a work item

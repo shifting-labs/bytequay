@@ -22,11 +22,11 @@ import org.junit.jupiter.api.Test;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Optional;
 
 import static com.bytequay.app.service.rules.TestRuleText.STORAGE_REVIEW;
 import static com.bytequay.core.domain.RuleRun.Verdict.AGREED;
 import static com.bytequay.core.domain.RuleRun.Verdict.DISAGREED;
-import static com.bytequay.core.domain.RuleRun.Verdict.PENDING;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -55,7 +55,7 @@ class TestAgentRuleService
     void aNewNameOrNewInstructionsKeepTheRecordAndAChangedHeaderStartsANewOneInObserve()
             throws Exception
     {
-        store.put("agent.rules", mapper.writeValueAsString(ImmutableList.of(new AgentRule("rule-1", STORAGE_REVIEW, AgentRule.Mode.SUGGEST, true, SAVED))));
+        store.put("agent.rules", mapper.writeValueAsString(ImmutableList.of(new AgentRule("rule-1", STORAGE_REVIEW, AgentRule.Mode.SUGGEST, true, SAVED, Optional.empty()))));
         AgentRuleService later = service(EDITED);
 
         AgentRuleView renamed = later.update("rule-1", STORAGE_REVIEW.replace("touch storage", "change storage").replace("post nothing", "never post")).getFirst();
@@ -90,10 +90,10 @@ class TestAgentRuleService
     {
         AgentRuleService rules = service(SAVED);
         String id = rules.add(STORAGE_REVIEW).getFirst().id();
-        RuleRun before = new RuleRun(id, "pr:1:head:1", "acme/warehouse#1", "Before", SAVED.minusSeconds(60), AGREED);
-        RuleRun agreed = new RuleRun(id, "pr:2:head:1", "acme/warehouse#2", "Agreed", SAVED.plusSeconds(60), AGREED);
-        RuleRun disagreed = new RuleRun(id, "pr:3:head:1", "acme/warehouse#3", "Disagreed", SAVED.plusSeconds(120), DISAGREED);
-        RuleRun pending = new RuleRun(id, "pr:4:head:1", "acme/warehouse#4", "Pending", SAVED.plusSeconds(180), PENDING);
+        RuleRun before = RuleRun.observed(id, "pr:1:head:1", "acme/warehouse#1", "Before", SAVED.minusSeconds(60)).decide(AGREED);
+        RuleRun agreed = RuleRun.observed(id, "pr:2:head:1", "acme/warehouse#2", "Agreed", SAVED.plusSeconds(60)).decide(AGREED);
+        RuleRun disagreed = RuleRun.observed(id, "pr:3:head:1", "acme/warehouse#3", "Disagreed", SAVED.plusSeconds(120)).decide(DISAGREED);
+        RuleRun pending = RuleRun.observed(id, "pr:4:head:1", "acme/warehouse#4", "Pending", SAVED.plusSeconds(180));
         for (RuleRun run : ImmutableList.of(before, agreed, disagreed, pending)) {
             runs.save(run);
         }
@@ -104,6 +104,79 @@ class TestAgentRuleService
         assertThat(view.disagreed()).isEqualTo(1);
         assertThat(rules.record(id)).containsExactly(pending, disagreed, agreed);
         assertThatThrownBy(() -> rules.record("missing")).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Unknown rule");
+    }
+
+    @Test
+    void aRuleMovesUpOnlyWhenItsRecordAllowsAndAsksAgainAfterTenMoreRunsWhenKeptObserving()
+    {
+        AgentRuleService rules = service(SAVED);
+        String id = rules.add(STORAGE_REVIEW).getFirst().id();
+        answer(id, 0, 8, AGREED);
+        answer(id, 8, 1, DISAGREED);
+        assertThat(rules.movable()).isEmpty();
+        assertThatThrownBy(() -> rules.moveUp(id)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("does not let it move up yet");
+
+        answer(id, 9, 2, AGREED);
+        AgentRuleView ready = rules.movable().getFirst();
+        assertThat(ready.agreed()).isEqualTo(10);
+        assertThat(ready.answered()).isEqualTo(11);
+
+        AgentRuleService later = service(SAVED.plusSeconds(3600));
+        later.keepObserving(id);
+        assertThat(later.movable()).isEmpty();
+        answer(id, 3700, 10, AGREED);
+        assertThat(later.movable()).extracting(AgentRuleView::id).containsExactly(id);
+        assertThat(later.moveUp(id).getFirst().mode()).isEqualTo(AgentRule.Mode.SUGGEST);
+        assertThat(later.movable()).isEmpty();
+
+        AgentRuleView down = service(SAVED.plusSeconds(7200)).moveDown(id).getFirst();
+        assertThat(down.mode()).isEqualTo(AgentRule.Mode.OBSERVE);
+        assertThat(down.recordSince()).isEqualTo(SAVED);
+        assertThat(down.keptObserving()).contains(SAVED.plusSeconds(7200));
+        assertThat(later.movable()).isEmpty();
+    }
+
+    @Test
+    void aRuleWhoseWorkCannotBeSuggestedYetKeepsObserving()
+    {
+        AgentRuleService rules = service(SAVED);
+        String id = rules.add(STORAGE_REVIEW.replace("does: review", "does: task")).getFirst().id();
+        answer(id, 0, 10, AGREED);
+        assertThat(rules.movable()).isEmpty();
+    }
+
+    @Test
+    void dismissingASuggestionDisagreesWithItOnce()
+    {
+        AgentRuleService rules = service(SAVED);
+        String id = rules.add(STORAGE_REVIEW).getFirst().id();
+        runs.save(RuleRun.suggested(id, "pr:7:head:1", "acme/warehouse#7", "Fix the flaky test", SAVED.plusSeconds(60)).started("review:review-1"));
+        runs.save(RuleRun.observed(id, "pr:8:head:1", "acme/warehouse#8", "Add a cache", SAVED.plusSeconds(60)));
+
+        rules.dismiss(id, "pr:7:head:1");
+        assertThat(rules.record(id)).filteredOn(RuleRun::suggestion).singleElement().extracting(RuleRun::verdict).isEqualTo(DISAGREED);
+        assertThatThrownBy(() -> rules.dismiss(id, "pr:7:head:1")).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("waiting for you");
+        assertThatThrownBy(() -> rules.dismiss(id, "pr:8:head:1")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> rules.dismiss(id, "pr:9:head:1")).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Unknown run");
+    }
+
+    @Test
+    void savingARuleChangesTheRevision()
+    {
+        AgentRuleService rules = service(SAVED);
+        long before = rules.revision();
+        String id = rules.add(STORAGE_REVIEW).getFirst().id();
+        rules.pause(id, true);
+        assertThat(rules.revision()).isEqualTo(before + 2);
+    }
+
+    /** Saves {@code count} answered runs of the rule, a second apart, from {@code fromSecond} seconds after it was saved. */
+    private void answer(String id, int fromSecond, int count, RuleRun.Verdict verdict)
+    {
+        for (int i = 0; i < count; i++) {
+            int second = fromSecond + i + 1;
+            runs.save(RuleRun.observed(id, "pr:" + second + ":head:1", "acme/warehouse#" + second, "Change " + second, SAVED.plusSeconds(second)).decide(verdict));
+        }
     }
 
     @Test

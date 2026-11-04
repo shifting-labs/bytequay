@@ -527,7 +527,7 @@ public class ReviewPublicationService
                 .filter(findingId -> !alreadyPublished.contains(findingId))
                 .flatMap(findingId -> reviews.findFinding(findingId).stream())
                 .filter(finding -> finding.state() != ReviewFinding.State.RESOLVED)
-                .map(finding -> finding.withState(ReviewFinding.State.RESOLVED, Optional.of("Accepted and posted to the remote"), now()))
+                .map(finding -> finding.withState(ReviewFinding.State.RESOLVED, Optional.of(ReviewFinding.POSTED), now()))
                 .collect(toImmutableList());
         return drafts.savePublished(published, resolved);
     }

@@ -15,6 +15,7 @@ package com.bytequay.app.rules;
 
 import com.bytequay.app.jira.JiraService;
 import com.bytequay.app.service.credentials.CredentialService;
+import com.bytequay.app.service.rules.AgentRule;
 import com.bytequay.app.service.rules.AgentRuleService;
 import com.bytequay.app.service.rules.AgentRuleView;
 import com.bytequay.app.service.rules.RuleDefinition;
@@ -45,7 +46,10 @@ import java.nio.file.PathMatcher;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -60,19 +64,24 @@ import static com.bytequay.core.domain.RuleRun.Verdict.AGREED;
 import static com.bytequay.core.domain.RuleRun.Verdict.DISAGREED;
 import static com.bytequay.core.domain.RuleRun.Verdict.PENDING;
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static java.util.Objects.requireNonNull;
 
 /**
- * Keeps the records of rules in Observe, with no model and nothing written anywhere but the record: every minute it reads the events
- * rules start from out of what ByteQuay already synced, adds a run for each event a rule matches, and marks the run agreed once the user
- * does what the rule agrees with, or disagreed when the rule's time passes first.
+ * Keeps the records of rules, with no model: every minute it reads the events rules start from out of what ByteQuay already synced and
+ * adds a run for each event a rule matches. In Observe the run is agreed once the user does what the rule agrees with; in Suggest the rule
+ * does the work itself, through {@link RuleWork}, and the run takes what the user then did with it. Either is disagreed when the rule's
+ * time passes first.
  */
 @Component
 public class RuleObserver
 {
     private static final Logger log = LoggerFactory.getLogger(RuleObserver.class);
     static final Duration KEPT = Duration.ofDays(30);
+    // Suggestions start real work, each with its own model turns, so a day allows this many for one rule and for all of them.
+    static final int DAILY_PER_RULE = 3;
+    static final int DAILY = 10;
     // GitHub's merge states for a branch behind its base and for one with conflicts; GitLab only reports the second.
     private static final Set<String> BEHIND = ImmutableSet.of("behind", "dirty");
     // ponytail: a path rule reads a pull request's stored files once per head, so the misses are kept in memory and dropped all at once
@@ -81,6 +90,7 @@ public class RuleObserver
 
     private final AgentRuleService rules;
     private final RuleRunStore runs;
+    private final RuleWork work;
     private final PullRequestStore pullRequests;
     private final PrDiffStore diffs;
     private final WorkspaceStore workspaces;
@@ -96,12 +106,13 @@ public class RuleObserver
     // check keeps what was so, and the first check after a start only learns it. One that starts while ByteQuay is closed is missed.
     private final Map<RuleDefinition.Event, Set<String>> before = new EnumMap<>(RuleDefinition.Event.class);
 
-    public RuleObserver(AgentRuleService rules, RuleRunStore runs, PullRequestStore pullRequests, PrDiffStore diffs, WorkspaceStore workspaces,
+    public RuleObserver(AgentRuleService rules, RuleRunStore runs, RuleWork work, PullRequestStore pullRequests, PrDiffStore diffs, WorkspaceStore workspaces,
             RepositoryIssueStore issues, IssueDevelopmentStore issueTasks, JiraService jira, JiraIssueTaskStore jiraTasks, BackportChainStore backports,
             CredentialService credentials, Clock clock)
     {
         this.rules = requireNonNull(rules, "rules is null");
         this.runs = requireNonNull(runs, "runs is null");
+        this.work = requireNonNull(work, "work is null");
         this.pullRequests = requireNonNull(pullRequests, "pullRequests is null");
         this.diffs = requireNonNull(diffs, "diffs is null");
         this.workspaces = requireNonNull(workspaces, "workspaces is null");
@@ -138,26 +149,57 @@ public class RuleObserver
         runs.deleteBefore(now.minus(KEPT));
         Supplier<List<PullRequest>> candidates = Suppliers.memoize(pullRequests::findAttentionCandidates);
         Map<RuleDefinition.Event, List<Happened>> happened = new EnumMap<>(RuleDefinition.Event.class);
-        for (AgentRuleView rule : rules.list()) {
+        List<AgentRuleView> saved = rules.list();
+        Map<String, List<RuleRun>> records = saved.stream().collect(toImmutableMap(AgentRuleView::id, rule -> rules.record(rule.id())));
+        // The work suggestions started today, the local day the user lives in, for the daily limits.
+        LocalDate today = LocalDate.ofInstant(now, ZoneId.systemDefault());
+        Map<String, Integer> started = new HashMap<>();
+        records.forEach((id, record) -> started.put(id, (int) record.stream()
+                .filter(run -> run.suggestion() && run.skipped().isEmpty() && LocalDate.ofInstant(run.occurredAt(), ZoneId.systemDefault()).equals(today)).count()));
+        for (AgentRuleView rule : saved) {
             // Read for a paused rule too, so what a state was at the last check stays current while the rule waits.
             List<Happened> events = happened.computeIfAbsent(rule.rule().event(), type -> happened(type, candidates, now));
             if (rule.paused()) {
                 continue;
             }
             Duration within = Duration.ofDays(rule.rule().withinDays());
-            List<RuleRun> record = rules.record(rule.id());
+            List<RuleRun> record = records.get(rule.id());
             Set<String> known = record.stream().map(RuleRun::key).collect(toImmutableSet());
+            boolean suggests = rule.mode() == AgentRule.Mode.SUGGEST && rule.rule().suggests();
             for (Happened event : events) {
                 // An event first read after its time passed, as after a week away, would judge the rule by what nobody saw in time.
-                if (!known.contains(event.key()) && !event.at().isBefore(rule.recordSince()) && event.at().isAfter(now.minus(within)) && matches(rule, event)) {
-                    runs.save(new RuleRun(rule.id(), event.key(), event.subject(), event.title(), event.at(), PENDING));
+                if (known.contains(event.key()) || event.at().isBefore(rule.recordSince()) || !event.at().isAfter(now.minus(within)) || !matches(rule, event)) {
+                    continue;
                 }
+                if (!suggests) {
+                    runs.save(RuleRun.observed(rule.id(), event.key(), event.subject(), event.title(), event.at()));
+                    continue;
+                }
+                RuleRun run = RuleRun.suggested(rule.id(), event.key(), event.subject(), event.title(), event.at());
+                Optional<String> cannot = work.cannotStart(rule, run);
+                if (cannot.isPresent() || started.get(rule.id()) >= DAILY_PER_RULE || started.values().stream().mapToInt(Integer::intValue).sum() >= DAILY) {
+                    runs.save(run.skip(cannot.orElse("Daily limit")));
+                    continue;
+                }
+                runs.save(run);
+                started.merge(rule.id(), 1, Integer::sum);
+                work.start(rule, run);
             }
             for (RuleRun run : record) {
-                if (run.verdict() == PENDING && agreed(rule.rule().agreement(), run)) {
-                    runs.save(run.decide(AGREED));
+                if (run.verdict() != PENDING || run.suggestion() && run.skipped().isPresent()) {
+                    continue;
                 }
-                else if (run.verdict() == PENDING && now.isAfter(run.occurredAt().plus(within))) {
+                if (run.starting()) {
+                    if (!work.starting(run)) {
+                        runs.save(run.skip("ByteQuay stopped before the work started"));
+                    }
+                    continue;
+                }
+                RuleRun judged = run.suggestion() ? work.judge(run) : agreed(rule.rule().agreement(), run) ? run.decide(AGREED) : run;
+                if (!judged.equals(run)) {
+                    runs.save(judged);
+                }
+                else if (now.isAfter(run.occurredAt().plus(within))) {
                     runs.save(run.decide(DISAGREED));
                 }
             }

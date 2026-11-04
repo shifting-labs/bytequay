@@ -24,7 +24,9 @@ import org.springframework.stereotype.Service;
 
 import java.time.Clock;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.UnaryOperator;
 
 import static com.google.common.base.Preconditions.checkArgument;
@@ -38,11 +40,15 @@ public class AgentRuleService
     private static final String SETTINGS_KEY = "agent.rules";
     private static final TypeReference<List<AgentRule>> RULE_LIST = new TypeReference<>() {};
     private static final int MAXIMUM_RULES = 50;
+    // A rule may move up from Observe once the user answered this many of its runs and agreed with this share of them.
+    static final int MOVE_UP_RUNS = 10;
+    private static final int MOVE_UP_PERCENT = 80;
 
     private final AppSettingsStore store;
     private final RuleRunStore runs;
     private final ObjectMapper mapper;
     private final Clock clock;
+    private final AtomicLong revision = new AtomicLong();
 
     public AgentRuleService(AppSettingsStore store, RuleRunStore runs, ObjectMapper mapper, Clock clock)
     {
@@ -60,7 +66,46 @@ public class AgentRuleService
     /** The rule's runs since its record began, newest first; runs from before a header change judged a different rule. */
     public synchronized List<RuleRun> record(String id)
     {
-        return record(saved().stream().filter(rule -> rule.id().equals(id)).findFirst().orElseThrow(() -> new IllegalArgumentException("Unknown rule: " + id)));
+        return record(rule(id));
+    }
+
+    /** The rules whose record lets them move up to Suggest now, which the Assistant asks about. */
+    public synchronized List<AgentRuleView> movable()
+    {
+        return saved().stream().filter(this::movable).map(rule -> AgentRuleView.of(rule, record(rule))).collect(toImmutableList());
+    }
+
+    /** Moves a rule up to Suggest, as the Assistant's card offers, when its record allows it. */
+    public synchronized List<AgentRuleView> moveUp(String id)
+    {
+        checkArgument(movable(rule(id)), "That rule's record does not let it move up yet");
+        return replace(id, rule -> new AgentRule(id, rule.text(), AgentRule.Mode.SUGGEST, rule.paused(), rule.recordSince(), rule.keptObserving()));
+    }
+
+    /** Moves a rule back to Observe; it is offered a move up again only once more of its runs are answered. */
+    public synchronized List<AgentRuleView> moveDown(String id)
+    {
+        return replace(id, rule -> new AgentRule(id, rule.text(), AgentRule.Mode.OBSERVE, rule.paused(), rule.recordSince(), Optional.of(clock.instant())));
+    }
+
+    /** Keeps a rule observing for now; the Assistant asks again once more of its runs are answered. */
+    public synchronized List<AgentRuleView> keepObserving(String id)
+    {
+        return replace(id, rule -> new AgentRule(id, rule.text(), rule.mode(), rule.paused(), rule.recordSince(), Optional.of(clock.instant())));
+    }
+
+    /** The user dismissed the work a suggestion did, so its run disagrees. */
+    public synchronized void dismiss(String id, String key)
+    {
+        RuleRun run = record(rule(id)).stream().filter(each -> each.key().equals(key)).findFirst().orElseThrow(() -> new IllegalArgumentException("Unknown run: " + key));
+        checkArgument(run.suggestion() && run.work().isPresent() && run.verdict() == RuleRun.Verdict.PENDING, "Only a suggestion waiting for you can be dismissed");
+        runs.save(run.decide(RuleRun.Verdict.DISAGREED));
+    }
+
+    /** Changes whenever a rule is saved, for caches that writes to the rules' own setting do not invalidate. */
+    public long revision()
+    {
+        return revision.get();
     }
 
     /** What the text says, or why it cannot be a rule, without saving it. */
@@ -77,7 +122,7 @@ public class AgentRuleService
         checkArgument(current.size() < MAXIMUM_RULES, "At most %s rules can be saved", MAXIMUM_RULES);
         return save(ImmutableList.<AgentRule>builder()
                 .addAll(current)
-                .add(new AgentRule(UUID.randomUUID().toString(), text, AgentRule.Mode.OBSERVE, false, clock.instant()))
+                .add(new AgentRule(UUID.randomUUID().toString(), text, AgentRule.Mode.OBSERVE, false, clock.instant(), Optional.empty()))
                 .build());
     }
 
@@ -86,13 +131,13 @@ public class AgentRuleService
     {
         RuleDefinition changed = RuleText.parse(text);
         return replace(id, rule -> RuleText.parse(rule.text()).sameTrigger(changed)
-                ? new AgentRule(id, text, rule.mode(), rule.paused(), rule.recordSince())
-                : new AgentRule(id, text, AgentRule.Mode.OBSERVE, rule.paused(), clock.instant()));
+                ? new AgentRule(id, text, rule.mode(), rule.paused(), rule.recordSince(), rule.keptObserving())
+                : new AgentRule(id, text, AgentRule.Mode.OBSERVE, rule.paused(), clock.instant(), Optional.empty()));
     }
 
     public synchronized List<AgentRuleView> pause(String id, boolean paused)
     {
-        return replace(id, rule -> new AgentRule(id, rule.text(), rule.mode(), paused, rule.recordSince()));
+        return replace(id, rule -> new AgentRule(id, rule.text(), rule.mode(), paused, rule.recordSince(), rule.keptObserving()));
     }
 
     public synchronized List<AgentRuleView> remove(String id)
@@ -107,6 +152,22 @@ public class AgentRuleService
         return save(current.stream().map(rule -> rule.id().equals(id) ? change.apply(rule) : rule).collect(toImmutableList()));
     }
 
+    private AgentRule rule(String id)
+    {
+        return saved().stream().filter(rule -> rule.id().equals(id)).findFirst().orElseThrow(() -> new IllegalArgumentException("Unknown rule: " + id));
+    }
+
+    private boolean movable(AgentRule rule)
+    {
+        List<RuleRun> record = record(rule);
+        AgentRuleView view = AgentRuleView.of(rule, record);
+        long answeredSince = rule.keptObserving()
+                .map(at -> record.stream().filter(run -> run.verdict() != RuleRun.Verdict.PENDING && run.occurredAt().isAfter(at)).count())
+                .orElse((long) view.answered());
+        return rule.mode() == AgentRule.Mode.OBSERVE && !rule.paused() && view.rule().suggests() && answeredSince >= MOVE_UP_RUNS
+                && view.answered() >= MOVE_UP_RUNS && view.agreed() * 100 >= MOVE_UP_PERCENT * view.answered();
+    }
+
     private List<AgentRule> saved()
     {
         return store.get(SETTINGS_KEY).map(this::decode).orElse(ImmutableList.of());
@@ -116,6 +177,7 @@ public class AgentRuleService
     {
         try {
             store.put(SETTINGS_KEY, mapper.writeValueAsString(rules));
+            revision.incrementAndGet();
         }
         catch (JsonProcessingException failure) {
             throw new IllegalStateException("Rules could not be encoded", failure);

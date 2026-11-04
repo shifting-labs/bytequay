@@ -17,6 +17,7 @@ import com.bytequay.app.config.WriteVersion;
 import com.bytequay.app.notices.AppNotice;
 import com.bytequay.app.notices.AppNoticeService;
 import com.bytequay.app.service.epic.EpicNextWork;
+import com.bytequay.app.service.rules.AgentRuleService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.context.request.WebRequest;
@@ -31,19 +32,22 @@ public class AppNoticeController
     private final AppNoticeService notices;
     private final WriteVersion writes;
     private final EpicNextWork next;
+    private final AgentRuleService rules;
 
-    public AppNoticeController(AppNoticeService notices, WriteVersion writes, EpicNextWork next)
+    public AppNoticeController(AppNoticeService notices, WriteVersion writes, EpicNextWork next, AgentRuleService rules)
     {
         this.notices = requireNonNull(notices, "notices is null");
         this.writes = requireNonNull(writes, "writes is null");
         this.next = requireNonNull(next, "next is null");
+        this.rules = requireNonNull(rules, "rules is null");
     }
 
     @GetMapping("/agent/notices")
     public List<AppNotice> current(WebRequest request)
     {
         // Polled every five seconds; a rebuild reads every recent task's turns.
-        if (request.checkNotModified(writes.current() + "-" + next.revision())) {
+        // A rule moving up or down is saved in app settings, which the write version leaves out.
+        if (request.checkNotModified(writes.current() + "-" + next.revision() + "-" + rules.revision())) {
             return null;
         }
         return notices.alerts();

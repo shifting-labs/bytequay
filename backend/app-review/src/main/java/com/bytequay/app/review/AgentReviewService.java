@@ -268,13 +268,13 @@ public class AgentReviewService
                 String head = browse.require(snapshots.sourceCheckout(source), "rev-parse", "--verify", "HEAD^{commit}").strip();
                 OptionalLong pullRequestId = snapshots.sourceDetail(workspace, number).stream().mapToLong(PullRequestDetail::id).findFirst();
                 AgentReviewProjection waiting = createReview(workspace, selection, head, pullRequestId, title, number, Optional.of(sourceTaskId), Optional.empty(), false,
-                        Optional.empty(), ImmutableList.of());
+                        Optional.empty(), ImmutableList.of(), Optional.empty());
                 // The developer may have settled before the watch began, leaving no event to start it.
                 observer.reconcileLater(waiting.review().id());
                 return waiting;
             }
             Snapshot snapshot = localSnapshot(source, workspace, number);
-            return createReview(workspace, selection, snapshot, title, number, Optional.of(sourceTaskId), Optional.empty(), true, ImmutableList.of());
+            return createReview(workspace, selection, snapshot, title, number, Optional.of(sourceTaskId), Optional.empty(), true, ImmutableList.of(), Optional.empty());
         });
     }
 
@@ -302,16 +302,25 @@ public class AgentReviewService
      */
     public AgentReviewProjection start(String workspaceId, String repo, int number, List<String> commits)
     {
-        return prepare(workspaceId, repo, number, true, commits);
+        return prepare(workspaceId, repo, number, true, commits, Optional.empty());
+    }
+
+    /**
+     * Starts a review of the whole pull request whose first request also carries the user's own words on what to look for, as a rule's
+     * suggestion does, or returns the open one.
+     */
+    public AgentReviewProjection start(String workspaceId, String repo, int number, String focus)
+    {
+        return prepare(workspaceId, repo, number, true, ImmutableList.of(), Optional.of(focus));
     }
 
     /** Prepares the PR working copy for exploration without starting an agent review. */
     public AgentReviewProjection prepare(String workspaceId, String repo, int number)
     {
-        return prepare(workspaceId, repo, number, false, ImmutableList.of());
+        return prepare(workspaceId, repo, number, false, ImmutableList.of(), Optional.empty());
     }
 
-    private AgentReviewProjection prepare(String workspaceId, String repo, int number, boolean startReview, List<String> commits)
+    private AgentReviewProjection prepare(String workspaceId, String repo, int number, boolean startReview, List<String> commits, Optional<String> focus)
     {
         String repository = normalize(repo);
         Lock lock = startLocks.get(workspaceId + "/" + repository + "#" + number);
@@ -332,7 +341,7 @@ public class AgentReviewService
             }
             Snapshot snapshot = snapshots.pullRequest(workspace, repository, number);
             return createReview(workspace, selection, snapshot, "Review " + repository + "#" + number, OptionalInt.of(number),
-                    Optional.empty(), Optional.empty(), startReview, selectCommits(snapshot, commits));
+                    Optional.empty(), Optional.empty(), startReview, selectCommits(snapshot, commits), focus);
         });
     }
 
@@ -368,19 +377,21 @@ public class AgentReviewService
         WorkflowAgentTasks.requireReady(drivers, selection.laneId(), AgentPermissionPolicy.AUTO);
         Snapshot snapshot = snapshots.replay(workspace.repository(), start.headSha(), start.baseRef(), start.mergeBaseSha());
         String title = "Replay review #" + replay.number() + (replay.memory() ? " · with memory" : " · without memory");
-        return createReview(workspace, selection, snapshot, title, OptionalInt.empty(), Optional.empty(), Optional.of(replay), true, ImmutableList.of());
+        return createReview(workspace, selection, snapshot, title, OptionalInt.empty(), Optional.empty(), Optional.of(replay), true, ImmutableList.of(), Optional.empty());
     }
 
     private AgentReviewProjection createReview(WorkspaceRepositoryContext workspace, ModelSelection selection, Snapshot snapshot, String title,
-            OptionalInt number, Optional<String> sourceTaskId, Optional<AgentReview.Replay> replay, boolean startReview, List<ReviewCommit> selected)
+            OptionalInt number, Optional<String> sourceTaskId, Optional<AgentReview.Replay> replay, boolean startReview, List<ReviewCommit> selected,
+            Optional<String> focus)
     {
         return createReview(workspace, selection, snapshot.headSha(), snapshot.pullRequestId(), title, number, sourceTaskId, replay, !startReview,
-                startReview ? Optional.of(snapshot) : Optional.empty(), selected);
+                startReview ? Optional.of(snapshot) : Optional.empty(), selected, focus);
     }
 
     /** A paused review only prepares its working copy; an unpaused one without a first run waits for its developer. */
     private AgentReviewProjection createReview(WorkspaceRepositoryContext workspace, ModelSelection selection, String headSha, OptionalLong pullRequestId, String title,
-            OptionalInt number, Optional<String> sourceTaskId, Optional<AgentReview.Replay> replay, boolean paused, Optional<Snapshot> firstRun, List<ReviewCommit> selected)
+            OptionalInt number, Optional<String> sourceTaskId, Optional<AgentReview.Replay> replay, boolean paused, Optional<Snapshot> firstRun, List<ReviewCommit> selected,
+            Optional<String> focus)
     {
         TaskId taskId = TaskId.random();
         String branch = TaskBranches.generate(taskId, hosting.captureRead(workspace.workspaceId()).login(), title);
@@ -395,7 +406,7 @@ public class AgentReviewService
                     pullRequestId, task.id().toString(), sourceTaskId, AgentReview.State.OPEN, paused, Optional.empty(), Optional.of(headSha),
                     Optional.of(headSha), 0, now, now, Optional.empty(), replay));
             observer.watch(review);
-            firstRun.ifPresent(snapshot -> startRun(review, snapshot, workspace, 1, Optional.empty(), ImmutableList.of(), selected));
+            firstRun.ifPresent(snapshot -> startRun(review, snapshot, workspace, 1, Optional.empty(), ImmutableList.of(), selected, focus));
             return projection(review.id());
         });
     }
@@ -1570,7 +1581,7 @@ public class AgentReviewService
             carry(store.findReview(review.id()).orElseThrow(), snapshot, runs.size() + 1, previous.orElseThrow(), carried.orElseThrow());
             return;
         }
-        startRun(store.findReview(review.id()).orElseThrow(), snapshot, workspace, runs.size() + 1, previous, findings, selected);
+        startRun(store.findReview(review.id()).orElseThrow(), snapshot, workspace, runs.size() + 1, previous, findings, selected, Optional.empty());
     }
 
     /**
@@ -1673,7 +1684,7 @@ public class AgentReviewService
 
     /** Starts a commits review when commits are chosen, else a full or incremental one. */
     private void startRun(AgentReview review, Snapshot snapshot, WorkspaceRepositoryContext workspace, int ordinal, Optional<ReviewRun> previous, List<ReviewFinding> findings,
-            List<ReviewCommit> selected)
+            List<ReviewCommit> selected, Optional<String> focus)
     {
         Instant now = Instant.now(clock);
         boolean incremental = selected.isEmpty() && review.sourceTaskId().isEmpty() && previous.isPresent()
@@ -1694,7 +1705,7 @@ public class AgentReviewService
             }
             turn = startAssignment(run, new StartAgentTurnCommand(
                     TaskId.valueOf(review.taskId()),
-                    ReviewPrompts.reviewRequest(review, run),
+                    ReviewPrompts.reviewRequest(review, run, focus),
                     ImmutableList.of(),
                     run.currentStep().orElseThrow().key(run.id())));
         }

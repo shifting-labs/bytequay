@@ -40,6 +40,10 @@ export type NoticeBridge = {
 export const APPROVAL_NOTICE = 'approval:';
 /** An Artifacts question that timed out; its `taskId` is the conversation's id, and opening it shows the conversation. */
 export const ARTIFACT_NOTICE = 'artifact:';
+/** A rule whose record lets it move up to Suggest; it belongs to no task, so its alert's Answer opens the panel at its card. */
+export const RULE_NOTICE = 'rule:';
+/** A rule's finished work, asked about in place of its task's own result; its id goes on with the rule's id and the run's key. */
+export const RULE_RESULT_NOTICE = 'rule-result:';
 export const needsAction = (notice: AppNotice): boolean => notice.kind !== 'TURN_FINISHED' && notice.kind !== 'NEXT_WORK';
 /**
  * The one rule for what waits on the user's decision, which the Decision pill, the Dock badge and My work's marks all count. A failed
@@ -57,8 +61,13 @@ export const NOTICE_ACTIONS: Record<NoticeKind, string> = {
   TURN_FINISHED: 'View response', QUESTION: 'Reply', APPROVAL: 'Review request', FAILURE: 'View log', RECOVERY: 'Inspect task', STUCK: 'View task',
   QUEUE_PAUSED: 'View queue', CI_ATTENTION: 'View task', NEXT_WORK: 'Open work',
 };
-export const noticeLabel = (notice: AppNotice): string => notice.reviewId === null ? NOTICE_LABELS[notice.kind]
-  : notice.kind === 'TURN_FINISHED' ? 'Review finished' : notice.kind === 'FAILURE' ? 'Review failed' : NOTICE_LABELS[notice.kind];
+export const noticeLabel = (notice: AppNotice): string => notice.id.startsWith(RULE_NOTICE) ? 'Move up?'
+  : notice.id.startsWith(RULE_RESULT_NOTICE) ? 'Check suggestion'
+    : notice.reviewId === null ? NOTICE_LABELS[notice.kind]
+      : notice.kind === 'TURN_FINISHED' ? 'Review finished' : notice.kind === 'FAILURE' ? 'Review failed' : NOTICE_LABELS[notice.kind];
+/** What an alert's button says: a card answered in the panel says Answer; a rule's finished work opens. */
+export const noticeAction = (notice: AppNotice): string => notice.id.startsWith(APPROVAL_NOTICE) || notice.id.startsWith(RULE_NOTICE) ? 'Answer'
+  : notice.id.startsWith(RULE_RESULT_NOTICE) ? 'Open' : NOTICE_ACTIONS[notice.kind];
 /** An unanswered approval's alert comes back once, this long before the agent stops waiting. */
 export const APPROVAL_NUDGE_MS = 60_000;
 /** An approval's time left as its card, the Decision pill and its alert say it; null once it has expired. */

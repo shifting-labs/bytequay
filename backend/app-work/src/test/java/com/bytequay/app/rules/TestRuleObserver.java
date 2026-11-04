@@ -55,13 +55,16 @@ import java.util.Optional;
 
 import static com.bytequay.core.domain.RuleRun.Verdict.AGREED;
 import static com.bytequay.core.domain.RuleRun.Verdict.DISAGREED;
+import static com.bytequay.core.domain.RuleRun.Verdict.EDITED;
 import static com.bytequay.core.domain.RuleRun.Verdict.PENDING;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -81,7 +84,8 @@ class TestRuleObserver
     private final IssueDevelopmentStore issueTasks = mock(IssueDevelopmentStore.class);
     private final JiraService jira = mock(JiraService.class);
     private final CredentialService credentials = mock(CredentialService.class);
-    private final RuleObserver observer = new RuleObserver(rules, runs, pullRequests, diffs, workspaces, issues, issueTasks, jira, mock(JiraIssueTaskStore.class),
+    private final RuleWork work = mock(RuleWork.class);
+    private final RuleObserver observer = new RuleObserver(rules, runs, work, pullRequests, diffs, workspaces, issues, issueTasks, jira, mock(JiraIssueTaskStore.class),
             mock(BackportChainStore.class), credentials, clock);
 
     @BeforeEach
@@ -108,7 +112,7 @@ class TestRuleObserver
         when(pullRequests.findById(7)).thenReturn(Optional.of(asked));
 
         tick(Duration.ofMinutes(2));
-        assertThat(rules.record(id)).containsExactly(new RuleRun(id, "pr:7:requested:0", "acme/warehouse#7", "Change 7", SAVED.plusSeconds(60), PENDING));
+        assertThat(rules.record(id)).containsExactly(RuleRun.observed(id, "pr:7:requested:0", "acme/warehouse#7", "Change 7", SAVED.plusSeconds(60)));
 
         // A later sync that finds the same request stamps it again.
         candidates(pullRequest(7, "octocat", SAVED.plusSeconds(300), null, null, "clean"));
@@ -213,6 +217,70 @@ class TestRuleObserver
         when(pullRequests.findById(11)).thenReturn(Optional.of(pullRequest(11, "viewer", null, null, clock.instant().plusSeconds(60), "clean")));
         tick(Duration.ofMinutes(2));
         assertThat(rules.record(id)).singleElement().extracting(RuleRun::verdict).isEqualTo(AGREED);
+    }
+
+    @Test
+    void aRuleInSuggestStartsItsWorkUpToItsDailyLimit()
+    {
+        String id = suggesting("""
+                when: review-requested
+                does: review
+                agrees-when: reviewed
+                """);
+        when(work.starting(any(RuleRun.class))).thenReturn(true);
+        // A pull request outside the watched repositories cannot be reviewed, and so must not take one of the day's suggestions.
+        when(work.cannotStart(any(), any())).thenAnswer(call -> call.<RuleRun>getArgument(1).key().startsWith("pr:20:")
+                ? Optional.of("Not in a watched repository") : Optional.empty());
+        candidates(pullRequest(20, "octocat", SAVED.plusSeconds(59), null, null, "clean"), pullRequest(21, "octocat", SAVED.plusSeconds(60), null, null, "clean"),
+                pullRequest(22, "octocat", SAVED.plusSeconds(61), null, null, "clean"), pullRequest(23, "octocat", SAVED.plusSeconds(62), null, null, "clean"),
+                pullRequest(24, "octocat", SAVED.plusSeconds(63), null, null, "clean"));
+
+        tick(Duration.ofMinutes(2));
+        List<RuleRun> suggestions = rules.record(id).stream().filter(RuleRun::suggestion).toList();
+        assertThat(suggestions).hasSize(5);
+        assertThat(suggestions).filteredOn(run -> run.skipped().isPresent()).extracting(run -> run.subject() + " " + run.skipped().orElseThrow())
+                .containsExactlyInAnyOrder("acme/warehouse#20 Not in a watched repository", "acme/warehouse#24 Daily limit");
+        verify(work, times(3)).start(any(), any());
+        tick(Duration.ofMinutes(1));
+        verify(work, times(3)).start(any(), any());
+    }
+
+    @Test
+    void aSuggestionStillStartingWhenByteQuayStoppedIsSetAsideAndOthersTakeTheirWorksVerdict()
+    {
+        String id = suggesting("""
+                when: review-requested
+                does: review
+                agrees-when: reviewed
+                """);
+        RuleRun stranded = RuleRun.suggested(id, "pr:31:requested:0", "acme/warehouse#31", "Change 31", SAVED.plusSeconds(60));
+        RuleRun edited = RuleRun.suggested(id, "pr:32:requested:0", "acme/warehouse#32", "Change 32", SAVED.plusSeconds(60)).started("review:review-32");
+        RuleRun ignored = RuleRun.suggested(id, "pr:33:requested:0", "acme/warehouse#33", "Change 33", SAVED.plusSeconds(60)).started("review:review-33");
+        runs.save(stranded);
+        runs.save(edited);
+        runs.save(ignored);
+        when(work.judge(any(RuleRun.class))).thenAnswer(call -> call.getArgument(0));
+        when(work.judge(edited)).thenReturn(edited.decide(EDITED));
+        candidates();
+
+        tick(Duration.ofMinutes(2));
+        assertThat(rules.record(id)).filteredOn(RuleRun::suggestion).extracting(RuleRun::key, RuleRun::verdict, run -> run.skipped().orElse(""))
+                .containsExactlyInAnyOrder(tuple("pr:31:requested:0", PENDING, "ByteQuay stopped before the work started"), tuple("pr:32:requested:0", EDITED, ""),
+                        tuple("pr:33:requested:0", PENDING, ""));
+        tick(Duration.ofDays(3));
+        assertThat(rules.record(id)).filteredOn(run -> run.key().equals("pr:33:requested:0")).singleElement().extracting(RuleRun::verdict).isEqualTo(DISAGREED);
+        verify(work, never()).start(any(), any());
+    }
+
+    /** A rule moved up to Suggest the way the user does it: ten agreeing runs, then Move to Suggest. */
+    private String suggesting(String header)
+    {
+        String id = rule(header);
+        for (int i = 1; i <= 10; i++) {
+            runs.save(RuleRun.observed(id, "pr:" + (900 + i) + ":requested:0", "acme/warehouse#" + (900 + i), "Change", SAVED.plusSeconds(i)).decide(AGREED));
+        }
+        rules.moveUp(id);
+        return id;
     }
 
     private String rule(String header)

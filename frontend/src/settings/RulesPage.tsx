@@ -12,7 +12,7 @@
  * limitations under the License.
  */
 import { useRef, useState } from 'react';
-import { Check, Clock, Minus, Pencil } from 'lucide-react';
+import { Check, CircleSlash, Clock, Minus, Pencil, PencilLine } from 'lucide-react';
 import { plural, shortDate } from '@bytequay/ui/displayText';
 import { errorMessage } from '../errorMessage';
 import { useAsyncAction } from '../useAsyncAction';
@@ -48,9 +48,16 @@ const MODES: Record<AgentRuleMode, string> = { OBSERVE: 'Observe', SUGGEST: 'Sug
 
 const VERDICTS: Record<AgentRuleVerdict, { label: string; icon: typeof Check }> = {
   AGREED: { label: 'You agreed', icon: Check },
+  EDITED: { label: 'You changed it first', icon: PencilLine },
   DISAGREED: { label: 'You did not, in time', icon: Minus },
   PENDING: { label: 'Waiting for you', icon: Clock },
 };
+
+/** How a run shows in the record: what the user did, or why a suggestion had nothing to judge. */
+const shown = (run: AgentRuleRunDto): { label: string; icon: typeof Check; tone: string } => run.skipped !== null
+  ? { label: run.skipped, icon: CircleSlash, tone: 'skipped' }
+  // A suggestion is turned down by Dismiss or by leaving it, not only by its time passing.
+  : { ...VERDICTS[run.verdict], ...(run.suggestion && run.verdict === 'DISAGREED' ? { label: 'You did not take it' } : {}), tone: run.verdict.toLowerCase() };
 
 const EXAMPLE = `---
 name: Review PRs that need me
@@ -73,11 +80,11 @@ function filters(rule: AgentRuleDefinitionDto): string {
 /** "12 runs · 83% agree", out of the runs you answered; nothing before the first run. */
 function record(rule: AgentRuleDto): string {
   if (rule.runs === 0) return '';
-  const answered = rule.agreed + rule.disagreed;
+  const answered = rule.agreed + rule.edited + rule.disagreed;
   return answered === 0 ? plural(rule.runs, 'run') : `${plural(rule.runs, 'run')} · ${Math.round(rule.agreed * 100 / answered)}% agree`;
 }
 
-export default function RulesPage({ rules, busy, error, onCheck, onRecord, onSave, onPause, onRemove }: {
+export default function RulesPage({ rules, busy, error, onCheck, onRecord, onSave, onPause, onMoveDown, onRemove }: {
   rules: AgentRuleDto[];
   busy: boolean;
   error: string | null;
@@ -86,6 +93,8 @@ export default function RulesPage({ rules, busy, error, onCheck, onRecord, onSav
   onRecord: (id: string) => Promise<AgentRuleRunDto[]>;
   onSave: (text: string, id: string | null) => Promise<void>;
   onPause: (rule: AgentRuleDto) => void;
+  /** Back from Suggest to Observe, which is always the user's to do. */
+  onMoveDown: (rule: AgentRuleDto) => void;
   onRemove: (rule: AgentRuleDto) => void;
 }) {
   const [editing, setEditing] = useState<AgentRuleDto | 'new' | null>(null);
@@ -143,6 +152,7 @@ export default function RulesPage({ rules, busy, error, onCheck, onRecord, onSav
           onCheck={onCheck}
           onCancel={close}
           onSave={async text => { await onSave(text, editing === 'new' ? null : editing.id); close(); }}
+          onMoveDown={editing === 'new' || editing.mode === 'OBSERVE' ? undefined : () => { close(); onMoveDown(editing); }}
           onRemove={editing === 'new' ? undefined : () => { close(); onRemove(editing); }}
         />
       )}
@@ -150,12 +160,13 @@ export default function RulesPage({ rules, busy, error, onCheck, onRecord, onSav
   );
 }
 
-function RuleDialog({ rule, runs, onCheck, onSave, onCancel, onRemove }: {
+function RuleDialog({ rule, runs, onCheck, onSave, onCancel, onMoveDown, onRemove }: {
   rule: AgentRuleDto | null;
   runs: AgentRuleRunDto[];
   onCheck: (text: string) => Promise<AgentRuleDefinitionDto>;
   onSave: (text: string) => Promise<void>;
   onCancel: () => void;
+  onMoveDown?: () => void;
   onRemove?: () => void;
 }) {
   const [text, setText] = useState(rule?.text ?? '');
@@ -198,6 +209,7 @@ function RuleDialog({ rule, runs, onCheck, onSave, onCancel, onRemove }: {
       />
       <div className="setw-rule-actions">
         <button type="button" className="setw-btn" disabled={!ready} onClick={check}>Check rule</button>
+        {onMoveDown !== undefined && <button type="button" className="setw-btn" disabled={busy} onClick={onMoveDown}>Move down to Observe</button>}
       </div>
       {problem !== null && <div className="setw-error" role="alert">{problem}</div>}
       {checked !== null && (
@@ -212,10 +224,10 @@ function RuleDialog({ rule, runs, onCheck, onSave, onCancel, onRemove }: {
         <div className="setw-rule-record" aria-label="Record">
           <div className="setw-rule-record-title">Record since {shortDate(rule.recordSince)}</div>
           {runs.map(run => {
-            const verdict = VERDICTS[run.verdict];
+            const verdict = shown(run);
             return (
               <div key={`${run.subject} ${run.occurredAt}`} className="setw-rule-run">
-                <span className={`setw-rule-run-verdict is-${run.verdict.toLowerCase()}`} role="img" aria-label={verdict.label} title={verdict.label}>
+                <span className={`setw-rule-run-verdict is-${verdict.tone}`} role="img" aria-label={verdict.label} title={verdict.label}>
                   <verdict.icon size={12} strokeWidth={2} />
                 </span>
                 <span className="setw-rule-run-subject">{run.subject}</span>
