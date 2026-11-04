@@ -129,7 +129,8 @@ public class WorkflowMonitorJob
         }
     }
 
-    @Scheduled(initialDelayString = "PT10S", fixedDelayString = "PT5S", scheduler = "workflowScheduler")
+    // A chain mostly waits on merges and its children, which keep their own loops; a step up to 30 seconds late adds minutes at most.
+    @Scheduled(initialDelayString = "PT10S", fixedDelayString = "PT30S", scheduler = "workflowScheduler")
     public void monitorBackports()
     {
         if (servingGate.isReady()) {
