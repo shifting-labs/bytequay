@@ -498,6 +498,7 @@ const bridge: Bridge = {
   onDictationEvent: listener => subscribe('dictation:event', listener),
   openCodeTerminal: invoke('terminal:open'),
   openProviderSignIn: invoke('provider:signin:open'),
+  cancelProviderSignIn: invoke('provider:signin:cancel'),
   writeReviewTerminal: (terminalId, data) => ipcRenderer.send('terminal:write', terminalId, data),
   resizeReviewTerminal: (terminalId, cols, rows) => ipcRenderer.send('terminal:resize', terminalId, cols, rows),
   onReviewTerminalEvent: listener => {

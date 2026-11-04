@@ -607,9 +607,9 @@ const reviewSubscriptions = new AgentSubscriptions(
 
 // An interactive login shell rebuilds the user's own PATH, which a Finder-launched app does not inherit.
 // `-lc` keeps that PATH for a one-shot command, and the shell exits when the command does.
-const codeTerminals = new CodeTerminals((launch, cols, rows, command) => spawnPty(
+const codeTerminals = new CodeTerminals((launch, cols, rows) => spawnPty(
   os.userInfo().shell ?? '/bin/zsh',
-  command === undefined ? ['-l'] : ['-lc', command],
+  launch.command === undefined ? ['-l'] : ['-lc', launch.command],
   { name: 'xterm-256color', cwd: launch.workingDirectory, cols, rows, env: terminalEnvironment(process.env, launch.claudeConfigDirectory) },
 ));
 
@@ -1134,11 +1134,16 @@ function registerIpc(): void {
   // and it carries the provider-home variable that keeps the sign-in out of the user's own home.
   ipcMain.handle('provider:signin:open', async (event, laneId: unknown, cols: number, rows: number) => {
     if (typeof laneId !== 'string' || laneId === '') throw new Error('Malformed provider lane');
-    const statuses = await backendJson(`${backendBase()}/agent/providers/status`, {
-          }).then(parseAgentProviderStatuses);
-    const command = statuses.find(status => status.laneId === laneId)?.signInCommand;
-    if (typeof command !== 'string' || command.trim() === '') throw new Error(`${laneId} reports no sign-in command`);
-    return codeTerminals.open(event.sender, `provider:${laneId}`, cols, rows, async () => ({ workingDirectory: os.homedir(), claudeConfigDirectory: null }), command);
+    return codeTerminals.open(event.sender, `provider:${laneId}`, cols, rows, async () => {
+      const statuses = await backendJson(`${backendBase()}/agent/providers/status`).then(parseAgentProviderStatuses);
+      const command = statuses.find(status => status.laneId === laneId)?.signInCommand;
+      if (typeof command !== 'string' || command.trim() === '') throw new Error(`${laneId} reports no sign-in command`);
+      return { workingDirectory: os.homedir(), claudeConfigDirectory: null, command };
+    });
+  });
+  ipcMain.handle('provider:signin:cancel', (event, laneId: unknown) => {
+    if (typeof laneId !== 'string' || laneId === '') throw new Error('Malformed provider lane');
+    codeTerminals.close(`provider:${laneId}`, event.sender);
   });
   ipcMain.handle('voice:get', () => dictation.settings());
   ipcMain.handle('voice:check', () => dictation.check());

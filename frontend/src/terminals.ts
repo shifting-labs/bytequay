@@ -18,6 +18,7 @@ import { isAbsolute } from 'node:path';
 export interface TerminalLaunch {
   workingDirectory: string;
   claudeConfigDirectory: string | null;
+  command?: string;
 }
 
 export function parseTerminalLaunch(value: unknown): TerminalLaunch {
@@ -82,7 +83,7 @@ export class CodeTerminals {
   private readonly opening = new Map<string, { sender: TerminalSender; hostKey: string; promise: Promise<Terminal> }>();
   private readonly watched = new WeakSet<TerminalSender>();
 
-  constructor(private readonly spawn: (launch: TerminalLaunch, cols: number, rows: number, command?: string) => TerminalProcess) {}
+  constructor(private readonly spawn: (launch: TerminalLaunch, cols: number, rows: number) => TerminalProcess) {}
 
   /**
    * Attaches to this host's shell, starting one if it has none.
@@ -90,7 +91,7 @@ export class CodeTerminals {
    * A `command` makes that shell one-shot: it runs the command and exits, so its exit is the
    * command's own result. Without one the shell is interactive and outlives any single command.
    */
-  async open(sender: TerminalSender, hostKey: string, cols: number, rows: number, launch: () => Promise<TerminalLaunch>, command?: string) {
+  async open(sender: TerminalSender, hostKey: string, cols: number, rows: number, launch: () => Promise<TerminalLaunch>) {
     this.watch(sender);
     const key = `${sender.id}:${hostKey}`;
     let terminal = this.terminals.get(key);
@@ -100,7 +101,7 @@ export class CodeTerminals {
       if (pending === undefined) {
         const promise = Promise.resolve().then(launch).then(value => {
           if (this.opening.get(key)?.promise !== promise) throw new Error('The terminal was closed before it opened');
-          return this.start(key, sender, hostKey, value, cols, rows, command);
+          return this.start(key, sender, hostKey, value, cols, rows);
         });
         pending = { sender, hostKey, promise };
         this.opening.set(key, pending);
@@ -123,13 +124,13 @@ export class CodeTerminals {
     if (cols > 0 && rows > 0) this.owned(sender, terminalId)?.process.resize(cols, rows);
   }
 
-  /** Before End review, or a task's delete or cleanup, which removes every shell's working directory. */
-  close(hostKey: string): void {
+  /** Worktree removal closes every window's shell; a canceled sign-in closes only its owner's shell. */
+  close(hostKey: string, sender?: TerminalSender): void {
     for (const [key, pending] of this.opening) {
-      if (pending.hostKey === hostKey) this.opening.delete(key);
+      if (pending.hostKey === hostKey && (sender === undefined || pending.sender === sender)) this.opening.delete(key);
     }
     for (const terminal of [...this.terminals.values()]) {
-      if (terminal.hostKey === hostKey) this.kill(terminal);
+      if (terminal.hostKey === hostKey && (sender === undefined || terminal.sender === sender)) this.kill(terminal);
     }
   }
 
@@ -143,9 +144,9 @@ export class CodeTerminals {
     for (const terminal of [...this.terminals.values()]) this.kill(terminal);
   }
 
-  private start(key: string, sender: TerminalSender, hostKey: string, launch: TerminalLaunch, cols: number, rows: number, command?: string): Terminal {
+  private start(key: string, sender: TerminalSender, hostKey: string, launch: TerminalLaunch, cols: number, rows: number): Terminal {
     if (sender.isDestroyed()) throw new Error('The window closed before the terminal opened');
-    const terminal: Terminal = { id: randomUUID(), key, hostKey, sender, process: this.spawn(launch, cols, rows, command), scrollback: '' };
+    const terminal: Terminal = { id: randomUUID(), key, hostKey, sender, process: this.spawn(launch, cols, rows), scrollback: '' };
     this.terminals.set(key, terminal);
     terminal.process.onData(data => {
       const scrollback = terminal.scrollback + data;

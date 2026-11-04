@@ -175,6 +175,7 @@ export function createPreviewBridge(
       record('openProviderSignIn', laneId);
       throw new Error('Sign-in is unavailable in this preview');
     },
+    cancelProviderSignIn: async laneId => { record('cancelProviderSignIn', laneId); },
     writeReviewTerminal: () => {},
     resizeReviewTerminal: () => {},
     onReviewTerminalEvent: () => () => {},

@@ -17,7 +17,7 @@ import { useModalDialog } from '../useModalDialog';
 import type { Bridge } from '../types';
 import './css/provider-signin.css';
 
-export type SignInBridge = Pick<Bridge, 'openProviderSignIn' | 'writeReviewTerminal' | 'resizeReviewTerminal' | 'onReviewTerminalEvent'>;
+export type SignInBridge = Pick<Bridge, 'openProviderSignIn' | 'cancelProviderSignIn' | 'writeReviewTerminal' | 'resizeReviewTerminal' | 'onReviewTerminalEvent'>;
 
 /**
  * Runs a provider's own sign-in command in a terminal, so the lane signs into ByteQuay's provider
@@ -43,9 +43,13 @@ export default function ProviderSignInDialog({ laneId, providerName, bridge, onC
   useEffect(() => {
     const element = screen.current;
     if (element === null) return;
-    return attachTerminal(element, bridge, (cols, rows) => bridge.openProviderSignIn(laneId, cols, rows), {
+    const detach = attachTerminal(element, bridge, (cols, rows) => bridge.openProviderSignIn(laneId, cols, rows), {
       scrollback: 2000, onStatus: setStatus,
     });
+    return () => {
+      detach();
+      void bridge.cancelProviderSignIn(laneId).catch(error => console.warn('Unable to stop provider sign-in', error));
+    };
   }, [bridge, laneId]);
 
   return (

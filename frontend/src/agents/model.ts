@@ -99,6 +99,7 @@ export type AgentBridgePort = Pick<Bridge,
   | 'getEffectiveTurnSettings'
   | 'refreshAgentProviderReadiness'
   | 'openProviderSignIn'
+  | 'cancelProviderSignIn'
   | 'writeReviewTerminal'
   | 'resizeReviewTerminal'
   | 'onReviewTerminalEvent'> & Partial<Pick<Bridge, 'getDevelopmentLearning' | 'createDevelopmentLearningComment'

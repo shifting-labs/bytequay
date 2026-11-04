@@ -12,8 +12,9 @@
  * limitations under the License.
  */
 import { createFixtureRoot } from '../../fixtures/reactFixture';
+import { useState } from 'react';
 import { flushSync } from 'react-dom';
-import { assert, runScenarios, settle } from '../../fixtures/harness';
+import { assert, button, element, runScenarios, settle } from '../../fixtures/harness';
 import type { Bridge, ModelSettingsDto } from '../../types';
 import { PullRequestWorkspaceProvider } from '../../pulls/PullRequestWorkspace';
 import { settingsRoute } from '../../settings/routes';
@@ -21,6 +22,7 @@ import { AgentHomeView } from '../AgentHome';
 import { AgentTaskList, type TaskComposerProps } from '../AgentTasksView';
 import { NO_AGENT_CAPABILITIES } from '../capabilities';
 import { AgentAvailabilityProvider, useAgentAvailability } from '../availability';
+import ProviderSignInDialog, { type SignInBridge } from '../ProviderSignInDialog';
 
 async function readinessAndScope() {
   const { host, root, dispose } = createFixtureRoot();
@@ -104,9 +106,46 @@ async function workspaceComposers() {
   finally { dispose(); }
 }
 
+async function cancelSignIn() {
+  for (const opening of [true, false]) {
+    const view = createFixtureRoot();
+    const ready = Promise.withResolvers<{ terminalId: string; scrollback: string }>();
+    const canceled: string[] = [];
+    let detached = false;
+    const bridge: SignInBridge = {
+      openProviderSignIn: () => ready.promise,
+      cancelProviderSignIn: async laneId => { canceled.push(laneId); },
+      writeReviewTerminal: () => {}, resizeReviewTerminal: () => {},
+      onReviewTerminalEvent: () => () => { detached = true; },
+    };
+    const SignIn = () => {
+      const [open, setOpen] = useState(true);
+      return open ? <ProviderSignInDialog laneId="claude" providerName="Claude" bridge={bridge} onClose={() => setOpen(false)} /> : null;
+    };
+    try {
+      flushSync(() => view.root.render(<SignIn />));
+      await settle();
+      if (!opening) {
+        ready.resolve({ terminalId: 'login', scrollback: '' });
+        await settle();
+        element<HTMLDialogElement>('dialog', view.host).dispatchEvent(new Event('cancel', { cancelable: true }));
+      }
+      else button('Cancel', view.host).click();
+      await settle();
+      assert(canceled.join() === 'claude' && detached && view.host.querySelector('dialog') === null,
+        'Cancel and Escape stop the lane sign-in and detach the terminal, even while it is opening');
+      ready.resolve({ terminalId: 'login', scrollback: '' });
+      await settle();
+      assert(view.host.querySelector('dialog') === null && canceled.length === 1, 'A late launch must not reopen the canceled dialog');
+    }
+    finally { view.dispose(); }
+  }
+}
+
 export async function run() {
   return runScenarios([
     ['Readiness changes and scope preserve history and gate new work', readinessAndScope],
     ['GitLab workspace Home and Tasks explain unavailable composers', workspaceComposers],
+    ['Cancel and Escape stop pending and active provider sign-ins', cancelSignIn],
   ]);
 }

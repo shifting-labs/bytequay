@@ -17,6 +17,7 @@ import ProviderSignInDialog, { type SignInBridge } from './ProviderSignInDialog'
 
 const bridge: SignInBridge = {
   openProviderSignIn: vi.fn(),
+  cancelProviderSignIn: vi.fn(),
   writeReviewTerminal: vi.fn(),
   resizeReviewTerminal: vi.fn(),
   onReviewTerminalEvent: vi.fn(() => () => {}),

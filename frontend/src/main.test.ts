@@ -15,6 +15,7 @@
 import { nativeTheme } from 'electron';
 import { afterEach, expect, it, vi } from 'vitest';
 import { MAX_ATTACHMENT_BYTES } from './agents/clipboardImage';
+import { NO_AGENT_CAPABILITIES } from './agents/capabilities';
 import type { TaskDiscussionDto } from './agents/discussions/contracts';
 import { CI_RUN } from './agents/fixtures/ciAutofix';
 import type { JiraIssuePage } from './jira/contracts';
@@ -157,6 +158,37 @@ it.each([
     cwd: '/managed/downstream', cols: 100, rows: 30, env: expect.objectContaining({ CLAUDE_CONFIG_DIR: '/profiles/work' }),
   }));
   expect(result).toEqual({ terminalId: expect.any(String), scrollback: '' });
+});
+
+it('cancels provider sign-in during readiness and stops an active shell before retrying', async () => {
+  await startMain();
+  const sender = { id: 501, isDestroyed: () => false, on: vi.fn(), once: vi.fn(), send: vi.fn() };
+  const pending = Promise.withResolvers<Response>();
+  const command = 'claude auth login';
+  const status = [{ laneId: 'claude', readiness: 'AUTHENTICATION_REQUIRED', version: null, diagnostic: '',
+    capabilities: NO_AGENT_CAPABILITIES, signInCommand: command }];
+  vi.stubGlobal('fetch', vi.fn().mockReturnValueOnce(pending.promise).mockImplementation(async () => new Response(JSON.stringify(status))));
+  const shell = { onData: vi.fn(), onExit: vi.fn(), kill: vi.fn(), resize: vi.fn(), write: vi.fn() };
+  desktop.spawnPty.mockReturnValue(shell);
+  const open = desktop.handlers.get('provider:signin:open');
+  const cancel = desktop.handlers.get('provider:signin:cancel');
+  if (!open || !cancel) throw new Error('Sign-in handlers were not registered');
+  const opening = open({ sender }, 'claude', 80, 24);
+  const rejected = expect(opening).rejects.toThrow('The terminal was closed before it opened');
+  await cancel({ sender }, 'claude');
+  pending.resolve(new Response(JSON.stringify(status)));
+  await rejected;
+  expect(desktop.spawnPty).not.toHaveBeenCalled();
+
+  const first = await open({ sender }, 'claude', 80, 24);
+  expect(desktop.spawnPty).toHaveBeenCalledWith(expect.any(String), ['-lc', command], expect.anything());
+  await cancel({ sender: { ...sender, id: 502 } }, 'claude');
+  expect(shell.kill).not.toHaveBeenCalled();
+  await cancel({ sender }, 'claude');
+  expect(shell.kill).toHaveBeenCalledOnce();
+  expect(await open({ sender }, 'claude', 80, 24)).not.toEqual(first);
+  expect(desktop.spawnPty).toHaveBeenCalledTimes(2);
+  await cancel({ sender }, 'claude');
 });
 
 it.each(['confirm-not-posted', 'confirm-posted'])('settles an unconfirmed comment through the versioned local %s endpoint', async outcome => {

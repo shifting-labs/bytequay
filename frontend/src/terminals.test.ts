@@ -43,10 +43,10 @@ function setup() {
   const processes: FakeProcess[] = [];
   const commands: Array<string | undefined> = [];
   const launches: TerminalLaunch[] = [];
-  const terminals = new CodeTerminals((launch, _cols, _rows, command) => {
+  const terminals = new CodeTerminals(launch => {
     const process = new FakeProcess();
     processes.push(process);
-    commands.push(command);
+    commands.push(launch.command);
     launches.push(launch);
     return process;
   });
@@ -154,7 +154,8 @@ describe('code terminals', () => {
     const sender = new FakeSender();
     const command = 'CLAUDE_CONFIG_DIR="/homes/ByteQuay/claude-home" claude auth login';
 
-    const { terminalId } = await terminals.open(sender, 'provider:claude', 80, 24, cwd, command);
+    const launch = async () => ({ ...await cwd(), command });
+    const { terminalId } = await terminals.open(sender, 'provider:claude', 80, 24, launch);
 
     // The command carries the provider home, so the shell's own environment cannot redirect it.
     expect(commands).toEqual([command]);
@@ -165,7 +166,7 @@ describe('code terminals', () => {
     // The shell exits when the sign-in ends, and the next attempt starts a new one.
     processes[0].exit({ exitCode: 0 });
     expect(sender.sent.at(-1)).toEqual(['terminal:exit', { terminalId, exitCode: 0 }]);
-    expect((await terminals.open(sender, 'provider:claude', 80, 24, cwd, command)).terminalId).not.toBe(terminalId);
+    expect((await terminals.open(sender, 'provider:claude', 80, 24, launch)).terminalId).not.toBe(terminalId);
   });
 
   it('keeps a review and a task with the same id in separate shells', async () => {
@@ -183,14 +184,34 @@ describe('code terminals', () => {
     const sender = new FakeSender();
     const workCommand = "CLAUDE_CONFIG_DIR='/profiles/work' claude auth login";
     const personalCommand = "CLAUDE_CONFIG_DIR='/profiles/personal' claude auth login";
-    const work = await terminals.open(sender, 'provider:claude-account-work', 80, 24, cwd, workCommand);
-    const personal = await terminals.open(sender, 'provider:claude-account-personal', 80, 24, cwd, personalCommand);
+    const work = await terminals.open(sender, 'provider:claude-account-work', 80, 24, async () => ({ ...await cwd(), command: workCommand }));
+    const personalLaunch = async () => ({ ...await cwd(), command: personalCommand });
+    const personal = await terminals.open(sender, 'provider:claude-account-personal', 80, 24, personalLaunch);
     expect(work.terminalId).not.toBe(personal.terminalId);
     expect(commands).toEqual([workCommand, personalCommand]);
     terminals.write(sender, work.terminalId, 'work login input');
     expect(processes.map(process => process.written)).toEqual(['work login input', '']);
     processes[0].exit({ exitCode: 0 });
-    expect((await terminals.open(sender, 'provider:claude-account-personal', 80, 24, cwd, personalCommand)).terminalId).toBe(personal.terminalId);
+    expect((await terminals.open(sender, 'provider:claude-account-personal', 80, 24, personalLaunch)).terminalId).toBe(personal.terminalId);
+  });
+
+  it('cancels only the requesting window\'s pending or active sign-in', async () => {
+    const { terminals, processes, cwd } = setup();
+    const sender = new FakeSender();
+    const other = new FakeSender();
+    const ready = Promise.withResolvers<TerminalLaunch>();
+    const pending = terminals.open(sender, 'provider:claude', 80, 24, () => ready.promise);
+    const otherTerminal = await terminals.open(other, 'provider:claude', 80, 24, cwd);
+    terminals.close('provider:claude', sender);
+    ready.resolve(await cwd());
+    await expect(pending).rejects.toThrow('The terminal was closed before it opened');
+    expect(processes).toHaveLength(1);
+    expect(processes[0].killed).toBe(false);
+
+    await terminals.open(sender, 'provider:claude', 80, 24, cwd);
+    terminals.close('provider:claude', sender);
+    expect(processes.map(process => process.killed)).toEqual([false, true]);
+    expect(await terminals.open(other, 'provider:claude', 80, 24, cwd)).toEqual(otherTerminal);
   });
 
   it('drops the app variables and defaults the locale', () => {

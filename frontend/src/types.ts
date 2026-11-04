@@ -2335,6 +2335,7 @@ export type Bridge = LabBridge & WorkItemBridge & JiraBridge & GoogleBridge & Ar
   openCodeTerminal: (host: CodeHostRef, cols: number, rows: number) => Promise<{ terminalId: string; scrollback: string }>;
   /** Runs this lane's own sign-in command in a one-shot login shell; it exits when the sign-in ends. */
   openProviderSignIn: (laneId: string, cols: number, rows: number) => Promise<{ terminalId: string; scrollback: string }>;
+  cancelProviderSignIn: (laneId: string) => Promise<void>;
   writeReviewTerminal: (terminalId: string, data: string) => void;
   resizeReviewTerminal: (terminalId: string, cols: number, rows: number) => void;
   onReviewTerminalEvent: (listener: (event: { terminalId: string; data: string } | { terminalId: string; exitCode: number }) => void) => () => void;
