@@ -12,26 +12,28 @@
  * limitations under the License.
  */
 import { useEffect, useRef } from 'react';
+import type { AgentAttachmentDto } from '../types';
 
-const pending = new Map<string, string>();
+const pending = new Map<string, { text: string; attachments: AgentAttachmentDto[] }>();
 const CHANGED = 'bytequay:prepared-agent-input';
 
 /** Local draft handoff only. The existing composer retains its explicit Send/Queue/Steer actions. */
-export function prepareAgentInput(taskId: string, text: string): void {
-  pending.set(taskId, [pending.get(taskId), text].filter(Boolean).join('\n\n'));
+export function prepareAgentInput(taskId: string, text: string, attachments: AgentAttachmentDto[] = []): void {
+  const previous = pending.get(taskId);
+  pending.set(taskId, { text: [previous?.text, text].filter(Boolean).join('\n\n'), attachments: [...previous?.attachments ?? [], ...attachments] });
   window.dispatchEvent(new Event(CHANGED));
 }
 
-export function usePreparedAgentInput(taskId: string | null, append: (text: string) => void): void {
+export function usePreparedAgentInput(taskId: string | null, append: (text: string, attachments: AgentAttachmentDto[]) => void): void {
   const receive = useRef(append);
   receive.current = append;
   useEffect(() => {
     if (!taskId) return;
     const take = () => {
-      const text = pending.get(taskId);
-      if (text === undefined) return;
+      const draft = pending.get(taskId);
+      if (draft === undefined) return;
       pending.delete(taskId);
-      receive.current(text);
+      receive.current(draft.text, draft.attachments);
     };
     window.addEventListener(CHANGED, take); take();
     return () => window.removeEventListener(CHANGED, take);

@@ -232,11 +232,12 @@ export default function AgentTaskScreen({
   const submissionRef = useRef<DraftSubmissionTracker | null>(null);
   if (submissionRef.current === null) submissionRef.current = createDraftSubmissionTracker();
   const submissions = submissionRef.current;
-  usePreparedAgentInput(taskId, text => {
+  usePreparedAgentInput(taskId, (text, attachments) => {
     const draft = stateRef.current;
     const message = [draft.composer, text].filter(Boolean).join('\n\n');
-    submissions.draftChanged(taskId, message, draft.attachments.map(attachment => attachment.id));
+    submissions.draftChanged(taskId, message, [...draft.attachments, ...attachments].map(attachment => attachment.id));
     dispatch({ type: 'composer/changed', text: message });
+    dispatch({ type: 'attachments/added', attachments });
     composerRef.current?.focus();
   });
   const inlineSending = useRef(false);
@@ -615,11 +616,11 @@ export default function AgentTaskScreen({
   const pullRequestPendingComments = pullRequestReview.key === reviewKey ? pullRequestReview.pendingComments : [];
 
   /** Runs one bridge command, surfacing its failure in the notice strip instead of losing it. */
-  const run = useCallback(async (action: (current: () => boolean) => Promise<void>) => {
+  const run = useCallback(async (action: (current: () => boolean) => Promise<void>, requestRef = actionRequestRef) => {
     const request = Symbol();
-    actionRequestRef.current = request;
+    requestRef.current = request;
     projectionRevisionRef.current++;
-    const current = () => mountedRef.current && currentTaskId.current === taskId && actionRequestRef.current === request;
+    const current = () => mountedRef.current && currentTaskId.current === taskId && requestRef.current === request;
     dispatch({ type: 'notice/changed', notice: null });
     try {
       await action(current);
@@ -637,6 +638,9 @@ export default function AgentTaskScreen({
         // The command's original failure is the useful notice; the live stream can reconnect the
         // projection later if this best-effort read also failed.
       }
+    }
+    finally {
+      if (requestRef.current === request) requestRef.current = null;
     }
   }, [refreshProjection, taskId]);
 
@@ -717,10 +721,7 @@ export default function AgentTaskScreen({
     attentionAction('update');
   }), [applyTask, attentionAction, live, run, state.task, taskId, workspaceId]);
 
-  const startTurn = useCallback(async (message: string, attachments: string[], idempotencyKey: string, expectedTaskVersion: number, developmentAutomation?: DevelopmentAutomationDto) => {
-    const request = actionRequestRef.current;
-    const submission = sendRequestRef.current;
-    const current = () => mountedRef.current && currentTaskId.current === taskId && actionRequestRef.current === request;
+  const startTurn = useCallback(async (message: string, attachments: string[], idempotencyKey: string, expectedTaskVersion: number, current: () => boolean, developmentAutomation?: DevelopmentAutomationDto) => {
     dispatch({ type: 'composer/sending', sending: true });
     try {
       const turn = await live().startAgentTurn({
@@ -750,7 +751,6 @@ export default function AgentTaskScreen({
       throw failure;
     }
     finally {
-      if (sendRequestRef.current === submission) sendRequestRef.current = null;
       if (current()) dispatch({ type: 'composer/sending', sending: false });
     }
   }, [applyTurn, attentionAction, live, recordProviderUnavailable, refreshProjection, submissions, taskId]);
@@ -758,8 +758,7 @@ export default function AgentTaskScreen({
   const send = useCallback(() => {
     // Repeated Enter before React commits must not replace the action whose failure we are awaiting.
     if (sendRequestRef.current !== null) return Promise.resolve();
-    const request = Symbol();
-    sendRequestRef.current = request;
+    // A rename or another task action must not take ownership of this send's draft and cleanup.
     return run(async current => {
       const draft = stateRef.current;
       const ciText = ciMessage(draft.composer);
@@ -776,7 +775,7 @@ export default function AgentTaskScreen({
         try {
           // Retain both the delivery key and target on retry, even if polling shows a later repair turn.
           const result = await live().sendCiAutofixMessage(ci.runId, ciText, ciRequest.current.key, ciRequest.current.expectedTurnId);
-          if (!mountedRef.current) return;
+          if (!current()) return;
           if (result.id !== ci.runId || result.parentTaskId !== taskId || result.workspaceId !== workspaceId) {
             throw new Error('CI run does not belong to this development task');
           }
@@ -787,8 +786,7 @@ export default function AgentTaskScreen({
           catch { /* The CI service accepted the message; task polling will refresh its activity. */ }
         } finally {
           ciSending.current = false;
-          if (sendRequestRef.current === request) sendRequestRef.current = null;
-          if (mountedRef.current) dispatch({ type: 'composer/sending', sending: false });
+          if (current()) dispatch({ type: 'composer/sending', sending: false });
         }
         return;
       }
@@ -808,7 +806,7 @@ export default function AgentTaskScreen({
       dispatch({ type: 'message/sent', text: message, attachments: state.attachments });
       const restore = () => {
         if (!current()) {
-          if (!mountedRef.current) prepareAgentInput(taskId, message);
+          if (!mountedRef.current) prepareAgentInput(taskId, message, state.attachments);
           return;
         }
         dispatch({ type: 'message/cleared' });
@@ -817,12 +815,12 @@ export default function AgentTaskScreen({
       };
       let turn: AgentTurnDto;
       try {
-        turn = await startTurn(message, attachmentIds, idempotencyKey, task.version, submissionAutomation);
+        turn = await startTurn(message, attachmentIds, idempotencyKey, task.version, current, submissionAutomation);
       }
       catch (failure) {
         if (!current()) {
           // Shown again while it was in flight, the page no longer holds this draft either.
-          if (!unconfirmedRequest(failure) && !alreadySent(failure)) prepareAgentInput(taskId, message);
+          if (!unconfirmedRequest(failure) && !alreadySent(failure)) prepareAgentInput(taskId, message, state.attachments);
           throw failure;
         }
         if (alreadySent(failure)) {
@@ -848,7 +846,7 @@ export default function AgentTaskScreen({
       }
       // A retried key answers with the turn it already started, whose durable message is already shown.
       if (turn.id === shownTurnId) dispatch({ type: 'message/cleared' });
-    }).finally(() => { if (sendRequestRef.current === request) sendRequestRef.current = null; });
+    }, sendRequestRef);
   }, [attentionAction, automationBlocked, ciPollingError, confirmation, confirming, live, refreshProjection, run, startTurn, state.attachments, state.composer, state.latestTurnId, state.task, submissionAutomation, submissions, taskId, workspaceId]);
 
   const taskCommentDisabled = state.task?.state !== 'OPEN' ? 'This task is closed.'
@@ -1261,7 +1259,7 @@ export default function AgentTaskScreen({
     }
   }), [refreshProviderStatus, run]);
 
-  const retryLastMessage = useCallback(() => run(async () => {
+  const retryLastMessage = useCallback(() => run(async isCurrent => {
     const current = stateRef.current;
     const task = current.task;
     const input = retryableInput(current);
@@ -1279,8 +1277,8 @@ export default function AgentTaskScreen({
     // The failed turn's key is never reused. The tracker retains this new key only if this reply is
     // ambiguous, so a second confirmed click cannot create a duplicate retry turn.
     const idempotencyKey = submissions.keyFor('retry', task.id, taskId, input.text, attachmentIds);
-    await startTurn(input.text, attachmentIds, idempotencyKey, task.version, developmentAutomation);
-  }), [providerStatus, providerStatusTurnId, run, startTurn, submissions, taskId]);
+    await startTurn(input.text, attachmentIds, idempotencyKey, task.version, isCurrent, developmentAutomation);
+  }, sendRequestRef), [providerStatus, providerStatusTurnId, run, startTurn, submissions, taskId]);
 
   // The guards run again on confirmation, so a turn that starts while the question is open cannot be retried behind it.
   const retryAuthentication = useCallback(() => {

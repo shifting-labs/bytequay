@@ -87,12 +87,13 @@ async function exercise(surface: 'task' | 'review') {
   bridge.subscribeAgentTask = subscribe;
   bridge.startAgentTurn = async () => { await start(); return next; };
   const extra: Pick<Bridge, 'getLinkedWorkspaceWork' | 'getRelatedWorkspaceRequest' | 'getBackportChains' | 'getAgentReview'
-    | 'readAgentReviewHistory' | 'readAgentReviewApprovals' | 'subscribeAgentReview' | 'messageAgentReview'> = {
+    | 'readAgentReviewHistory' | 'readAgentReviewApprovals' | 'subscribeAgentReview' | 'messageAgentReview' | 'fetchPrDiffCommits'> = {
     getLinkedWorkspaceWork: async () => [], getRelatedWorkspaceRequest: async () => null,
     getBackportChains: async () => [], getAgentReview: async () => review,
     readAgentReviewHistory: (_reviewId: string, taskId: string, before?: string) => read(taskId, before),
     readAgentReviewApprovals: async () => [], subscribeAgentReview: subscribe,
     messageAgentReview: async () => { await start(); return review; },
+    fetchPrDiffCommits: async () => [],
   };
   window.bridge = { ...bridge, ...extra } as unknown as Bridge;
   const { host, root, dispose } = createFixtureRoot();

@@ -26,7 +26,7 @@ import { NO_AGENT_CAPABILITIES } from '../capabilities';
 import { CHECKING_ACCEPTANCE, UNCONFIRMED_REQUEST } from '../contracts';
 import type { AgentEventEnvelope } from '../events';
 import { agentTaskReducer, initialAgentTaskState, type AgentTaskState } from '../model';
-import { agentTurn, createPreviewBridge, previewTask, TASK_BODY_NOOPS } from './previewBridge';
+import { agentTurn, createPreviewBridge, previewTask, PREVIEW_CATALOG, TASK_BODY_NOOPS } from './previewBridge';
 import { errorMessage } from '../../errorMessage';
 export { run as sendHistoryPerformance } from './sendHistoryPerformanceBrowser';
 
@@ -161,7 +161,7 @@ export async function run(verifyCaching = true) {
   return results;
 }
 
-export async function sendProgress(): Promise<string> {
+export async function sendProgress(renameWhileSending = false): Promise<string> {
   const bridge = createPreviewBridge('workspace-1');
   const previous = agentTurn('COMPLETED', { id: 'previous', taskId: TASK_ID, startedAt: AT, endedAt: AT });
   const next = agentTurn('RUNNING', { id: 'next', taskId: TASK_ID, startedAt: AT });
@@ -189,6 +189,10 @@ export async function sendProgress(): Promise<string> {
     starts++;
     return new Promise<AgentTurnDto>(resolve => { release = () => { answered = true; resolve(next); }; });
   };
+  bridge.renameAgentTask = async (_taskId, _workspaceId, _version, title) => {
+    task = { ...task, title, version: task.version + 1 };
+    return task;
+  };
   window.bridge = { ...bridge, ...workspaceBridge } as unknown as Bridge;
   const { host, root, dispose } = createFixtureRoot();
   host.style.cssText = 'height: 640px; width: 840px';
@@ -203,6 +207,16 @@ export async function sendProgress(): Promise<string> {
     assert(starts === 1 && !answered, 'Send must start exactly one pending bridge request');
     assert(input.value === '' && host.querySelector('.agt-turn.is-latest .agt-user__bubble')?.textContent === 'Check send progress',
       'The pending message must appear and the draft clear before the bridge responds');
+    if (renameWhileSending) {
+      element<HTMLButtonElement>('button.agt-title', host).click();
+      await settle();
+      const title = element<HTMLInputElement>('input[aria-label="Task name"]', host);
+      changeInput(title, 'Renamed during send');
+      await settle();
+      title.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await until(() => host.querySelector('button.agt-title')?.textContent === 'Renamed during send', 'Rename must finish while Send waits');
+      assert(input.disabled && !answered, 'Rename must not unlock or replace the pending send');
+    }
 
     task = { ...task, version: task.version + 1, mutationClaim: { kind: 'TURN', ownerId: next.id, acquiredAt: AT } };
     events = [...events, request(3, next.id, 'Check send progress'), answer(4, next.id, 'Inspecting the first command output.', false)];
@@ -419,9 +433,16 @@ export async function sendAfterNavigation(): Promise<{ name: string; error?: str
   const results: { name: string; error?: string }[] = [];
   for (const failure of ['Request rejected', UNCONFIRMED_REQUEST, 'This message was already sent']) {
     const bridge = createPreviewBridge('workspace-1');
-    const task: AgentTaskDto = { ...previewTask('workspace-1', TASK_ID), interactive: true, mutationClaim: null };
+    const task: AgentTaskDto = { ...previewTask('workspace-1', TASK_ID), interactive: true, mutationClaim: null, laneId: 'codex',
+      defaults: { model: 'gpt-5.6-codex', effort: 'high', permissionPolicy: 'AUTO' } };
     const old = agentTurn('COMPLETED', { id: 'previous', taskId: TASK_ID, endedAt: AT });
     let release = (): void => {};
+    const requests: Parameters<Bridge['startAgentTurn']>[0][] = [];
+    bridge.getModelSettings = async () => ({ ...PREVIEW_CATALOG, providers: PREVIEW_CATALOG.providers.map(provider => ({
+      ...provider, models: provider.models.map(model => ({ ...model, inputModalities: ['text', 'image'] })),
+    })) });
+    bridge.pickAgentAttachments = async () => [{ id: 'image-1', name: 'screenshot.png', mediaType: 'image/png', byteSize: 10, width: 1, height: 1 }];
+    bridge.readAgentAttachment = async () => { throw new Error('Preview unavailable'); };
     bridge.getAgentTask = async () => task;
     bridge.getAgentTurn = async () => old;
     bridge.readAgentPendingApprovals = async () => [];
@@ -430,7 +451,11 @@ export async function sendAfterNavigation(): Promise<{ name: string; error?: str
     bridge.subscribeAgentTask = async (taskId, _after, listener) => {
       listener({ subscriptionId: 'navigation', taskId, kind: 'state', state: 'open' }); return () => {};
     };
-    bridge.startAgentTurn = async () => new Promise<AgentTurnDto>((_resolve, reject) => { release = () => reject(new Error(failure)); });
+    bridge.startAgentTurn = async input => {
+      requests.push(input);
+      if (requests.length > 1) return old;
+      return new Promise<AgentTurnDto>((_resolve, reject) => { release = () => reject(new Error(failure)); });
+    };
     window.bridge = { ...bridge, ...workspaceBridge } as unknown as Bridge;
     const { host, root, dispose } = createFixtureRoot();
     const screen = () => <AgentTaskScreen workspaceId="workspace-1" taskId={TASK_ID} bridge={bridge} onBack={() => {}} />;
@@ -439,6 +464,9 @@ export async function sendAfterNavigation(): Promise<{ name: string; error?: str
       await until(() => host.textContent?.includes('Earlier answer') === true, 'Load the first task mount');
       const input = element<HTMLTextAreaElement>('textarea[aria-label="Message the agent"]', host, 'The first composer must exist');
       changeInput(input, 'Message before navigation');
+      await until(() => host.querySelector<HTMLButtonElement>('[aria-label="Attach an image"]')?.disabled === false, 'The task must accept images');
+      host.querySelector<HTMLButtonElement>('[aria-label="Attach an image"]')?.click();
+      await until(() => host.querySelector('[aria-label="Remove image screenshot.png"]') !== null, 'Attach the screenshot before sending');
       await until(() => host.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled === false, 'The task must accept a draft');
       host.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click();
       await settle();
@@ -450,7 +478,15 @@ export async function sendAfterNavigation(): Promise<{ name: string; error?: str
       const reopened = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message the agent"]');
       assert(reopened?.value === (failure === 'Request rejected' ? 'Message before navigation' : ''),
         'Only a known unsent request may be handed to a new composer with a new request key');
+      assert((host.querySelector('[aria-label="Remove image screenshot.png"]') !== null) === (failure === 'Request rejected'),
+        'Only a known unsent request must recover its original screenshot with the text');
       assert(host.querySelector('.agt-notice') === null, 'The previous mount must not apply late error feedback');
+      if (failure === 'Request rejected') {
+        await until(() => host.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled === false, 'The recovered draft must be sendable');
+        host.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click();
+        await until(() => requests.length === 2, 'Resend the recovered draft');
+        assert(JSON.stringify(requests[1].attachments) === '["image-1"]', 'Retry must send the original attachment reference');
+      }
       results.push({ name: failure });
     }
     catch (error) { results.push({ name: failure, error: errorMessage(error) }); }

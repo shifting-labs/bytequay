@@ -36,6 +36,13 @@ it('shows the sent message and first logs while the start request is still pendi
   expect(result).toContain('immediate history loading and no duplicate message');
 }, deadline(30_000));
 
+it('keeps send cleanup independent of a rename during submission in Chromium', async () => {
+  const result = await fixture.run<string>({
+    body: "const results = await window.webContents.executeJavaScript('ComposerPerformanceTests.sendProgress(true)');",
+  });
+  expect(result).toContain('immediate history loading and no duplicate message');
+}, deadline(30_000));
+
 it('shows a new task first message and startup progress while creation is still pending in Chromium', async () => {
   const result = await fixture.run<string>({
     body: "const results = await window.webContents.executeJavaScript('ComposerPerformanceTests.firstMessageProgress()');",
@@ -69,7 +76,7 @@ it('shows first-message errors during recovery and replays the same creation ide
   expect(results.filter(result => result.error !== undefined)).toEqual([]);
 }, deadline(30_000));
 
-it('does not turn an uncertain or already-delivered send into a fresh draft after navigation in Chromium', async () => {
+it('recovers rejected messages with their images after navigation without resending uncertain inputs in Chromium', async () => {
   const results = await fixture.run<ScenarioResult[]>({
     body: "const results = await window.webContents.executeJavaScript('ComposerPerformanceTests.sendAfterNavigation()');",
   });
