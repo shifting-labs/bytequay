@@ -669,6 +669,100 @@ class TestDevelopmentGitInspector
         assertThat(inspector.inspectPublication(worktree, route).remoteHeadSha()).contains(later);
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void replacementUsesAnotherRemoteBranchWithoutChangingTheAssignedRouteOrLocalCheckout(boolean fork)
+            throws IOException
+    {
+        PullRequestIdentity original = assignPullRequest(fork);
+        when(pullRequests.identity(any(), eq(12))).thenReturn(original);
+        DevelopmentPublicationRoute route = inspector.capture(task).route();
+        String branch = "fix-value-handling";
+        String approved = commit("approved change");
+        String later = commit("later local change");
+        run(worktree.canonicalWorktree(), "push", "--", bareRemote.toString(), baseSha + ":refs/heads/existing-pr");
+        run(worktree.canonicalWorktree(), "config", "push.followTags", "true");
+        run(worktree.canonicalWorktree(), "tag", "-a", "local-only-tag", approved, "-m", "Keep this tag local");
+
+        assertThat(inspector.inspectReplacement(worktree, route, branch).remoteHeadSha()).isEmpty();
+        inspector.pushReplacementHead(worktree, route, branch, approved);
+        PullRequestIdentity replacement = new PullRequestIdentity(PullRequestRef.of(original.baseRepository().owner(), original.baseRepository().repo(), 13),
+                "https://github.com/" + original.baseRepository().fullName() + "/pull/13", REPOSITORY, branch, approved,
+                original.baseRepository(), original.baseBranch(), baseSha, PullRequestIdentity.State.OPEN, false, "alice");
+        when(pullRequests.identitiesByHead(any(), eq(REPOSITORY), eq(branch))).thenReturn(ImmutableList.of(replacement));
+
+        DevelopmentPublicationFacts facts = inspector.inspectReplacement(worktree, route, branch);
+
+        assertThat(facts.remoteHeadSha()).contains(approved);
+        assertThat(facts.matchingPullRequests()).containsExactly(replacement);
+        assertThat(inspector.inspectPublication(worktree, route).remoteHeadSha()).contains(baseSha);
+        assertThat(inspector.capture(task).route()).isEqualTo(route);
+        assertThat(route.assignedPullRequest()).contains(original.pullRequest());
+        assertThat(route.headBranch()).isEqualTo("existing-pr");
+        assertThat(worktreeService.currentBranch(worktree)).contains(worktree.generatedBranch());
+        assertThat(run(worktree.canonicalWorktree(), "rev-parse", "HEAD")).isEqualTo(later);
+        assertThat(run(repository, "for-each-ref", "--format=%(refname)", "refs/heads/" + branch)).isEmpty();
+        assertThat(run(bareRemote, "tag", "--list")).isEmpty();
+    }
+
+    @Test
+    void replacementPushNeverOverwritesAnExistingRemoteBranch()
+            throws IOException
+    {
+        DevelopmentPublicationRoute route = inspector.capture(task).route();
+        String branch = "fix-value-handling";
+        String original = commit("first branch content");
+        inspector.pushReplacementHead(worktree, route, branch, original);
+        String later = commit("different content");
+
+        assertThatThrownBy(() -> inspector.pushReplacementHead(worktree, route, branch, later))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("Could not verify the replacement branch push");
+
+        assertThat(inspector.inspectReplacement(worktree, route, branch).remoteHeadSha()).contains(original);
+        assertThat(run(worktree.canonicalWorktree(), "rev-parse", "HEAD")).isEqualTo(later);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "--delete", "bad branch", "bad..branch", "bad@{branch", "branch.lock"})
+    void invalidReplacementBranchesNeverReachRemoteReadsOrPushes(String branch)
+    {
+        DevelopmentPublicationRoute route = inspector.capture(task).route();
+
+        assertThatThrownBy(() -> inspector.inspectReplacement(worktree, route, branch)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> inspector.pushReplacementHead(worktree, route, branch, baseSha)).isInstanceOf(IllegalArgumentException.class);
+
+        assertThat(git.remoteReads).isZero();
+        assertThat(run(bareRemote, "for-each-ref", "--format=%(refname)")).isEmpty();
+        verifyNoInteractions(credentials, pullRequests);
+    }
+
+    @Test
+    void changedTaskRouteStopsReplacementBeforeRemoteAccess()
+    {
+        DevelopmentPublicationRoute route = inspector.capture(task).route();
+        when(workspaces.findById(WORKSPACE_ID)).thenReturn(Optional.of(workspace(false, "different-base")));
+
+        assertThatThrownBy(() -> inspector.inspectReplacement(worktree, route, "fix-value-handling")).hasMessageContaining("routing changed");
+        assertThatThrownBy(() -> inspector.pushReplacementHead(worktree, route, "fix-value-handling", baseSha)).hasMessageContaining("routing changed");
+
+        assertThat(git.remoteReads).isZero();
+        assertThat(run(bareRemote, "for-each-ref", "--format=%(refname)")).isEmpty();
+        verifyNoInteractions(credentials, pullRequests);
+    }
+
+    @Test
+    void replacementInspectionRechecksTheOriginalRouteAfterRemoteRead()
+    {
+        DevelopmentPublicationRoute route = inspector.capture(task).route();
+        when(pullRequests.identitiesByHead(any(), eq(REPOSITORY), eq("fix-value-handling"))).thenAnswer(ignored -> {
+            when(workspaces.findById(WORKSPACE_ID)).thenReturn(Optional.of(workspace(false, "different-base")));
+            return ImmutableList.of();
+        });
+
+        assertThatThrownBy(() -> inspector.inspectReplacement(worktree, route, "fix-value-handling")).hasMessageContaining("routing changed");
+        assertThat(git.remoteReads).isEqualTo(1);
+    }
+
     @Test
     void publishesRewrittenCommitMessagesAndRejectsAStaleLease()
             throws IOException

@@ -56,6 +56,7 @@ import com.bytequay.agent.spi.ReviewBridge;
 import com.bytequay.agent.spi.ReviewTool;
 import com.bytequay.agent.spi.RunningTurn;
 import com.bytequay.agent.spi.SessionAccess;
+import com.bytequay.agent.spi.TaskPullRequestReplacementBridge;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableList;
@@ -1234,6 +1235,28 @@ class TestClaudeCliDriver
         });
         session.close();
         driver.close();
+    }
+
+    @Test
+    void replacementToolIsAvailableOnResumeAndDisablesUnverifiedChildren()
+            throws Exception
+    {
+        var replacement = new TaskPullRequestReplacementBridge(branch -> new TaskPullRequestReplacementBridge.Prepared("Replace with " + branch, () -> "replaced"));
+        PermissionBroker broker = PermissionBroker.builder(() -> URI.create("http://127.0.0.1:9000/internal/agent/claude/mcp"), objectMapper, (taskId, query) -> "")
+                .pullRequestReplacements(taskId -> Optional.of(replacement)).build();
+        try (ClaudeCliDriver driver = new ClaudeCliDriver("/fake/claude", objectMapper, broker, supervisor, claudeHome(), ImmutableMap.of())) {
+            Optional<AgentSessionRef> reference = Optional.empty();
+            for (int index = 0; index < 2; index++) {
+                try (AgentSession session = driver.open(context(reference), event -> {})) {
+                    assertThat(await(session.start(command("Replace the task pull request"))).state()).isEqualTo(AgentTurnResult.State.COMPLETED);
+                    reference = Optional.of(session.reference());
+                    List<String> argv = supervisor.turns.getLast().spec.argv();
+                    assertThat(argv.get(argv.indexOf("--allowedTools") + 1)).contains("mcp__bytequay__" + TaskPullRequestReplacementBridge.TOOL_NAME);
+                    assertThat(argv.get(argv.indexOf("--append-system-prompt") + 1)).contains(TaskPullRequestReplacementBridge.INSTRUCTION);
+                    assertThat(argv).containsSequence("--disallowedTools", "Agent,Task,Skill,Workflow,SendMessage");
+                }
+            }
+        }
     }
 
     @ParameterizedTest

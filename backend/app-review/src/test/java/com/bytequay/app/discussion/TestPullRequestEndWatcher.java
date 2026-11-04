@@ -29,7 +29,10 @@ import com.bytequay.app.agent.runtime.AgentServingGate;
 import com.bytequay.app.review.AgentReviewService;
 import com.bytequay.app.workspace.TaskPullRequestOwnership;
 import com.bytequay.core.domain.PullRequest;
+import com.bytequay.core.domain.PullRequestReplacement;
+import com.bytequay.core.domain.RepoRef;
 import com.bytequay.core.review.ReviewConflictException;
+import com.bytequay.core.store.PullRequestReplacementStore;
 import com.bytequay.core.store.PullRequestStore;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -65,6 +68,7 @@ class TestPullRequestEndWatcher
     private final AgentReviewService reviews = mock(AgentReviewService.class);
     private final ReviewFixService reviewFixes = mock(ReviewFixService.class);
     private final PullRequestStore pullRequests = mock(PullRequestStore.class);
+    private final PullRequestReplacementStore replacements = mock(PullRequestReplacementStore.class);
     private final PullRequestTaskWatcher watcher = new PullRequestTaskWatcher(
             tasks,
             ownership,
@@ -72,7 +76,8 @@ class TestPullRequestEndWatcher
             gate,
             reviewFixes,
             reviews,
-            pullRequests);
+            pullRequests,
+            replacements);
 
     @BeforeEach
     void setUp()
@@ -130,6 +135,31 @@ class TestPullRequestEndWatcher
 
         verify(completions, never()).complete(any());
         verifyNoInteractions(reviews);
+    }
+
+    @Test
+    void unfinishedReplacementKeepsAnIdleTaskOpenAfterTheOriginalPullRequestCloses()
+    {
+        AgentTask replacing = task(true);
+        PullRequestReplacement operation = new PullRequestReplacement(replacing.id().toString(), "w1", 1, 1, new RepoRef("owner", "repo"), new RepoRef("owner", "repo"),
+                12, "old-branch", "main", "b".repeat(40), "branch", "Task", "Body", true, false, Optional.empty(), false);
+        when(replacements.find(replacing.id().toString())).thenReturn(Optional.of(operation));
+        when(tasks.listLive()).thenReturn(ImmutableList.of(replacing));
+        when(ownership.pullRequests(replacing)).thenReturn(ImmutableList.of(pullRequest(12, "closed")));
+        when(pullRequests.findIdByRepoAndNumber(REPO, 12)).thenReturn(Optional.of(12L));
+        when(pullRequests.findById(12L)).thenReturn(Optional.of(pullRequest(12, "closed")));
+
+        watcher.pass(false);
+        watcher.pass(true);
+        watcher.afterDetailRefresh(REPO, 12);
+
+        verifyNoInteractions(completions, reviews, reviewFixes);
+
+        when(replacements.find(replacing.id().toString())).thenReturn(Optional.of(operation.created(13).complete()));
+        when(ownership.pullRequests(replacing)).thenReturn(ImmutableList.of(pullRequest(13, "merged")));
+        watcher.pass(false);
+
+        verify(completions).complete(new CompleteAgentTaskCommand(replacing.id(), Optional.of("Completed: pull request #13 was merged")));
     }
 
     @Test

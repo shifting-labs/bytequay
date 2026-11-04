@@ -47,11 +47,16 @@ public class PullRequestTaskEntity
     {
         PullRequestTaskEntity entity = new PullRequestTaskEntity();
         entity.id = assignment.taskId();
-        entity.workspaceId = assignment.workspaceId();
-        entity.repo = assignment.repo();
-        entity.number = assignment.number();
-        entity.initialContext = assignment.initialContext();
+        entity.update(assignment);
         return entity;
+    }
+
+    public void update(PullRequestTask assignment)
+    {
+        workspaceId = assignment.workspaceId();
+        repo = assignment.repo();
+        number = assignment.number();
+        initialContext = assignment.initialContext();
     }
 
     public PullRequestTask toDomain()

@@ -44,6 +44,7 @@ import com.bytequay.agent.spi.RelatedWorkspaceBridge;
 import com.bytequay.agent.spi.ReviewBridge;
 import com.bytequay.agent.spi.ReviewTool;
 import com.bytequay.agent.spi.SessionAccess;
+import com.bytequay.agent.spi.TaskPullRequestReplacementBridge;
 import com.bytequay.agent.spi.ToolSchemas;
 import com.bytequay.agent.spi.WorkItemBridge;
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -168,6 +169,7 @@ public final class PermissionBroker
     private final BridgeResolver<ReviewBridge> reviews;
     private final BridgeResolver<DevelopmentResultBridge> developments;
     private final DraftPullRequestPublisher draftPullRequests;
+    private final BridgeResolver<TaskPullRequestReplacementBridge> pullRequestReplacements;
     private final BridgeResolver<LocalReviewBridge> localReviews;
     private final BridgeResolver<PullRequestCiBridge> pullRequestChecks;
     private final BridgeResolver<IssueContextBridge> issueContexts;
@@ -189,6 +191,7 @@ public final class PermissionBroker
         private BridgeResolver<ReviewBridge> reviews = BridgeResolver.none();
         private BridgeResolver<DevelopmentResultBridge> developments = BridgeResolver.none();
         private DraftPullRequestPublisher draftPullRequests = DraftPullRequestPublisher.NONE;
+        private BridgeResolver<TaskPullRequestReplacementBridge> pullRequestReplacements = BridgeResolver.none();
         private BridgeResolver<LocalReviewBridge> localReviews = BridgeResolver.none();
         private BridgeResolver<PullRequestCiBridge> pullRequestChecks = BridgeResolver.none();
         private BridgeResolver<IssueContextBridge> issueContexts = BridgeResolver.none();
@@ -204,7 +207,7 @@ public final class PermissionBroker
     @Builder(builderMethodName = "")
     private PermissionBroker(Supplier<URI> endpoint, ObjectMapper objectMapper, CiMemoryReader ciMemoryReader,
             BridgeResolver<ReviewBridge> reviews, BridgeResolver<DevelopmentResultBridge> developments,
-            DraftPullRequestPublisher draftPullRequests, BridgeResolver<LocalReviewBridge> localReviews,
+            DraftPullRequestPublisher draftPullRequests, BridgeResolver<TaskPullRequestReplacementBridge> pullRequestReplacements, BridgeResolver<LocalReviewBridge> localReviews,
             BridgeResolver<PullRequestCiBridge> pullRequestChecks, BridgeResolver<IssueContextBridge> issueContexts,
             BridgeResolver<MemoryBridge> memories, BridgeResolver<RelatedWorkspaceBridge> relatedWork, BridgeResolver<WorkItemBridge> workItems,
             BridgeResolver<GoogleWorkspaceBridge> googleWorkspace, BridgeResolver<PullRequestContextBridge> pullRequestContexts)
@@ -222,6 +225,7 @@ public final class PermissionBroker
         this.reviews = requireNonNull(reviews, "reviews is null");
         this.developments = requireNonNull(developments, "developments is null");
         this.draftPullRequests = requireNonNull(draftPullRequests, "draftPullRequests is null");
+        this.pullRequestReplacements = requireNonNull(pullRequestReplacements, "pullRequestReplacements is null");
         this.localReviews = requireNonNull(localReviews, "localReviews is null");
         this.pullRequestChecks = requireNonNull(pullRequestChecks, "pullRequestChecks is null");
         this.issueContexts = requireNonNull(issueContexts, "issueContexts is null");
@@ -259,7 +263,8 @@ public final class PermissionBroker
                 discussionContext,
                 sessionTools);
         contexts.put(token, context);
-        Optional<Path> childGate = (context.reviewChildren() || context.relatedWork().isPresent()) ? Optional.of(childGateFile) : Optional.empty();
+        Optional<Path> childGate = (context.reviewChildren() || context.relatedWork().isPresent() || context.pullRequestReplacement().isPresent())
+                ? Optional.of(childGateFile) : Optional.empty();
         try {
             Files.createDirectories(providerDirectory);
             URI uri = requireNonNull(endpoint.get(), "endpoint URI is null");
@@ -349,7 +354,7 @@ public final class PermissionBroker
     {
         requireNonNull(registration, "registration is null");
         PermissionContext context = requireNonNull(contexts.get(registration.token()), "review token is not registered");
-        checkArgument(context.review().isPresent() || context.relatedWork().isPresent(), "No root-bound tools on this task");
+        checkArgument(context.review().isPresent() || context.relatedWork().isPresent() || context.pullRequestReplacement().isPresent(), "No root-bound tools on this task");
         Set<String> readable = Stream.concat(
                         context.review().stream().flatMap(review -> review.tools().stream()).filter(ReviewTool::childCallable).map(ReviewTool::name),
                         context.codeQueries().stream().map(ignored -> CodeQueryBridge.TOOL_NAME))
@@ -431,6 +436,8 @@ public final class PermissionBroker
         Optional<MemoryBridge> memory = restricted ? Optional.empty() : memories.resolve(taskId);
         Optional<WorkItemBridge> work = restricted ? Optional.empty() : workItems.resolve(taskId);
         Optional<RelatedWorkspaceBridge> related = restricted || review.isPresent() ? Optional.empty() : relatedWork.resolve(taskId);
+        Optional<TaskPullRequestReplacementBridge> replacement = restricted || review.isPresent() || permissionPolicy != AgentPermissionPolicy.AUTO
+                ? Optional.empty() : pullRequestReplacements.resolve(taskId);
         // Claude's attended review gate uses this flag. Codex registers no permission tools and
         // gates its children through its own launch-time PreToolUse hook.
         boolean reviewChildren = permissionTools && scope.reviewReads();
@@ -438,7 +445,7 @@ public final class PermissionBroker
                 .map(home -> ImmutableMap.of("HOME", home)).orElse(ImmutableMap.of());
         return new PermissionContext(
                 taskId, worktree, scope, fileWriteEnvironment, approvals, redactor, permissionTools,
-                codeQueries, discussionContext, sessionTools, review, development, localReview, pullRequestCi, pullRequestContext, issueContext, memory, related, work,
+                codeQueries, discussionContext, sessionTools, review, development, replacement, localReview, pullRequestCi, pullRequestContext, issueContext, memory, related, work,
                 restricted || review.isPresent() ? Optional.empty() : googleWorkspace.resolve(taskId), reviewChildren, new AtomicReference<>());
     }
 
@@ -452,6 +459,7 @@ public final class PermissionBroker
                         context.codeQueries().map(CodeQueryBridge::instruction),
                         context.discussionContext().map(ignored -> DiscussionContextBridge.INSTRUCTION),
                         context.development().map(DevelopmentResultBridge::instruction),
+                        context.pullRequestReplacement().map(ignored -> TaskPullRequestReplacementBridge.INSTRUCTION),
                         context.localReview().map(LocalReviewBridge::instruction),
                         context.pullRequestCi().map(PullRequestCiBridge::instruction),
                         context.issueContext().map(IssueContextBridge::instruction),
@@ -544,6 +552,7 @@ public final class PermissionBroker
             case MemoryBridge.TOOL_NAME -> memory(request.id(), params.arguments(), context);
             case DevelopmentResultBridge.TOOL_NAME -> developmentResult(request.id(), params.arguments(), context);
             case DevelopmentResultBridge.PUBLISH_TOOL_NAME -> createDraftPullRequest(request.id(), params.arguments(), context);
+            case TaskPullRequestReplacementBridge.TOOL_NAME -> replaceTaskPullRequest(request.id(), params.arguments(), context);
             case DevelopmentResultBridge.RENAME_TASK_TOOL_NAME -> renameTask(request.id(), params.arguments(), context);
             case CiDescriptionProposal.TOOL_NAME -> proposeCiDescription(request.id(), params.arguments(), context);
             case PullRequestCiBridge.RERUN_TOOL_NAME -> requestCiRerun(request.id(), params.arguments(), context);
@@ -823,6 +832,35 @@ public final class PermissionBroker
                 failure -> context.redactor().redact("Publication was refused: " + failureReason(failure)));
     }
 
+    private McpHttpResponse replaceTaskPullRequest(JsonNode id, JsonNode arguments, PermissionContext context)
+    {
+        if (arguments == null || !arguments.isObject() || arguments.size() != 1
+                || !arguments.path("branch").isTextual() || arguments.path("branch").asText().isBlank()
+                || arguments.path("branch").asText().length() > 255) {
+            return error(id, -32602, "replace_task_pull_request requires only a non-empty branch of at most 255 characters");
+        }
+        return runTool(id, context, () -> {
+            TaskPullRequestReplacementBridge.Prepared prepared = context.pullRequestReplacement().orElseThrow().prepare().apply(arguments.path("branch").asText());
+            String description = context.redactor().redact(prepared.description());
+            checkArgument(description.length() <= MAX_DETAIL_CHARACTERS, "The replacement preview is too long to approve");
+            ProviderApprovalRequest approval = new ProviderApprovalRequest(
+                    ProviderApprovalRequest.Kind.TOOL,
+                    "Replace task pull request",
+                    description,
+                    ImmutableList.of(TaskPullRequestReplacementBridge.TOOL_NAME),
+                    ImmutableList.of(ALLOW_ONCE, DENY),
+                    false,
+                    root(),
+                    Instant.now());
+            ProviderApprovalDecision decision = awaitApproval(approval, context);
+            if (decision.decision() != ProviderApprovalDecision.Decision.ALLOW) {
+                return (decision.timedOut() ? "Replacement approval expired." : "Replacement was not approved.")
+                        + " No replacement was performed. Do not retry without a new user request.";
+            }
+            return prepared.execute().get();
+        }, failure -> context.redactor().redact("Pull request replacement stopped: " + failureReason(failure)));
+    }
+
     private McpHttpResponse renameTask(JsonNode id, JsonNode arguments, PermissionContext context)
     {
         Optional<DevelopmentResultBridge> bridge = context.development()
@@ -944,29 +982,33 @@ public final class PermissionBroker
                 arguments.toolName().equalsIgnoreCase("Bash") && !unsandboxed,
                 root(),
                 Instant.now());
-        ProviderApprovalDecision decision;
-        try {
-            decision = context.approvals()
-                    .request(approval, AgentApprovalHandler.WAIT)
-                    .toCompletableFuture()
-                    .get(AgentApprovalHandler.WAIT.plusSeconds(1).toMillis(), TimeUnit.MILLISECONDS);
-        }
-        catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            decision = ProviderApprovalDecision.deny();
-        }
-        catch (ExecutionException e) {
-            decision = ProviderApprovalDecision.deny();
-        }
-        catch (TimeoutException e) {
-            decision = ProviderApprovalDecision.expired();
-        }
+        ProviderApprovalDecision decision = awaitApproval(approval, context);
 
         PermissionResult result = decision.decision() == ProviderApprovalDecision.Decision.ALLOW
                 ? new PermissionResult("allow", Optional.of(answered(arguments, decision.answers())), Optional.empty())
                 : new PermissionResult("deny", Optional.empty(), Optional.of(decision.timedOut() ? "Approval timed out" : "Denied by user"));
         String text = objectMapper.writeValueAsString(result);
         return response(id, new ToolResult(ImmutableList.of(new TextContent("text", text)), false));
+    }
+
+    private static ProviderApprovalDecision awaitApproval(ProviderApprovalRequest approval, PermissionContext context)
+    {
+        try {
+            return context.approvals()
+                    .request(approval, AgentApprovalHandler.WAIT)
+                    .toCompletableFuture()
+                    .get(AgentApprovalHandler.WAIT.plusSeconds(1).toMillis(), TimeUnit.MILLISECONDS);
+        }
+        catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return ProviderApprovalDecision.deny();
+        }
+        catch (ExecutionException e) {
+            return ProviderApprovalDecision.deny();
+        }
+        catch (TimeoutException e) {
+            return ProviderApprovalDecision.expired();
+        }
     }
 
     /**
@@ -1342,6 +1384,10 @@ public final class PermissionBroker
                 ToolSchemas.object(ImmutableMap.of(
                         "title", ImmutableMap.of("type", "string", "minLength", 1, "maxLength", MAXIMUM_TITLE_CHARACTERS),
                         "body", ImmutableMap.of("type", "string", "maxLength", MAXIMUM_BODY_CHARACTERS)), "title", "body"))));
+        context.pullRequestReplacement().ifPresent(ignored -> tools.add(new ToolDefinition(
+                TaskPullRequestReplacementBridge.TOOL_NAME,
+                "Replace this task's pull request under a new branch, keeping task tracking. Waits for an in-app Allow once / Deny approval; root agent only",
+                ToolSchemas.object(ImmutableMap.of("branch", ImmutableMap.of("type", "string", "minLength", 1, "maxLength", 255)), "branch"))));
         if (context.scope().policy() == AgentPermissionPolicy.CI_AUTOFIX) {
             tools.add(new ToolDefinition(
                     "read_ci_memory",
@@ -1571,11 +1617,12 @@ public final class PermissionBroker
                 .replace("@CHILD_TOOLS@", readable.isEmpty() ? "mcp__bytequay__none" : String.join("|", readable));
     }
 
-    /** Without a review, a child may call every tool but related work and a session tool kept for the root. */
+    /** Without a review, a child may call every tool except the operations kept for the root. */
     private static Stream<String> childReadable(PermissionContext context)
     {
         Set<String> rootOnly = context.sessionTools().stream().filter(tool -> !tool.childCallable()).map(ReviewTool::name).collect(ImmutableSet.toImmutableSet());
-        return tools(context).stream().map(ToolDefinition::name).filter(name -> !name.equals(RelatedWorkspaceBridge.TOOL_NAME) && !rootOnly.contains(name));
+        return tools(context).stream().map(ToolDefinition::name)
+                .filter(name -> !name.equals(RelatedWorkspaceBridge.TOOL_NAME) && !name.equals(TaskPullRequestReplacementBridge.TOOL_NAME) && !rootOnly.contains(name));
     }
 
     private static String readChildGateScript()
@@ -1643,6 +1690,7 @@ public final class PermissionBroker
             List<ReviewTool> sessionTools,
             Optional<ReviewBridge> review,
             Optional<DevelopmentResultBridge> development,
+            Optional<TaskPullRequestReplacementBridge> pullRequestReplacement,
             Optional<LocalReviewBridge> localReview,
             Optional<PullRequestCiBridge> pullRequestCi,
             Optional<PullRequestContextBridge> pullRequestContext,
@@ -1668,6 +1716,7 @@ public final class PermissionBroker
             requireNonNull(discussionContext, "discussionContext is null");
             requireNonNull(review, "review is null");
             requireNonNull(development, "development is null");
+            requireNonNull(pullRequestReplacement, "pullRequestReplacement is null");
             requireNonNull(localReview, "localReview is null");
             requireNonNull(pullRequestCi, "pullRequestCi is null");
             requireNonNull(pullRequestContext, "pullRequestContext is null");

@@ -179,6 +179,43 @@ public class DevelopmentGitInspector
         return facts;
     }
 
+    /** Inspects a proposed replacement branch while retaining the task's current publication route as the authority. */
+    public DevelopmentPublicationFacts inspectReplacement(TaskWorktree worktree, DevelopmentPublicationRoute route, String branch)
+    {
+        requireReplacementBranch(worktree, branch);
+        verify(worktree, route);
+        DevelopmentPublicationFacts facts = readPublication(worktree, replacementRoute(route, branch));
+        verify(worktree, route);
+        return facts;
+    }
+
+    public void pushReplacementHead(TaskWorktree worktree, DevelopmentPublicationRoute route, String branch, String head)
+    {
+        requireReplacementBranch(worktree, branch);
+        requireCommit(worktree, head);
+        verify(worktree, route);
+        String ref = "refs/heads/" + branch;
+        Result result = git.run(worktree.canonicalWorktree(), Duration.ofSeconds(120),
+                credentials.gitAuthenticationEnvironment(worktree.workspaceId(), ImmutableList.of(route.pushUrl())),
+                ImmutableList.of("push", "--porcelain", "--no-follow-tags", "--recurse-submodules=no",
+                        "--force-with-lease=" + ref + ":", "--", route.pushUrl(), head + ":" + ref));
+        checkState(result.successful() && !result.truncated(), "Could not verify the replacement branch push; retry the replacement to reconcile it");
+        verify(worktree, route);
+    }
+
+    private void requireReplacementBranch(TaskWorktree worktree, String branch)
+    {
+        checkArgument(branch != null && !branch.isBlank() && branch.length() <= 255 && !branch.startsWith("-"), "Invalid replacement branch");
+        Result result = git.run(worktree.canonicalWorktree(), "check-ref-format", "refs/heads/" + branch);
+        checkArgument(result.successful() && !result.truncated(), "The replacement branch is not a valid Git branch");
+    }
+
+    private static DevelopmentPublicationRoute replacementRoute(DevelopmentPublicationRoute route, String branch)
+    {
+        return new DevelopmentPublicationRoute(route.server(), route.headRepository(), route.baseRepository(), route.pushUrl(), route.sourceRemote(),
+                route.baseBranch(), route.baseSha(), branch, Optional.empty());
+    }
+
     /** Renames only an unpublished branch, recording intent before Git so an uncertain save can be reconciled. */
     public TaskWorktree renameBranch(DevelopmentBaseline baseline, String branch, Consumer<DevelopmentBranchRename> recordIntent, Consumer<TaskWorktree> recordRename)
     {

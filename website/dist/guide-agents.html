@@ -164,6 +164,25 @@
               delivery, even if that turn changes nothing.
             </p>
             <p>
+              To replace a task’s GitHub PR with one from a different branch,
+              ask the agent in that task’s conversation and give the new branch
+              name. Choose <strong>Allow once</strong> on the
+              <strong>Replace task pull request</strong> card after checking
+              its PR, branch and commit. ByteQuay copies the current title,
+              description and draft status, verifies the replacement, connects
+              it to the same task, then closes the previous PR.
+            </p>
+            <p>
+              Your conversation, working copy and enabled CI/review automation
+              stay connected. GitHub reviews remain on the previous PR and the
+              replacement gets fresh checks. Existing branches are kept. The
+              checkout must be clean at the PR’s current commit, and queued
+              messages must be finished or removed first. If a step fails, ask
+              the agent to retry with the same branch name: ByteQuay checks the
+              saved result and continues without blindly creating another PR.
+              No terminal command is needed.
+            </p>
+            <p>
               Every step after Auto-Commit writes to GitHub, and repairs use
               your model allowance. The stop square above the composer halts
               automation and keeps your draft. CI watching runs while ByteQuay

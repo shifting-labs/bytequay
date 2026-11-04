@@ -18,7 +18,7 @@ import java.util.Locale;
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
-/** An imported PR's durable conversation and its initial context, independent of cached PR retention. */
+/** A task's assigned PR and retained context, independent of cached PR retention. */
 public record PullRequestTask(String taskId, String workspaceId, String repo, int number, String initialContext)
 {
     public PullRequestTask

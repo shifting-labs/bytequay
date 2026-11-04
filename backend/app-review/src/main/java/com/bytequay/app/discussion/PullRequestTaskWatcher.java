@@ -23,6 +23,7 @@ import com.bytequay.app.service.pr.PullRequestDetailRefreshed;
 import com.bytequay.app.service.pr.PullRequestsRefreshed;
 import com.bytequay.app.workspace.TaskPullRequestOwnership;
 import com.bytequay.core.domain.PullRequest;
+import com.bytequay.core.store.PullRequestReplacementStore;
 import com.bytequay.core.store.PullRequestStore;
 import com.google.common.collect.ImmutableSet;
 import jakarta.annotation.PreDestroy;
@@ -66,6 +67,7 @@ public class PullRequestTaskWatcher
     private final ReviewFixService reviewFixes;
     private final AgentReviewService reviews;
     private final PullRequestStore pullRequests;
+    private final PullRequestReplacementStore replacements;
     private final ExecutorService executor = Executors.newSingleThreadExecutor(Thread.ofVirtual().name("pull-request-followup-", 0).factory());
 
     public PullRequestTaskWatcher(
@@ -75,7 +77,8 @@ public class PullRequestTaskWatcher
             AgentServingGate gate,
             ReviewFixService reviewFixes,
             AgentReviewService reviews,
-            PullRequestStore pullRequests)
+            PullRequestStore pullRequests,
+            PullRequestReplacementStore replacements)
     {
         this.tasks = requireNonNull(tasks, "tasks is null");
         this.ownership = requireNonNull(ownership, "ownership is null");
@@ -84,6 +87,7 @@ public class PullRequestTaskWatcher
         this.reviewFixes = requireNonNull(reviewFixes, "reviewFixes is null");
         this.reviews = requireNonNull(reviews, "reviews is null");
         this.pullRequests = requireNonNull(pullRequests, "pullRequests is null");
+        this.replacements = requireNonNull(replacements, "replacements is null");
     }
 
     /**
@@ -128,6 +132,9 @@ public class PullRequestTaskWatcher
                 continue;
             }
             try {
+                if (replacements.find(task.id().toString()).filter(operation -> !operation.completed()).isPresent()) {
+                    continue;
+                }
                 Optional<PullRequest> ended = ended(task);
                 if (ended.isPresent()) {
                     String outcome = "pull request #" + ended.get().number() + " was " + state(ended.get());

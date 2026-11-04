@@ -57,6 +57,7 @@ import com.bytequay.agent.spi.RelatedWorkspaceBridge;
 import com.bytequay.agent.spi.ReviewBridge;
 import com.bytequay.agent.spi.RunningTurn;
 import com.bytequay.agent.spi.SessionAccess;
+import com.bytequay.agent.spi.TaskPullRequestReplacementBridge;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -661,7 +662,8 @@ public final class CodexCliDriver
         ClientLaunch launch;
         Optional<PermissionBroker.CodexRootTools> guardedReviewTools;
         try {
-            guardedReviewTools = (dynamicReview || codeQueries.stream().anyMatch(registration -> registration.toolNames().contains(RelatedWorkspaceBridge.TOOL_NAME)))
+            guardedReviewTools = (dynamicReview || codeQueries.stream().anyMatch(registration -> registration.toolNames().contains(RelatedWorkspaceBridge.TOOL_NAME)
+                    || registration.toolNames().contains(TaskPullRequestReplacementBridge.TOOL_NAME)))
                     ? codeQueries.map(permissions::guardCodexRootTools) : Optional.empty();
             launch = appServerClient(
                     new ProcessOwner(ownerKind(context), context.taskId()),

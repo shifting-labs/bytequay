@@ -32,6 +32,7 @@ import com.bytequay.app.workspace.TaskPullRequestOwnership;
 import com.bytequay.core.discussion.ReviewFixReply;
 import com.bytequay.core.discussion.ReviewFixStore;
 import com.bytequay.core.domain.PullRequest;
+import com.bytequay.core.store.PullRequestReplacementStore;
 import com.google.common.collect.ImmutableMap;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -78,12 +79,13 @@ public class ReviewFixService
     private final TaskPullRequestOwnership ownership;
     private final ReviewCommentReader comments;
     private final ReviewFixStore store;
+    private final PullRequestReplacementStore replacements;
     private final PullRequestService pullRequests;
     private final Clock clock;
     private final ExecutorService executor = Executors.newSingleThreadExecutor(Thread.ofVirtual().name("review-fix-", 0).factory());
 
     public ReviewFixService(AgentTaskStore tasks, AgentServingGate gate, AgentTurnService turns, AgentTurnStore turnStore, TaskPullRequestOwnership ownership,
-            ReviewCommentReader comments, ReviewFixStore store, PullRequestService pullRequests, Clock clock)
+            ReviewCommentReader comments, ReviewFixStore store, PullRequestReplacementStore replacements, PullRequestService pullRequests, Clock clock)
     {
         this.tasks = requireNonNull(tasks, "tasks is null");
         this.gate = requireNonNull(gate, "gate is null");
@@ -92,6 +94,7 @@ public class ReviewFixService
         this.ownership = requireNonNull(ownership, "ownership is null");
         this.comments = requireNonNull(comments, "comments is null");
         this.store = requireNonNull(store, "store is null");
+        this.replacements = requireNonNull(replacements, "replacements is null");
         this.pullRequests = requireNonNull(pullRequests, "pullRequests is null");
         this.clock = requireNonNull(clock, "clock is null");
     }
@@ -126,7 +129,8 @@ public class ReviewFixService
      */
     public synchronized void request(AgentTask task)
     {
-        if (!task.interactive() || task.state() != TaskState.OPEN || task.defaults().developmentAutomation().filter(DevelopmentAutomation::reviewFix).isEmpty()) {
+        if (!task.interactive() || task.state() != TaskState.OPEN || task.defaults().developmentAutomation().filter(DevelopmentAutomation::reviewFix).isEmpty()
+                || replacementPending(task.id().toString())) {
             return;
         }
         Optional<PullRequest> pullRequest = ownership.linkedPullRequest(task).filter(TaskPullRequestOwnership::isOpen);
@@ -135,7 +139,7 @@ public class ReviewFixService
         }
         PullRequest pr = pullRequest.orElseThrow();
         String taskId = task.id().toString();
-        List<ReviewFixReply> handled = store.listByTask(taskId);
+        List<ReviewFixReply> handled = store.listByTask(taskId).stream().filter(reply -> belongsTo(reply, pr)).collect(toImmutableList());
         abandonUnknownPosts(handled);
         List<ReviewFixReply> unanswered = handled.stream().filter(reply -> reply.waiting() && reply.reply().isEmpty()).collect(toImmutableList());
         if (!unanswered.isEmpty()) {
@@ -178,16 +182,39 @@ public class ReviewFixService
      */
     public synchronized void publish(TaskId taskId, TurnId turnId, boolean pushed)
     {
-        saveAnswers(taskId, turnId);
+        if (replacementPending(taskId.toString())) {
+            return;
+        }
+        Optional<PullRequest> current = tasks.find(taskId).flatMap(ownership::linkedPullRequest).filter(TaskPullRequestOwnership::isOpen);
+        if (current.isEmpty()) {
+            return;
+        }
+        saveAnswers(taskId, turnId, current.orElseThrow());
         for (ReviewFixReply reply : store.listByTask(taskId.toString())) {
-            if (!reply.waiting() || reply.reply().isEmpty() || reply.postStartedAt().isPresent() || (reply.fixed() && !pushed)) {
+            if (!belongsTo(reply, current.orElseThrow()) || !reply.waiting() || reply.reply().isEmpty() || reply.postStartedAt().isPresent() || (reply.fixed() && !pushed)) {
                 continue;
             }
             turns.executeDevelopmentAction(taskId, turnId, () -> post(reply));
         }
     }
 
-    private void saveAnswers(TaskId taskId, TurnId turnId)
+    /** Rebinds and retires old replies under the same lock as review requests and posts, preserving their history. */
+    public synchronized void pullRequestReplaced(TaskId taskId, String repo, int number, Runnable rebind)
+    {
+        requireNonNull(rebind, "rebind is null").run();
+        retireReplies(taskId, repo, number);
+    }
+
+    private void retireReplies(TaskId taskId, String repo, int number)
+    {
+        store.listByTask(taskId.toString()).stream()
+                .filter(reply -> reply.repo().equalsIgnoreCase(repo) && reply.number() == number && reply.waiting())
+                .forEach(reply -> store.update(reply.failed(reply.postStartedAt().isPresent()
+                        ? "The original pull request was replaced; this reply's outcome is unknown and it will not be sent again"
+                        : "The original pull request was replaced; this reply will not be posted")));
+    }
+
+    private void saveAnswers(TaskId taskId, TurnId turnId, PullRequest pr)
     {
         Map<Long, ReviewThreadReply> answers = turnStore.find(turnId).flatMap(AgentTurn::developmentResult)
                 .filter(DevelopmentResultReport::readyForDelivery)
@@ -195,7 +222,7 @@ public class ReviewFixService
                 .orElse(ImmutableMap.of());
         for (ReviewFixReply reply : store.listByTask(taskId.toString())) {
             ReviewThreadReply answer = answers.get(reply.commentId());
-            if (answer != null && reply.postStartedAt().isEmpty() && reply.postedAt().isEmpty()
+            if (belongsTo(reply, pr) && answer != null && reply.postStartedAt().isEmpty() && reply.postedAt().isEmpty()
                     && reply.waiting()
                     && (reply.reply().isEmpty() || !reply.reply().orElseThrow().equals(answer.body()))) {
                 store.update(reply.answered(answer.body(), answer.fixed()));
@@ -232,13 +259,31 @@ public class ReviewFixService
     /** Whether an answer is saved but not posted, awaiting a later authorized delivery. */
     public boolean awaitingPost(TaskId taskId)
     {
-        return store.listByTask(taskId.toString()).stream().anyMatch(reply -> reply.waiting() && reply.reply().isPresent() && reply.postStartedAt().isEmpty());
+        if (replacementPending(taskId.toString())) {
+            return false;
+        }
+        return tasks.find(taskId).flatMap(ownership::linkedPullRequest).filter(TaskPullRequestOwnership::isOpen)
+                .map(pr -> store.listByTask(taskId.toString()).stream()
+                        .anyMatch(reply -> belongsTo(reply, pr) && reply.waiting() && reply.reply().isPresent() && reply.postStartedAt().isEmpty()))
+                .orElse(false);
     }
 
     /** No comment is being fixed and no review thread is open, so review leaves nothing a merge would skip past. */
     public boolean settled(AgentTask task, PullRequest pr)
     {
-        return store.listByTask(task.id().toString()).stream().noneMatch(ReviewFixReply::waiting) && comments.openThreads(pr.repo(), pr.number()).isEmpty();
+        return !replacementPending(task.id().toString())
+                && store.listByTask(task.id().toString()).stream().filter(reply -> belongsTo(reply, pr)).noneMatch(ReviewFixReply::waiting)
+                && comments.openThreads(pr.repo(), pr.number()).isEmpty();
+    }
+
+    private boolean replacementPending(String taskId)
+    {
+        return replacements.find(taskId).filter(operation -> !operation.completed()).isPresent();
+    }
+
+    private static boolean belongsTo(ReviewFixReply reply, PullRequest pr)
+    {
+        return reply.repo().equalsIgnoreCase(pr.repo()) && reply.number() == pr.number();
     }
 
     /** How the task's handed-over comments stand, for its automation status; empty before the first request. */
@@ -282,7 +327,7 @@ public class ReviewFixService
                     && turn.flatMap(AgentTurn::developmentResult).map(DevelopmentResultReport::readyForDelivery).orElse(true);
             if (ended) {
                 // A lost continuation has no publication authority; keep its answers for the next authorized delivery.
-                saveAnswers(task.id(), turn.orElseThrow().id());
+                saveAnswers(task.id(), turn.orElseThrow().id(), pr);
                 Set<Long> ids = requested.stream().map(ReviewFixReply::commentId).collect(toImmutableSet());
                 store.listByTask(task.id().toString()).stream()
                         .filter(reply -> ids.contains(reply.commentId()) && reply.waiting() && reply.reply().isEmpty())
@@ -302,6 +347,13 @@ public class ReviewFixService
 
     private void send(AgentTask task, PullRequest pr, String key, List<ReviewThreadItem> threads)
     {
+        if (replacementPending(task.id().toString())) {
+            return;
+        }
+        if (ownership.linkedPullRequest(task).filter(current -> current.repo().equalsIgnoreCase(pr.repo()) && current.number() == pr.number()).isEmpty()) {
+            retireReplies(task.id(), pr.repo(), pr.number());
+            return;
+        }
         boolean busy = turnStore.findActive(task.id()).isPresent() || task.developmentContinuationUnfinished();
         TaskInput.send(turns, task.id(), task.version(), prompt(pr, threads), key, busy, Optional.empty());
     }

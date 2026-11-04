@@ -457,6 +457,17 @@ The active agent keeps its original branch and permission grants for the entire 
 Imported, published, and borrowed branches stay stable. A late suggestion never delays
 Send or publication; it can be considered at the next successful idle boundary.
 
+An ordinary development turn can request replacement of its linked GitHub pull
+request through a task-scoped tool. A one-shot approval binds the current PR,
+account, destination, commit and replacement branch. The application copies the
+already-published title, description and draft status, verifies the replacement,
+then reassigns the existing task before closing the previous PR. The local branch
+and checkout stay stable. A durable receipt retains uncertain creates and partial
+completion; retries reconcile existing results before writing again. Pending
+replacement holds review and merge automation. Old review replies are retired,
+CI follows the replacement, and merge readiness is checked again with a fresh
+delay. Provider denials do not grant permission to execute a shell alternative.
+
 A branch rename records a durable intent outside the checkout before changing Git.
 Recovery reconciles only the recorded old/new branch pair at the recorded commit, under
 the task and workspace locks. Admission, completion, and cleanup reload the reconciled

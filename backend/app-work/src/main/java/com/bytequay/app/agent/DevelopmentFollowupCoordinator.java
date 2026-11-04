@@ -34,7 +34,9 @@ import com.bytequay.app.service.hosting.HostingIntegrations;
 import com.bytequay.app.workspace.WorkspaceHostingService;
 import com.bytequay.core.domain.CreatedPullRequest;
 import com.bytequay.core.domain.PullRequestIdentity;
+import com.bytequay.core.domain.PullRequestReplacement;
 import com.bytequay.core.hosting.RepositoryVisibility;
+import com.bytequay.core.store.PullRequestReplacementStore;
 import com.google.common.collect.ImmutableList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -71,14 +73,16 @@ public class DevelopmentFollowupCoordinator
     private final Clock clock;
     private final DevelopmentBranchService branches;
     private final ReviewFixService reviewFixes;
+    private final PullRequestReplacementStore replacements;
     private final ConcurrentMap<TaskId, Accepted> accepted = new ConcurrentHashMap<>();
     private final ConcurrentMap<TaskId, PendingPublication> publications = new ConcurrentHashMap<>();
 
     public DevelopmentFollowupCoordinator(AgentTurnService turns, AgentTurnStore turnStore, DevelopmentGitInspector git,
             Executor executor, CiAutofixService ci, WorkspaceHostingService hosting, HostingIntegrations integrations, Clock clock, DevelopmentBranchService branches,
-            ReviewFixService reviewFixes, HostingConnectionService connections)
+            ReviewFixService reviewFixes, HostingConnectionService connections, PullRequestReplacementStore replacements)
     {
         this.reviewFixes = requireNonNull(reviewFixes, "reviewFixes is null");
+        this.replacements = requireNonNull(replacements, "replacements is null");
         this.turns = requireNonNull(turns, "turns is null");
         this.turnStore = requireNonNull(turnStore, "turnStore is null");
         this.git = requireNonNull(git, "git is null");
@@ -155,6 +159,19 @@ public class DevelopmentFollowupCoordinator
         });
     }
 
+    /** An approved replacement changes the publication destination without changing the turn's code. */
+    public void pullRequestReplaced(AgentTask task, TurnId turnId)
+    {
+        DevelopmentBaseline baseline = git.capture(task);
+        DevelopmentPublicationFacts publication = git.inspectPublication(baseline.worktree(), baseline.route());
+        accepted.computeIfPresent(task.id(), (id, source) -> {
+            checkState(source.turnId().equals(turnId), "The development turn changed during PR replacement");
+            DevelopmentBaseline rerouted = new DevelopmentBaseline(baseline.worktree(), baseline.route(), source.baseline().local());
+            return new Accepted(turnId, rerouted, source.summaryBaseline(), source.localPending(),
+                    CompletableFuture.completedFuture(new RemoteBaseline(Optional.of(publication), Optional.empty(), false)));
+        });
+    }
+
     private void advance(DevelopmentTurnCompletion completion, Instant activatedAt)
     {
         if (!owns(completion)) {
@@ -164,6 +181,9 @@ public class DevelopmentFollowupCoordinator
         String action = "Check development result";
         try {
             requireSuccessful(completion);
+            Optional<PullRequestReplacement> replacement = replacements.find(completion.task().id().toString()).filter(operation -> !operation.completed());
+            checkState(replacement.isEmpty(), "PR replacement is unfinished; ask the agent to retry replace_task_pull_request with branch %s",
+                    replacement.map(PullRequestReplacement::branch).orElse(""));
             if (completion.turn().developmentResult().filter(DevelopmentResultReport::readyForDelivery).isPresent()) {
                 turns.executeDevelopmentAction(completion.task().id(), completion.turn().id(), () -> branches.prepare(completion.task()));
             }
@@ -296,7 +316,7 @@ public class DevelopmentFollowupCoordinator
                         completion.task().workspaceId().orElseThrow(),
                         publishedPr.pullRequest().number(),
                         automation.ciLaneId().orElse(completion.task().laneId()),
-                        "development-ci:" + completion.task().id() + ":" + publishedPr.headSha()),
+                        "development-ci:" + completion.task().id() + ":" + publishedPr.pullRequest().number() + ":" + publishedPr.headSha()),
                         completion.task().id(), publishedPr, activatedAt);
             }
             publishReviewReplies(completion, baseline, automation);

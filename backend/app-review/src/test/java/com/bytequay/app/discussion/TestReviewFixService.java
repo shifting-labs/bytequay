@@ -47,8 +47,11 @@ import com.bytequay.core.domain.PrTimelineComment;
 import com.bytequay.core.domain.PrTimelineEvent;
 import com.bytequay.core.domain.PrTimelinePayload;
 import com.bytequay.core.domain.PullRequest;
+import com.bytequay.core.domain.PullRequestReplacement;
+import com.bytequay.core.domain.RepoRef;
 import com.bytequay.core.domain.StoredPrDetail;
 import com.bytequay.core.store.PrDetailStore;
+import com.bytequay.core.store.PullRequestReplacementStore;
 import com.bytequay.core.store.PullRequestStore;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -97,19 +100,22 @@ class TestReviewFixService
     private static final String URL = "https://github.com/owner/repo/pull/12";
 
     private final AgentTurnService turns = mock(AgentTurnService.class);
+    private final AgentTaskStore tasks = mock(AgentTaskStore.class);
     private final AgentTurnStore turnStore = mock(AgentTurnStore.class);
     private final TaskPullRequestOwnership ownership = mock(TaskPullRequestOwnership.class);
     private final PullRequestStore pullRequestStore = mock(PullRequestStore.class);
     private final PrDetailStore details = mock(PrDetailStore.class);
     private final PullRequestService pullRequests = mock(PullRequestService.class);
+    private final PullRequestReplacementStore replacements = mock(PullRequestReplacementStore.class);
     private final Map<String, ReviewFixReply> rows = new LinkedHashMap<>();
-    private final ReviewFixService service = new ReviewFixService(mock(AgentTaskStore.class), mock(AgentServingGate.class, withSettings().mockMaker(MockMakers.INLINE)),
-            turns, turnStore, ownership, new ReviewCommentReader(pullRequestStore, details), new MemoryStore(), pullRequests, Clock.fixed(NOW, ZoneOffset.UTC));
+    private final ReviewFixService service = new ReviewFixService(tasks, mock(AgentServingGate.class, withSettings().mockMaker(MockMakers.INLINE)),
+            turns, turnStore, ownership, new ReviewCommentReader(pullRequestStore, details), new MemoryStore(), replacements, pullRequests, Clock.fixed(NOW, ZoneOffset.UTC));
     private final AgentTask task = task(AutomationLevel.REVIEW_FIX);
 
     @BeforeEach
     void setUp()
     {
+        when(tasks.find(task.id())).thenReturn(Optional.of(task));
         doAnswer(call -> {
             call.<Runnable>getArgument(2).run();
             return null;
@@ -288,6 +294,103 @@ class TestReviewFixService
         service.request(task(AutomationLevel.CI_FIX));
 
         verify(turns, never()).start(any());
+    }
+
+    @Test
+    void replacementRetiresOnlyTheOriginalPullRequestsPendingRepliesAndPreservesUnknownPosts()
+    {
+        ReviewFixReply pending = ReviewFixReply.requested(task.id().toString(), REPO, 12, 10, 11, "old", NOW).answered("Fixed", true);
+        ReviewFixReply unknown = ReviewFixReply.requested(task.id().toString(), REPO, 12, 20, 21, "old", NOW).answered("Done", true).postStarted(NOW);
+        ReviewFixReply posted = ReviewFixReply.requested(task.id().toString(), REPO, 12, 30, 31, "old", NOW).posted(NOW);
+        ReviewFixReply replacement = ReviewFixReply.requested(task.id().toString(), REPO, 13, 40, 41, "new", NOW);
+        for (ReviewFixReply reply : ImmutableList.of(pending, unknown, posted, replacement)) {
+            rows.put(reply.id(), reply);
+        }
+
+        service.pullRequestReplaced(task.id(), REPO, 12, () -> {});
+        service.pullRequestReplaced(task.id(), REPO, 12, () -> {});
+
+        assertThat(rows.get(pending.id()).waiting()).isFalse();
+        assertThat(rows.get(unknown.id()).failure().orElseThrow()).contains("outcome is unknown", "will not be sent again");
+        assertThat(rows.get(posted.id())).isEqualTo(posted);
+        assertThat(rows.get(replacement.id())).isEqualTo(replacement);
+        verify(pullRequests, never()).replyToReviewComment(anyString(), anyInt(), anyLong(), anyString());
+    }
+
+    @Test
+    void failedReassignmentPreservesTheOriginalReplies()
+    {
+        ReviewFixReply pending = ReviewFixReply.requested(task.id().toString(), REPO, 12, 10, 11, "old", NOW).answered("Fixed", true);
+        rows.put(pending.id(), pending);
+
+        assertThatThrownBy(() -> service.pullRequestReplaced(task.id(), REPO, 12, () -> {
+            throw new IllegalStateException("Assignment changed");
+        })).hasMessageContaining("Assignment changed");
+
+        assertThat(rows.get(pending.id())).isEqualTo(pending);
+    }
+
+    @Test
+    void reassignedTaskDoesNotPublishOrWaitForOldRepliesEvenBeforeCleanup()
+    {
+        ReviewFixReply stale = ReviewFixReply.requested(task.id().toString(), REPO, 11, 10, 11, "old", NOW).answered("Old answer", true);
+        rows.put(stale.id(), stale);
+        cache();
+
+        service.publish(task.id(), answered(), true);
+        service.request(task);
+
+        assertThat(service.settled(task, pullRequest())).isTrue();
+        assertThat(service.awaitingPost(task.id())).isFalse();
+        verify(turns, never()).start(any());
+        verify(pullRequests, never()).replyToReviewComment(anyString(), anyInt(), anyLong(), anyString());
+        verify(pullRequests, never()).setReviewThreadResolved(anyString(), anyInt(), anyLong(), eq(true));
+    }
+
+    @Test
+    void reassignmentWhileReadingCommentsDoesNotQueueAnOldPullRequestFollowup()
+    {
+        cache(thread(10, comment(11L, "bob", false, "Rename it.")));
+        when(pullRequests.reviewCommentsByPushers(REPO, 12)).thenAnswer(ignored -> {
+            when(ownership.linkedPullRequest(task)).thenReturn(Optional.empty());
+            return ImmutableSet.of(11L);
+        });
+
+        service.request(task);
+
+        verify(turns, never()).start(any());
+        assertThat(rows.values()).singleElement().satisfies(reply -> {
+            assertThat(reply.waiting()).isFalse();
+            assertThat(reply.failure().orElseThrow()).contains("replaced");
+        });
+    }
+
+    @Test
+    void incompleteReplacementHoldsReviewRequestsAndRepliesAfterTheTurnStops()
+    {
+        PullRequestReplacement operation = new PullRequestReplacement(task.id().toString(), "w1", 1, 1, new RepoRef("owner", "repo"), new RepoRef("owner", "repo"),
+                11, "old-branch", "main", "b".repeat(40), "branch", "Task", "Body", true, true, Optional.of(12), false);
+        when(replacements.find(task.id().toString())).thenReturn(Optional.of(operation));
+        ReviewFixReply answer = ReviewFixReply.requested(task.id().toString(), REPO, 12, 40, 41, "new", NOW).answered("Fixed", true);
+        rows.put(answer.id(), answer);
+        cache(thread(10, comment(11L, "bob", false, "Rename it.")));
+        TurnId turnId = answered();
+
+        service.request(task);
+        service.publish(task.id(), turnId, true);
+
+        assertThat(service.awaitingPost(task.id())).isFalse();
+        assertThat(service.settled(task, pullRequest())).isFalse();
+        assertThat(rows.get(answer.id())).isEqualTo(answer);
+        verify(turns, never()).start(any());
+        verify(pullRequests, never()).replyToReviewComment(anyString(), anyInt(), anyLong(), anyString());
+
+        when(replacements.find(task.id().toString())).thenReturn(Optional.of(operation.complete()));
+        service.request(task);
+        service.publish(task.id(), turnId, true);
+
+        verify(turns).start(any());
+        verify(pullRequests).replyToReviewComment(REPO, 12, 40, "Fixed");
     }
 
     private TurnId answered(ReviewThreadReply... replies)

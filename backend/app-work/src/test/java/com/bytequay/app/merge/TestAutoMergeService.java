@@ -47,10 +47,13 @@ import com.bytequay.core.domain.PrRawDetail;
 import com.bytequay.core.domain.PrTimelineEvent;
 import com.bytequay.core.domain.PrTimelinePayload;
 import com.bytequay.core.domain.PullRequest;
+import com.bytequay.core.domain.PullRequestReplacement;
+import com.bytequay.core.domain.RepoRef;
 import com.bytequay.core.domain.StoredPrDetail;
 import com.bytequay.core.merge.AutoMerge;
 import com.bytequay.core.merge.AutoMergeStore;
 import com.bytequay.core.store.PrDetailStore;
+import com.bytequay.core.store.PullRequestReplacementStore;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import org.junit.jupiter.api.BeforeEach;
@@ -96,8 +99,10 @@ class TestAutoMergeService
     private final AppSettingsService settings = mock(AppSettingsService.class);
     private final Map<String, AutoMerge> rows = new HashMap<>();
     private final AgentTurnStore turns = mock(AgentTurnStore.class);
+    private final PullRequestReplacementStore replacements = mock(PullRequestReplacementStore.class);
     private final AutoMergeService service = new AutoMergeService(mock(AgentTaskStore.class), turns, mock(QueuedInputStore.class),
-            mock(AgentServingGate.class, withSettings().mockMaker(MockMakers.INLINE)), ownership, pullRequests, details, ciRuns, reviewFixes, new MemoryStore(), settings, clock);
+            mock(AgentServingGate.class, withSettings().mockMaker(MockMakers.INLINE)), ownership, pullRequests, details, ciRuns, reviewFixes, new MemoryStore(),
+            replacements, settings, clock);
     private final AgentTask task = task();
 
     @BeforeEach
@@ -253,6 +258,18 @@ class TestAutoMergeService
     }
 
     @Test
+    void waitsWhileTheTaskContinuesDeliveryAfterItsTurnStops()
+    {
+        service.advance(task);
+        clock.advance(Duration.ofHours(2));
+
+        service.advance(task.withDevelopmentContinuation(true, clock.instant()));
+
+        assertThat(summary().message()).contains("Waiting for the task to finish its current work");
+        verify(pullRequests, never()).mergePullRequest(anyString(), anyInt(), anyLong(), anyString(), anyString());
+    }
+
+    @Test
     void anyBlockerRestartsTheWaitAndSaysWhy()
     {
         service.advance(task);
@@ -343,6 +360,75 @@ class TestAutoMergeService
         verify(pullRequests, never()).mergePullRequest(anyString(), anyInt(), anyLong(), anyString(), anyString());
         assertThat(summary().state()).isEqualTo("CANCELLED");
         assertThatThrownBy(() -> service.cancel(task.id().toString())).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void replacingThePullRequestAtTheSameHeadRestartsTheFullMergeDelay()
+    {
+        service.advance(task);
+        clock.advance(Duration.ofMinutes(59));
+
+        service.preparePullRequestReplacement(task.id().toString());
+        service.pullRequestReplaced(task.id().toString(), HEAD);
+        service.pullRequestReplaced(task.id().toString(), HEAD);
+
+        assertThat(summary().mergeAt()).isEmpty();
+        service.advance(task);
+        assertThat(summary().mergeAt()).contains(clock.instant().plus(Duration.ofHours(1)));
+        clock.advance(Duration.ofMinutes(1));
+        service.advance(task);
+        verify(pullRequests, never()).mergePullRequest(anyString(), anyInt(), anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    void incompleteReplacementHoldsTheMergeDelayAfterTheTurnStops()
+    {
+        service.advance(task);
+        service.preparePullRequestReplacement(task.id().toString());
+        PullRequestReplacement operation = new PullRequestReplacement(task.id().toString(), "w1", 1, 1, new RepoRef("owner", "repo"), new RepoRef("owner", "repo"),
+                11, "old-branch", "main", HEAD, "branch", "Task", "Body", true, true, Optional.of(12), false);
+        when(replacements.find(task.id().toString())).thenReturn(Optional.of(operation));
+        clock.advance(Duration.ofHours(2));
+
+        service.advance(task);
+
+        assertThat(summary().mergeAt()).isEmpty();
+        verify(pullRequests, never()).mergePullRequest(anyString(), anyInt(), anyLong(), anyString(), anyString());
+
+        when(replacements.find(task.id().toString())).thenReturn(Optional.of(operation.complete()));
+        service.advance(task);
+
+        assertThat(summary().mergeAt()).contains(clock.instant().plus(Duration.ofHours(1)));
+        verify(pullRequests, never()).mergePullRequest(anyString(), anyInt(), anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    void replacementPreservesAnExplicitAutoMergeStop()
+    {
+        service.advance(task);
+        service.cancel(task.id().toString());
+
+        service.preparePullRequestReplacement(task.id().toString());
+        service.pullRequestReplaced(task.id().toString(), HEAD);
+        clock.advance(Duration.ofHours(2));
+        service.advance(task);
+
+        assertThat(summary().state()).isEqualTo("CANCELLED");
+        verify(pullRequests, never()).mergePullRequest(anyString(), anyInt(), anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    void replacementCannotDiscardAnUncertainOrQueuedMerge()
+    {
+        AutoMerge started = AutoMerge.waiting(task.id().toString(), HEAD, "Ready").started(clock.instant());
+        for (AutoMerge current : ImmutableList.of(started, started.ended(AutoMerge.Outcome.FAILED, "Unknown outcome"),
+                started.ended(AutoMerge.Outcome.QUEUED, "Queued"), started.ended(AutoMerge.Outcome.MERGED, "Merged"))) {
+            rows.put(task.id().toString(), current);
+
+            assertThatThrownBy(() -> service.preparePullRequestReplacement(task.id().toString())).hasMessageContaining("merge has started");
+            assertThatThrownBy(() -> service.pullRequestReplaced(task.id().toString(), HEAD)).hasMessageContaining("must not be discarded");
+            assertThat(rows.get(task.id().toString())).isEqualTo(current);
+        }
     }
 
     private AutoMergeService.AutoMergeSummary summary()

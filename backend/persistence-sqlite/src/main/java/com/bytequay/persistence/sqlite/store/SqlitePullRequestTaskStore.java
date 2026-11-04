@@ -24,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Locale;
 import java.util.Optional;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 @Repository
@@ -56,5 +57,23 @@ public class SqlitePullRequestTaskStore
     public void insert(PullRequestTask assignment)
     {
         repository.saveAndFlush(PullRequestTaskEntity.fromDomain(assignment));
+    }
+
+    @Override
+    @Transactional
+    public boolean reassign(PullRequestTask replacement, Optional<PullRequestTask> expected)
+    {
+        requireNonNull(replacement, "replacement is null");
+        requireNonNull(expected, "expected is null");
+        expected.ifPresent(previous -> checkArgument(previous.taskId().equals(replacement.taskId()) && previous.workspaceId().equals(replacement.workspaceId()),
+                "replacement must stay in the same task and workspace"));
+        Optional<PullRequestTaskEntity> current = repository.findById(replacement.taskId());
+        if (!current.map(PullRequestTaskEntity::toDomain).equals(expected)) {
+            return false;
+        }
+        PullRequestTaskEntity entity = current.orElseGet(() -> PullRequestTaskEntity.fromDomain(replacement));
+        entity.update(replacement);
+        repository.saveAndFlush(entity);
+        return true;
     }
 }

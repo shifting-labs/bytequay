@@ -48,6 +48,7 @@ import com.bytequay.core.ci.CiAutofixRunId;
 import com.bytequay.core.domain.CreatedPullRequest;
 import com.bytequay.core.domain.PullRequestIdentity;
 import com.bytequay.core.domain.PullRequestRef;
+import com.bytequay.core.domain.PullRequestReplacement;
 import com.bytequay.core.domain.RepoRef;
 import com.bytequay.core.hosting.HostingProvider;
 import com.bytequay.core.hosting.HostingServer;
@@ -55,6 +56,7 @@ import com.bytequay.core.hosting.HostingTarget;
 import com.bytequay.core.hosting.PullRequestContentReader;
 import com.bytequay.core.hosting.PullRequestWriter;
 import com.bytequay.core.hosting.RepositoryVisibility;
+import com.bytequay.core.store.PullRequestReplacementStore;
 import com.google.common.collect.ImmutableList;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -127,9 +129,10 @@ class TestDevelopmentFollowupCoordinator
     private final Set<String> held = new HashSet<>();
     private final DevelopmentBranchService branches = mock(DevelopmentBranchService.class);
     private final ReviewFixService reviewFixes = mock(ReviewFixService.class);
+    private final PullRequestReplacementStore replacements = mock(PullRequestReplacementStore.class);
     private List<ReviewThreadReply> reviewReplies = ImmutableList.of();
     private final DevelopmentFollowupCoordinator coordinator = new DevelopmentFollowupCoordinator(
-            turns, turnStore, git, pending::add, ci, hosting, dispatch, clock, branches, reviewFixes, connections);
+            turns, turnStore, git, pending::add, ci, hosting, dispatch, clock, branches, reviewFixes, connections, replacements);
     private final TaskId taskId = TaskId.random();
     private final TaskWorktree worktree = new TaskWorktree(taskId, "workspace", new RepositoryIdentity("owner", "repo"),
             Path.of("/tmp", taskId.toString()), "bytequay/task/" + taskId, BASE);
@@ -1040,7 +1043,7 @@ class TestDevelopmentFollowupCoordinator
         var rejected = new DevelopmentFollowupCoordinator(turns, turnStore, git, ignored -> {
             throw new RejectedExecutionException("stopped");
         },
-                ci, hosting, dispatch, clock, branches, reviewFixes, connections);
+                ci, hosting, dispatch, clock, branches, reviewFixes, connections, replacements);
         rejected.completed(outcome);
         verify(turns).failDevelopmentContinuation(eq(taskId), eq(source.id()), contains("Could not start"));
     }
@@ -1363,6 +1366,78 @@ class TestDevelopmentFollowupCoordinator
         verify(git, never()).inspectLocal(eq(worktree), any());
     }
 
+    @Test
+    void unfinishedReplacementHoldsOrdinaryDeliveryEvenWhenTheAgentReportsReadiness()
+    {
+        prepare(local(BASE, false), local(HEAD, false), FULL, true);
+        when(replacements.find(taskId.toString())).thenReturn(Optional.of(new PullRequestReplacement(taskId.toString(), "workspace", 1, 2,
+                route.headRepository(), route.baseRepository(), 7, route.headBranch(), route.baseBranch(), HEAD, "fix-value-handling",
+                "Fix value handling", "Description", true, true, Optional.of(8), false)));
+
+        advance();
+
+        verify(turns).failDevelopmentContinuation(eq(taskId), eq(source.id()), contains("PR replacement is unfinished"));
+        verifyNoInteractions(writes, ci, branches);
+        noFollowup();
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void approvedReplacementSupersedesTheAcceptedRouteAndAnyLateOriginalRead(boolean furtherChanges)
+    {
+        source = running(DRAFT_ONLY);
+        history.add(source);
+        DevelopmentPublicationRoute originalRoute = route;
+        when(git.capture(task)).thenReturn(new DevelopmentBaseline(worktree, route, local(HEAD, false)));
+        coordinator.accepted(task, source);
+        Runnable oldRemoteRead = pending.remove();
+
+        PullRequestRef replacementRef = PullRequestRef.of("owner", "repo", 8);
+        route = new DevelopmentPublicationRoute(route.server(), route.headRepository(), route.baseRepository(), route.pushUrl(), route.sourceRemote(),
+                route.baseBranch(), route.baseSha(), "fix-value-handling", Optional.of(replacementRef));
+        PullRequestIdentity replacement = new PullRequestIdentity(replacementRef, "https://github.com/owner/repo/pull/8", route.headRepository(), route.headBranch(), HEAD,
+                route.baseRepository(), route.baseBranch(), BASE, PullRequestIdentity.State.OPEN, true, "owner");
+        AtomicReference<DevelopmentPublicationFacts> remote = new AtomicReference<>(publication(Optional.of(HEAD), Optional.of(replacement)));
+        when(git.capture(task)).thenReturn(new DevelopmentBaseline(worktree, route, local(furtherChanges ? NEXT : HEAD, false)));
+        when(git.inspectPublication(worktree, route)).thenAnswer(ignored -> remote.get());
+        coordinator.pullRequestReplaced(task, source.id());
+        when(git.inspectPublication(worktree, originalRoute)).thenThrow(new IllegalStateException("The original PR is closed and the task now tracks its replacement"));
+        oldRemoteRead.run();
+
+        source = source.withDevelopmentResult(report(true)).finish(TurnState.COMPLETED, AgentMetrics.empty(), Optional.empty(), NOW);
+        history.set(0, source);
+        outcome = new DevelopmentTurnCompletion(task, source, true, Optional.empty());
+        when(turns.ownsDevelopmentContinuation(taskId, source.id())).thenReturn(true);
+        when(git.inspectLocal(worktree, route)).thenReturn(local(furtherChanges ? NEXT : HEAD, false));
+        held.add(HEAD);
+        generated(REFINE_SUMMARY, true);
+        if (furtherChanges) {
+            doAnswer(ignored -> {
+                remote.set(publication(Optional.of(NEXT), Optional.of(new PullRequestIdentity(replacementRef, replacement.url(), route.headRepository(), route.headBranch(), NEXT,
+                        route.baseRepository(), route.baseBranch(), BASE, PullRequestIdentity.State.OPEN, true, "owner"))));
+                return null;
+            }).when(git).pushDevelopmentHead(worktree, route, NEXT, Optional.of(HEAD));
+            generated(CREATE_DRAFT_PR, true, () -> assertThat(coordinator.publishDraftPullRequest(taskId.toString(), "Follow-up change", "Body"))
+                    .contains("pull/8", "already tracks this branch"));
+        }
+
+        advance();
+
+        verify(turns).finishDevelopmentContinuation(taskId, source.id());
+        verify(turns, never()).failDevelopmentContinuation(any(), any(), anyString());
+        verify(git, never()).inspectLocal(worktree, originalRoute);
+        verify(git, never()).pushDevelopmentHead(eq(worktree), eq(originalRoute), anyString(), any());
+        verifyNoInteractions(writes, ci);
+        if (furtherChanges) {
+            verify(git).pushDevelopmentHead(worktree, route, NEXT, Optional.of(HEAD));
+            assertThat(remote.get().matchingPullRequests()).extracting(PullRequestIdentity::pullRequest).containsExactly(replacementRef);
+        }
+        else {
+            noFollowup();
+            verify(git, never()).pushDevelopmentHead(any(), any(), anyString(), any());
+        }
+    }
+
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void publishReusesTheTrackingPullRequestInsteadOfOpeningASecond(boolean assigned)
@@ -1492,7 +1567,7 @@ class TestDevelopmentFollowupCoordinator
                 "workspace",
                 7,
                 lane,
-                "development-ci:" + taskId + ":" + HEAD)), eq(taskId), eq(pr(HEAD, true)), eq(NOW));
+                "development-ci:" + taskId + ":" + pr(HEAD, true).pullRequest().number() + ":" + HEAD)), eq(taskId), eq(pr(HEAD, true)), eq(NOW));
         order.verify(turns).finishDevelopmentContinuation(taskId, source.id());
         verify(ci, never()).advance(any());
         verify(writes, never()).markReady(any(), anyInt());

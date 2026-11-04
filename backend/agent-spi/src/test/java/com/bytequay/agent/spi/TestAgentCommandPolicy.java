@@ -50,7 +50,7 @@ class TestAgentCommandPolicy
     }
 
     @Test
-    void publicationToolOwnershipDoesNotForbidAuthorizedCliWork()
+    void publicationToolsFollowTheSessionScopeAndKeepReplacementInByteQuay()
     {
         assertThat(DevelopmentResultBridge.INSTRUCTION).contains(
                 "readyForDelivery=false before asking for an unresolved decision",
@@ -60,8 +60,9 @@ class TestAgentCommandPolicy
                 "Missing or invalid reports never authorize delivery",
                 "During ByteQuay's generated draft-publication step",
                 "use the tool without duplicating its writes",
-                "explicitly requested git or gh publishing follows the shared command authorization",
-                "Its refusal does not block an authorized CLI operation");
+                "command-based publication is available only when the session's command scope permits it",
+                "Source-backed tasks must use ByteQuay's publication actions",
+                "replace_task_pull_request action when available");
         assertThat(DevelopmentResultBridge.INSTRUCTION).doesNotContain("never run git push", "never ask\nfor credentials");
     }
 

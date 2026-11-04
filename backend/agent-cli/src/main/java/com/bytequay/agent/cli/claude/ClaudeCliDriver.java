@@ -53,6 +53,7 @@ import com.bytequay.agent.spi.ProviderTurnRef;
 import com.bytequay.agent.spi.RelatedWorkspaceBridge;
 import com.bytequay.agent.spi.RunningTurn;
 import com.bytequay.agent.spi.SessionAccess;
+import com.bytequay.agent.spi.TaskPullRequestReplacementBridge;
 import com.bytequay.core.process.Utf8LineBuffer;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -473,7 +474,8 @@ public final class ClaudeCliDriver
             argv.add("--disable-slash-commands", "--tools", "Bash,Glob,Grep,Read,Edit,Write,NotebookEdit,WebFetch,WebSearch,TaskCreate,TaskUpdate,TaskList,TaskGet,TaskOutput,TaskStop"
                     + (reviewChildAgents && !permissionScope.unattended() ? ",Agent" : ""));
         }
-        if (permissionScope.access() == SessionAccess.TOOLS_ONLY || (registration.toolNames().contains(RelatedWorkspaceBridge.TOOL_NAME) && !reviewChildAgents)) {
+        if (permissionScope.access() == SessionAccess.TOOLS_ONLY || (!reviewChildAgents && (registration.toolNames().contains(RelatedWorkspaceBridge.TOOL_NAME)
+                || registration.toolNames().contains(TaskPullRequestReplacementBridge.TOOL_NAME)))) {
             // Older releases lack verified child identity in hooks; keep the related-work tool with the only agent.
             // A tools-only session starts no children at all: one would inherit its root-only tools.
             argv.add("--disallowedTools", "Agent,Task,Skill,Workflow,SendMessage");

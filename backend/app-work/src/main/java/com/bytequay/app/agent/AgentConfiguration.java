@@ -68,6 +68,7 @@ import com.bytequay.agent.spi.PullRequestCiBridge;
 import com.bytequay.agent.spi.PullRequestContextBridge;
 import com.bytequay.agent.spi.RelatedWorkspaceBridge;
 import com.bytequay.agent.spi.ReviewBridge;
+import com.bytequay.agent.spi.TaskPullRequestReplacementBridge;
 import com.bytequay.agent.spi.WorkItemBridge;
 import com.bytequay.app.agent.runtime.AgentProperties;
 import com.bytequay.app.agent.runtime.AgentStartupRecovery;
@@ -93,6 +94,7 @@ import com.bytequay.core.review.AgentReview;
 import com.bytequay.core.review.AgentReviewStore;
 import com.bytequay.core.review.ReviewRun;
 import com.bytequay.core.store.ModelApiKeyStore;
+import com.bytequay.core.store.PullRequestReplacementStore;
 import com.bytequay.core.store.PullRequestStore;
 import com.bytequay.core.store.PullRequestTaskStore;
 import com.bytequay.core.store.WorkspaceStore;
@@ -146,6 +148,7 @@ public class AgentConfiguration
             CiMemoryService ciMemoryService,
             BridgeResolver<ReviewBridge> reviews,
             BridgeResolver<DevelopmentResultBridge> developmentResults,
+            BridgeResolver<TaskPullRequestReplacementBridge> pullRequestReplacements,
             BridgeResolver<LocalReviewBridge> localReviews,
             BridgeResolver<PullRequestCiBridge> pullRequestChecks,
             BridgeResolver<IssueContextBridge> issueContexts,
@@ -160,6 +163,7 @@ public class AgentConfiguration
                         + "/internal/agent/claude/mcp"), objectMapper, (taskId, query) -> ciMemoryService.read(new ReadCiMemoryCommand(TaskId.valueOf(taskId), query)).markdown())
                 .reviews(reviews)
                 .developments(developmentResults)
+                .pullRequestReplacements(pullRequestReplacements)
                 .draftPullRequests((taskId, title, body) -> developmentFollowups.getObject().publishDraftPullRequest(taskId, title, body))
                 .localReviews(localReviews)
                 .pullRequestChecks(pullRequestChecks)
@@ -411,9 +415,9 @@ public class AgentConfiguration
     public DevelopmentFollowupCoordinator developmentFollowupCoordinator(AgentTurnService turns, AgentTurnStore turnStore,
             DevelopmentGitInspector git,
             CiAutofixService ci, WorkspaceHostingService hosting, HostingIntegrations integrations, Clock agentClock, DevelopmentBranchService branches,
-            @Qualifier(IO_EXECUTOR) Executor ioExecutor, ReviewFixService reviewFixes, HostingConnectionService connections)
+            @Qualifier(IO_EXECUTOR) Executor ioExecutor, ReviewFixService reviewFixes, HostingConnectionService connections, PullRequestReplacementStore replacements)
     {
-        return new DevelopmentFollowupCoordinator(turns, turnStore, git, ioExecutor, ci, hosting, integrations, agentClock, branches, reviewFixes, connections);
+        return new DevelopmentFollowupCoordinator(turns, turnStore, git, ioExecutor, ci, hosting, integrations, agentClock, branches, reviewFixes, connections, replacements);
     }
 
     @Bean

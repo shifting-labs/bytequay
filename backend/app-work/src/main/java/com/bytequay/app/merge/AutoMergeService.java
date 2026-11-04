@@ -38,6 +38,7 @@ import com.bytequay.core.domain.StoredPrDetail;
 import com.bytequay.core.merge.AutoMerge;
 import com.bytequay.core.merge.AutoMergeStore;
 import com.bytequay.core.store.PrDetailStore;
+import com.bytequay.core.store.PullRequestReplacementStore;
 import com.google.common.collect.ImmutableSet;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -86,13 +87,14 @@ public class AutoMergeService
     private final CiAutofixStore ciRuns;
     private final ReviewFixService reviewFixes;
     private final AutoMergeStore store;
+    private final PullRequestReplacementStore replacements;
     private final AppSettingsService settings;
     private final Clock clock;
     private final ExecutorService executor = Executors.newSingleThreadExecutor(Thread.ofVirtual().name("auto-merge-", 0).factory());
 
     public AutoMergeService(AgentTaskStore tasks, AgentTurnStore turns, QueuedInputStore queue, AgentServingGate gate, TaskPullRequestOwnership ownership,
-            PullRequestService pullRequests, PrDetailStore details, CiAutofixStore ciRuns, ReviewFixService reviewFixes, AutoMergeStore store, AppSettingsService settings,
-            Clock clock)
+            PullRequestService pullRequests, PrDetailStore details, CiAutofixStore ciRuns, ReviewFixService reviewFixes, AutoMergeStore store,
+            PullRequestReplacementStore replacements, AppSettingsService settings, Clock clock)
     {
         this.tasks = requireNonNull(tasks, "tasks is null");
         this.turns = requireNonNull(turns, "turns is null");
@@ -104,6 +106,7 @@ public class AutoMergeService
         this.ciRuns = requireNonNull(ciRuns, "ciRuns is null");
         this.reviewFixes = requireNonNull(reviewFixes, "reviewFixes is null");
         this.store = requireNonNull(store, "store is null");
+        this.replacements = requireNonNull(replacements, "replacements is null");
         this.settings = requireNonNull(settings, "settings is null");
         this.clock = requireNonNull(clock, "clock is null");
     }
@@ -130,6 +133,9 @@ public class AutoMergeService
 
     synchronized void advance(AgentTask task)
     {
+        if (replacements.find(task.id().toString()).filter(operation -> !operation.completed()).isPresent()) {
+            return;
+        }
         Optional<PullRequest> linked = ownership.linkedPullRequest(task).filter(TaskPullRequestOwnership::isOpen);
         if (linked.isEmpty()) {
             return;
@@ -191,6 +197,28 @@ public class AutoMergeService
         store.save(current.ended(AutoMerge.Outcome.CANCELLED, "Auto-merge was stopped"));
     }
 
+    /** Called while the replacement's user turn owns the task, before any remote mutation. */
+    public synchronized void preparePullRequestReplacement(String taskId)
+    {
+        store.find(taskId).ifPresent(current -> {
+            checkState(current.startedAt().isEmpty(), "The original pull request's merge has started; reconcile its outcome before replacing it");
+            if (current.outcome().filter(AutoMerge.Outcome.CANCELLED::equals).isEmpty()) {
+                store.save(AutoMerge.waiting(taskId, current.headSha(), "Waiting for pull request replacement to finish"));
+            }
+        });
+    }
+
+    /** A replacement at the same commit still needs its own checks and full merge delay; an explicit stop stays stopped. */
+    public synchronized void pullRequestReplaced(String taskId, String headSha)
+    {
+        store.find(taskId).ifPresent(current -> {
+            checkState(current.startedAt().isEmpty(), "The original pull request's merge has started; its outcome must not be discarded");
+            if (current.outcome().filter(AutoMerge.Outcome.CANCELLED::equals).isEmpty()) {
+                store.save(AutoMerge.waiting(taskId, headSha, "Checking the replacement pull request before starting a new merge delay"));
+            }
+        });
+    }
+
     /**
      * Where the task's merge stands, for its automation status; empty before the pull request is first checked. A queued merge
      * ends with its linked pull request, which is the merged one or none once it is merged or closed, and a task whose
@@ -232,7 +260,8 @@ public class AutoMergeService
     {
         // The merge ends delivering the task's own work: not while it is still working, and not before its latest request
         // delivered, so opening a task on an existing pull request merges nothing by itself.
-        if (turns.findActive(task.id()).isPresent() || queue.listQueued(task.id()).stream().anyMatch(input -> input.state().live())) {
+        if (task.developmentContinuationUnfinished() || task.worktreeMutationClaim().isPresent()
+                || turns.findActive(task.id()).isPresent() || queue.listQueued(task.id()).stream().anyMatch(input -> input.state().live())) {
             return Optional.of("Waiting for the task to finish its current work");
         }
         Optional<AgentTurn> latest = turns.list(task.id()).stream().filter(turn -> turn.developmentOrigin().isEmpty()).reduce((previous, next) -> next);

@@ -79,10 +79,12 @@ public record DevelopmentResultBridge(String turnId, String instruction, boolean
             attribution, co-authorship, or generated-with trailer. For that generated step, ByteQuay owns
             the push and the pull request write; use the tool without duplicating its writes through git, gh or glab.
             The tool refuses calls outside ByteQuay's own publication request. During ordinary development
-            turns, explicitly requested git or gh publishing follows the shared command authorization
-            policy and does not require this tool. Its refusal does not block an authorized CLI operation.
+            turns, discover ByteQuay's current tools before handling publication requests. Prefer a supported
+            ByteQuay action; command-based publication is available only when the session's command scope permits it.
+            Source-backed tasks must use ByteQuay's publication actions, including for explicit user requests.
             Keep the task branch name fixed after the first turn, even when it is still unpublished.
-            Do not rename it in later turns through Git commands or other tools.
+            Do not rename it in later turns through Git commands. A requested pull-request replacement belongs
+            to ByteQuay's replace_task_pull_request action when available.
             """;
     public static final String REVIEW_REPLY_INSTRUCTION = """
 

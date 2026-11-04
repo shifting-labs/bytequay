@@ -56,6 +56,7 @@ import com.bytequay.agent.spi.ReviewBridge;
 import com.bytequay.agent.spi.ReviewTool;
 import com.bytequay.agent.spi.RunningTurn;
 import com.bytequay.agent.spi.SessionAccess;
+import com.bytequay.agent.spi.TaskPullRequestReplacementBridge;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -3568,8 +3569,9 @@ class TestCodexCliDriver
         }
     }
 
-    @Test
-    void relatedWorkUsesRootToolsAcrossResumeAndRejectsChildAndStaleTurnCalls()
+    @ParameterizedTest
+    @ValueSource(strings = {RelatedWorkspaceBridge.TOOL_NAME, TaskPullRequestReplacementBridge.TOOL_NAME})
+    void taskWritesUseRootToolsAcrossResumeAndRejectChildAndStaleTurnCalls(String toolName)
             throws Exception
     {
         ScriptedProcessSupervisor supervisor = new ScriptedProcessSupervisor(objectMapper, "codex-cli 0.156.1", false).withTaskTools();
@@ -3579,8 +3581,13 @@ class TestCodexCliDriver
             calls.incrementAndGet();
             return "linked";
         });
+        var replacement = new TaskPullRequestReplacementBridge(branch -> new TaskPullRequestReplacementBridge.Prepared("Replace the task pull request with " + branch, () -> {
+            calls.incrementAndGet();
+            return "replaced";
+        }));
         PermissionBroker broker = PermissionBroker.builder(() -> URI.create(MCP_ENDPOINT), objectMapper, (taskId, query) -> "")
-                .relatedWork(taskId -> Optional.of(related)).build();
+                .relatedWork(taskId -> toolName.equals(RelatedWorkspaceBridge.TOOL_NAME) ? Optional.of(related) : Optional.empty())
+                .pullRequestReplacements(taskId -> toolName.equals(TaskPullRequestReplacementBridge.TOOL_NAME) ? Optional.of(replacement) : Optional.empty()).build();
         CodexHome.prepare(codexHome());
         CodexCliDriver driver = new CodexCliDriver("/fake/codex", "0.153.4", objectMapper, supervisor,
                 ImmutableMap.of("HOME", worktree.toString()), codexHome(), broker, Duration.ofSeconds(30));
@@ -3596,23 +3603,23 @@ class TestCodexCliDriver
                 else {
                     assertThat(thread.path("dynamicTools").isMissingNode()).isTrue();
                 }
-                session.start(command("Investigate in Iceberg"));
+                session.start(command("Perform the requested task action"));
                 server.emit("""
                         {"id":301,"method":"item/tool/call","params":{"threadId":"thread-1","turnId":"%s",
-                        "callId":"root","tool":"bytequay_call_tool","namespace":null,"arguments":{"name":"related_workspace_work","arguments":{}}}}
-                        """.formatted(server.activeTurn));
+                        "callId":"root","tool":"bytequay_call_tool","namespace":null,"arguments":{"name":"%s","arguments":{"branch":"fix-value"}}}}
+                        """.formatted(server.activeTurn, toolName));
                 awaitCondition(() -> server.result(301) != null);
                 assertThat(server.result(301).path("success").asBoolean()).isTrue();
                 server.emit("""
                         {"id":302,"method":"item/tool/call","params":{"threadId":"thread-1","turnId":"stale",
-                        "callId":"stale","tool":"bytequay_call_tool","namespace":null,"arguments":{"name":"related_workspace_work","arguments":{}}}}
-                        """);
+                        "callId":"stale","tool":"bytequay_call_tool","namespace":null,"arguments":{"name":"%s","arguments":{"branch":"fix-value"}}}}
+                        """.formatted(toolName));
                 awaitCondition(() -> server.error(302) != null);
                 server.emitV2Started("child-thread", "/fixture-child");
                 server.emit("""
                         {"id":303,"method":"item/tool/call","params":{"threadId":"child-thread","turnId":"child-turn",
-                        "callId":"child","tool":"bytequay_call_tool","namespace":null,"arguments":{"name":"related_workspace_work","arguments":{}}}}
-                        """);
+                        "callId":"child","tool":"bytequay_call_tool","namespace":null,"arguments":{"name":"%s","arguments":{"branch":"fix-value"}}}}
+                        """.formatted(toolName));
                 awaitCondition(() -> server.error(303) != null);
                 assertThat(calls).hasValue(index + 1);
                 reference = Optional.of(session.reference());

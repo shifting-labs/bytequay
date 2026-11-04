@@ -222,6 +222,7 @@ public class SqliteAgentTaskStore
         entities.createNativeQuery("DELETE FROM local_run WHERE task_id = :taskId AND NOT EXISTS (SELECT 1 FROM agent_review WHERE task_id = :taskId)")
                 .setParameter("taskId", id).executeUpdate();
         entities.createNativeQuery("DELETE FROM pull_request_task WHERE id = :taskId").setParameter("taskId", id).executeUpdate();
+        entities.createNativeQuery("DELETE FROM pull_request_replacement WHERE task_id = :taskId").setParameter("taskId", id).executeUpdate();
         entities.createNativeQuery("DELETE FROM issue_task WHERE id = :taskId").setParameter("taskId", id).executeUpdate();
         entities.createNativeQuery("DELETE FROM jira_issue_task WHERE id = :taskId").setParameter("taskId", id).executeUpdate();
         entities.createNativeQuery("DELETE FROM review_fix_reply WHERE task_id = :taskId").setParameter("taskId", id).executeUpdate();

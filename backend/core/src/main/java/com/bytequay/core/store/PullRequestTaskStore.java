@@ -25,4 +25,7 @@ public interface PullRequestTaskStore
     Optional<PullRequestTask> findByTaskId(String taskId);
 
     void insert(PullRequestTask assignment);
+
+    /** Rebinds under the task lock only while the previous assignment still matches the accepted operation. */
+    boolean reassign(PullRequestTask replacement, Optional<PullRequestTask> expected);
 }
