@@ -519,7 +519,16 @@ class TestAssistantActions
         assertThat(started().message()).isEqualTo("@contribute around snapshot ids");
 
         assertThat(act(message, "{\"op\":\"start_task\",\"from\":\"work:w22\",\"command\":\"contribute\",\"words\":\"around snapshot ids\"}"))
-                .isEqualTo("{\"outcome\":\"error\",\"message\":\"command is contribute, with a workspace\"}");
+                .isEqualTo("{\"outcome\":\"error\",\"message\":\"command is contribute or backport, with a workspace\"}");
+    }
+
+    @Test
+    void startsABackportTaskInTheWorkspaceThePullRequestGoesTo()
+    {
+        AssistantItem message = message("backport https://github.com/owner/upstream/pull/31 once it merges", ImmutableList.of());
+        act(message, ImmutableMap.of("ws:ws1", SERVED),
+                "{\"op\":\"start_task\",\"workspace\":\"ws:ws1\",\"command\":\"backport\",\"words\":\"backport https://github.com/owner/upstream/pull/31 once it merges\"}");
+        assertThat(started().message()).isEqualTo("@backport backport https://github.com/owner/upstream/pull/31 once it merges");
     }
 
     @Test

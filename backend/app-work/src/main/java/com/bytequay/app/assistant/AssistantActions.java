@@ -129,6 +129,7 @@ class AssistantActions
             "hour", AttentionMarkService.Snooze.HOUR,
             "tomorrow", AttentionMarkService.Snooze.TOMORROW,
             "monday", AttentionMarkService.Snooze.MONDAY);
+    private static final List<String> COMMANDS = ImmutableList.of("contribute", "backport");
     // Words after one of these, in the same clause, are what the user said not to do: "push to main" in "don't push to main".
     private static final Pattern NEGATION = Pattern.compile("\\b(?:not|never|don't|dont|doesn't|didn't|can't|cannot|won't|wouldn't|shouldn't|mustn't|isn't|aren't|wasn't"
             + "|stop|avoid|without|neither|nor|except|instead of|rather than)\\b");
@@ -206,8 +207,9 @@ class AssistantActions
                         + "or the pr: ref of the user's own pull request, whose development task gets the user's words"))
                 .put("agent", ImmutableMap.of("type", "string", "description", "start_task: an agent id from start_options; the repository's default when absent; "
                         + "none for a pr: ref"))
-                .put("command", ImmutableMap.of("type", "string", "enum", ImmutableList.of("contribute"), "description", "start_task with workspace: "
-                        + "contribute when the user asks it to find and fix one small, worthwhile problem in the repository, as @contribute does"))
+                .put("command", ImmutableMap.of("type", "string", "enum", COMMANDS, "description", "start_task with workspace: "
+                        + "contribute when the user asks it to find and fix one small, worthwhile problem in the repository, as @contribute does; "
+                        + "backport, in the workspace a pull request goes to, when the user asks to backport it, as @backport does"))
                 .put("approval", ImmutableMap.of("type", "string", "description", "answer_approval and answer_question: the card's approval: ref"))
                 .put("decision", ImmutableMap.of("type", "string", "enum", ImmutableList.of("allow_once", "deny")))
                 .put("answers", ImmutableMap.of("type", "object", "additionalProperties", ImmutableMap.of("type", "string"),
@@ -416,8 +418,8 @@ class AssistantActions
                 case START_TASK -> {
                     checkArgument(request.optional("from").isPresent() || request.optional("workspace").isPresent(), "start_task needs from or workspace");
                     checkArgument(!pullRequest(request) || request.optional("agent").isEmpty(), "start_task from a pr: ref takes no agent");
-                    checkArgument(request.optional("command").isEmpty() || (request.optional("from").isEmpty() && request.text("command").equals("contribute")),
-                            "command is contribute, with a workspace");
+                    checkArgument(request.optional("command").isEmpty() || (request.optional("from").isEmpty() && COMMANDS.contains(request.text("command"))),
+                            "command is contribute or backport, with a workspace");
                 }
                 case ANSWER_APPROVAL -> checkArgument(ImmutableSet.of("allow_once", "deny").contains(request.text("decision")), "decision must be allow_once or deny");
                 case ANSWER_QUESTION -> checkArgument(body.path("answers").isObject() && !body.path("answers").isEmpty(), "answers are required");

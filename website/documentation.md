@@ -266,6 +266,10 @@ Ask it to work on one of your own pull requests and it uses that PR's
 development task, as the PR's **Development** button does, and sends your
 words there. A task started some other way can't be linked to a PR later.
 
+Ask it to backport a pull request into a repository and it starts a
+**@backport** task there. The pull request doesn't have to be merged: the
+backport waits for the merge, then opens its PR.
+
 Every action leaves a receipt with **Open**; **Stop…** asks, then cancels the
 first turn of a task it started. The Assistant never edits files or runs code itself.
 
