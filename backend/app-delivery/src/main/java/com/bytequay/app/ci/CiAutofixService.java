@@ -1182,6 +1182,10 @@ public class CiAutofixService
         if (rejected.isPresent()) {
             return rejected.orElseThrow();
         }
+        // A newer workflow can replace the rerun; passing checks at the same head settle it either way.
+        if (snapshot.green()) {
+            return store.update(run.clearRerunJournal(now).observeCiResult(journal.attemptId(), CiResult.PASSED, snapshot.baseSha(), now));
+        }
         Optional<CiRun> later = snapshot.runs().stream()
                 .filter(workflow -> workflow.id() == journal.runId())
                 .filter(workflow -> workflow.attempt() > journal.previousAttempt())

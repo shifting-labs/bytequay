@@ -1338,6 +1338,74 @@ class TestCiAutofixService
         assertThat(run.attempts()).singleElement().satisfies(attempt -> assertThat(attempt.observedCiResult()).isEqualTo(CiResult.FAILED));
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void supersededRerunFinishesWhenAllCurrentHeadChecksPass(boolean observed)
+    {
+        CiAutofixRun run = service.start(startCommand("superseded-rerun"));
+        service.requestRerun(taskId, turnId, 200, "The runner lost its network connection before tests started");
+        when(turnService.get(turnId)).thenReturn(terminalTurn(TurnState.COMPLETED, Optional.empty()));
+        run = service.advance(run.id());
+        when(gitService.inspectAgentResult(any())).thenReturn(CiGitInspection.noChange());
+        when(ci.rerunFailedJobs(any(), anyInt(), any())).thenReturn(new CiRerunResult(CiRerunResult.Outcome.ACCEPTED, "accepted"));
+        run = service.advance(run.id());
+        if (observed) {
+            CiRun earlier = snapshot.runs().getFirst();
+            when(ci.inspect(any(), anyInt())).thenReturn(snapshot(HEAD, BASE, ImmutableList.of(new CiRun(
+                    earlier.id(), earlier.definitionId(), earlier.name(), 2, "in_progress", Optional.empty(), HEAD, earlier.url(), earlier.jobs()))));
+            run = service.advance(run.id());
+            assertThat(run.rerunJournal().orElseThrow().observedAttempt()).contains(2);
+        }
+
+        CiRun replacement = new CiRun(101, snapshot.runs().getFirst().definitionId(), "Build", 1, "completed", Optional.of("success"), HEAD,
+                "https://github.com/bytequay/sample/actions/runs/101", workflow(101, 1, "Build", HEAD, "completed", Optional.of("success")).jobs());
+        when(ci.inspect(any(), anyInt())).thenReturn(snapshot(HEAD, BASE, ImmutableList.of(
+                replacement, workflow(300, 1, "Test", HEAD, "in_progress", Optional.empty()))));
+        run = service.advance(run.id());
+        assertThat(run.status()).isEqualTo(Status.ACTIVE);
+        assertThat(run.rerunJournal()).isPresent();
+
+        when(ci.inspect(any(), anyInt())).thenReturn(snapshot(HEAD, BASE, ImmutableList.of(replacement)));
+        when(gitService.checkFixupPositions(any())).thenReturn(FixupPositionCheck.valid(HEAD));
+        doReturn(completion(HEAD)).when(completionService).complete(any());
+        run = service.advance(run.id());
+
+        assertThat(run.rerunJournal()).isEmpty();
+        assertThat(run.attempts()).singleElement().satisfies(attempt -> assertThat(attempt.observedCiResult()).isEqualTo(CiResult.PASSED));
+        run = service.advance(service.advance(run.id()).id());
+        assertThat(run.status()).isEqualTo(Status.FINISHED);
+        assertThat(run.finishReason()).contains(FinishReason.GREEN);
+        assertThat(store.listNonFinished(20)).isEmpty();
+        verify(ci, times(1)).rerunFailedJobs(any(), anyInt(), any());
+        verify(turnService, times(1)).start(any());
+        verify(gitService, never()).push(any());
+
+        clearInvocations(ci);
+        service.advance(run.id());
+        verify(ci, never()).inspect(any(), anyInt());
+    }
+
+    @Test
+    void greenChecksOnAnotherHeadDoNotCompleteTheRerunSuccessfully()
+    {
+        CiAutofixRun run = service.start(startCommand("rerun-moved-head"));
+        service.requestRerun(taskId, turnId, 200, "The runner lost its network connection before tests started");
+        when(turnService.get(turnId)).thenReturn(terminalTurn(TurnState.COMPLETED, Optional.empty()));
+        run = service.advance(run.id());
+        when(gitService.inspectAgentResult(any())).thenReturn(CiGitInspection.noChange());
+        when(ci.rerunFailedJobs(any(), anyInt(), any())).thenReturn(new CiRerunResult(CiRerunResult.Outcome.ACCEPTED, "accepted"));
+        run = service.advance(run.id());
+
+        when(ci.inspect(any(), anyInt())).thenReturn(greenSnapshot(FIXED_HEAD, BASE));
+        run = service.advance(run.id());
+
+        assertThat(run.status()).isEqualTo(Status.FINISHED);
+        assertThat(run.finishReason()).contains(FinishReason.STALE_HEAD);
+        verify(gitService, never()).checkFixupPositions(any());
+        verify(ci, times(1)).rerunFailedJobs(any(), anyInt(), any());
+        verify(turnService, times(1)).start(any());
+    }
+
     @Test
     void pausedRunFinishesOnceActionsPassAtItsHeadWithNothingUnpublished()
     {
