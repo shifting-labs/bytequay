@@ -212,7 +212,7 @@ export function rowsForPullSearch(prs: PullRequestDto[], tab: PullTab, query: st
 export function reconcilePullRequestDetail(
   pr: PullRequestDto,
   detail: Pick<PullRequestDetailDto, 'state' | 'updatedAt'>
-    & Partial<Pick<PullRequestDetailDto, 'title' | 'author' | 'labels' | 'reviewers'>>,
+    & Partial<Pick<PullRequestDetailDto, 'title' | 'author' | 'labels' | 'reviewers' | 'ciStatus' | 'mergeable' | 'mergeableState' | 'unavailableSections'>>,
   viewerLogin?: string | null,
 ): PullRequestDto {
   if (detail.updatedAt !== null && Date.parse(detail.updatedAt) < Date.parse(pr.updatedAt)) return pr;
@@ -220,6 +220,9 @@ export function reconcilePullRequestDetail(
   const monitoredAt = state === 'merged' ? null : pr.monitoredAt;
   const title = detail.title ?? pr.title;
   const updatedAt = detail.updatedAt ?? pr.updatedAt;
+  const ciStatus = detail.unavailableSections?.includes('checks') ? pr.ciStatus : detail.ciStatus ?? pr.ciStatus;
+  const mergeable = detail.mergeable === undefined ? pr.mergeable : detail.mergeable;
+  const mergeableState = detail.mergeableState === undefined ? pr.mergeableState : detail.mergeableState;
   const labels = detail.labels?.map(label => label.name) ?? pr.labels;
   const labelColors = detail.labels === undefined
     ? pr.labelColors
@@ -234,10 +237,11 @@ export function reconcilePullRequestDetail(
         : 'OTHER'
     : pr.origin;
   return state === pr.state && title === pr.title && updatedAt === pr.updatedAt
+      && ciStatus === pr.ciStatus && mergeable === pr.mergeable && mergeableState === pr.mergeableState
       && labels === pr.labels && labelColors === pr.labelColors && requestedReviewers === pr.requestedReviewers
       && origin === pr.origin && monitoredAt === pr.monitoredAt
     ? pr
-    : { ...pr, state, title, updatedAt, labels, labelColors, requestedReviewers, origin, monitoredAt };
+    : { ...pr, state, title, updatedAt, ciStatus, mergeable, mergeableState, labels, labelColors, requestedReviewers, origin, monitoredAt };
 }
 
 export function reconcilePostedComment(

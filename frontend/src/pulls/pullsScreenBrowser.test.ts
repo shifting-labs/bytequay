@@ -45,6 +45,8 @@ it.each([
     'runOverlayChangesStream()', 'follows its review on Changes', { width: 1250, height: 850 }],
   ['looks up exact PR numbers and shows newly discovered PRs without repeating list reads',
     'runListSearch()', 'newly discovered PRs', {}],
+  ['keeps the list CI badge in sync with full detail refreshes',
+    'runCheckStatusSync()', 'List and detail check status stay in sync across full refreshes', {}],
 ] as const)('%s', async (_name, scenario, expected, viewport) => {
   const result = await fixture.run<string>({
     ...viewport,

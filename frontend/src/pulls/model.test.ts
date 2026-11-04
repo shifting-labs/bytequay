@@ -184,10 +184,41 @@ describe('rowsForTab', () => {
     expect(removed.origin).toBe('OTHER');
   });
 
-  it('preserves a newer review request when cached detail has older reviewers', () => {
-    const current = pr({ origin: 'REVIEW_REQUESTED', requestedReviewers: ['bob'], labels: ['new'], updatedAt: '2026-09-28T01:00:00Z' });
+  it('updates check and merge status when the PR timestamp has not changed', () => {
+    const current = pr({ ciStatus: 'FAILING', mergeable: false, mergeableState: 'blocked' });
     const updated = reconcilePullRequestDetail(current, {
-      state: 'open', updatedAt: '2026-09-28T00:00:00Z', author: 'alice', labels: [], reviewers: [],
+      state: current.state, updatedAt: current.updatedAt, ciStatus: 'PASSING', mergeable: true, mergeableState: 'clean',
+    });
+
+    expect(rowsForTab([updated], 'all')[0].status).toBe('passing');
+    expect(updated).toMatchObject({ ciStatus: 'PASSING', mergeable: true, mergeableState: 'clean' });
+  });
+
+  it('clears check and merge status only when the detail supplies those fields', () => {
+    const current = pr({ ciStatus: 'PASSING', mergeable: true, mergeableState: 'clean' });
+    expect(reconcilePullRequestDetail(current, { state: current.state, updatedAt: current.updatedAt })).toBe(current);
+
+    const updated = reconcilePullRequestDetail(current, {
+      state: current.state, updatedAt: current.updatedAt, ciStatus: 'NONE', mergeable: null, mergeableState: null,
+    });
+
+    expect(rowsForTab([updated], 'all')[0].status).toBeNull();
+    expect(updated).toMatchObject({ ciStatus: 'NONE', mergeable: null, mergeableState: null });
+  });
+
+  it('preserves known check status when detailed checks are unavailable', () => {
+    const current = pr({ ciStatus: 'FAILING' });
+    const updated = reconcilePullRequestDetail(current, {
+      state: current.state, updatedAt: current.updatedAt, ciStatus: 'NONE', unavailableSections: ['checks'],
+    });
+
+    expect(updated).toBe(current);
+  });
+
+  it('preserves a newer review request when cached detail has older reviewers', () => {
+    const current = pr({ origin: 'REVIEW_REQUESTED', requestedReviewers: ['bob'], labels: ['new'], updatedAt: '2026-09-28T01:00:00Z', ciStatus: 'PENDING' });
+    const updated = reconcilePullRequestDetail(current, {
+      state: 'open', updatedAt: '2026-09-28T00:00:00Z', author: 'alice', labels: [], reviewers: [], ciStatus: 'PASSING',
     }, 'bob');
 
     expect(updated).toBe(current);

@@ -32,7 +32,7 @@ import type { CodeHostRef } from '../code-tests/contracts';
 import type { AgentReviewDto, ReviewDraftDto } from '../agent-review/contracts';
 import { reviewDraftFixture, reviewFixture } from '../agent-review/fixtures/review';
 import '../../css/base.css';
-import { element as fixtureElement, assert, changeInput, settle, until } from '../../fixtures/harness';
+import { element as fixtureElement, assert, changeInput, controlTimers, settle, until } from '../../fixtures/harness';
 import { loadHandled } from '../../home/attention';
 import { setCached } from '../../dataCache';
 import { ZOOM_REFERENCE } from '../../githubReference';
@@ -1254,6 +1254,87 @@ export async function runSelectionStability(): Promise<string> {
   }
   finally {
     dispose();
+    Object.assign(window, { bridge: originalBridge });
+  }
+}
+
+export async function runCheckStatusSync(): Promise<string> {
+  let detail = prDetail({
+    repo: 'owner/repo', htmlUrl: null, author: 'alice', viewerCanWrite: false,
+    reviewers: [{ login: 'bob', avatarUrl: null, state: 'PENDING' }], ciStatus: 'PASSING',
+  });
+  const row = { ...remotePullRequest(detail, 'bob'), ciStatus: 'FAILING' as const };
+  let refreshes = 0;
+  let listReads = 0;
+  const synced: (() => void)[] = [];
+  const originalBridge = window.bridge;
+  const bridge = {
+    getUserProfile: async () => ({ login: 'bob', name: null, avatarUrl: '', htmlUrl: '', publicRepos: 0, followers: 0,
+      following: 0, bio: null, location: null, company: null, email: null }),
+    fetchPrs: async () => {
+      listReads++;
+      return { pullRequests: [row], page: 0, pageSize: 50, totalPullRequests: 1, openPullRequests: 1, hasMore: false };
+    },
+    onPullRequestsSynced: listener => { synced.push(listener); return () => {}; },
+    listWorkspaces: async () => [],
+    fetchPullRequestDetailByRef: async () => detail,
+    refreshPullRequestDetailByRef: async () => { refreshes++; return { full: true as const, detail, status: null }; },
+    recordRecentTouch: async () => {},
+  } satisfies Pick<Bridge, 'getUserProfile' | 'fetchPrs' | 'onPullRequestsSynced' | 'listWorkspaces'
+    | 'fetchPullRequestDetailByRef' | 'refreshPullRequestDetailByRef' | 'recordRecentTouch'>;
+  Object.assign(window, { bridge });
+  const detailTimer = controlTimers(60_000);
+  const checkTimer = controlTimers(30_000);
+  const { host, root, dispose } = createFixtureRoot();
+  const badge = () => host.querySelector('.pull-row__ci')?.textContent;
+  const summary = () => host.querySelector('.pr-checks header strong')?.textContent;
+  try {
+    flushSync(() => root.render(<PullsScreen />));
+    await until(() => refreshes === 1 && summary() === 'All checks have passed', 'The selected PR must load passing checks');
+    assert(badge()?.includes('Passed'), 'A full detail read must replace the stale failed list badge');
+
+    synced.forEach(listener => listener());
+    await until(() => listReads === 2, 'A background sync must reload the list');
+    await settle();
+    assert(badge()?.includes('Passed') && summary() === 'All checks have passed',
+      'A stale list summary must not undo the selected detail check status');
+
+    flushSync(() => window.dispatchEvent(new CustomEvent('bytequay:pr-attention-updated', { detail: [row] })));
+    assert(badge()?.includes('Passed'), 'An attention update must preserve the selected detail check status while it refreshes');
+    await until(() => listReads === 3 && refreshes === 2, 'Attention changes must refresh the selected PR and discover list updates');
+    await settle();
+    assert(badge()?.includes('Passed') && summary() === 'All checks have passed',
+      'The list and selected detail must agree after an attention update');
+
+    detail = { ...detail, ciStatus: 'PENDING' };
+    assert(detailTimer.tick() === 1, 'Settled checks must schedule a detail poll');
+    await until(() => summary() === 'Checks are in progress', 'A full detail poll must display the rerunning checks');
+    assert(badge()?.includes('Running'), 'The list badge must follow rerunning checks from a full detail poll');
+
+    detail = { ...detail, ciStatus: 'PASSING' };
+    assert(checkTimer.tick() === 1, 'Running checks must schedule a check poll');
+    await until(() => summary() === 'All checks have passed', 'A full refresh response must display completed checks');
+    assert(badge()?.includes('Passed'), 'The list badge must turn green with the detail checks without a list refresh');
+
+    const readsBeforeHiding = listReads;
+    const refreshesBeforeHiding = refreshes;
+    fixtureElement<HTMLButtonElement>('[aria-label="Toggle pull request details"]', host).click();
+    await settle();
+    assert(summary() === undefined && listReads === readsBeforeHiding,
+      'Hiding the detail pane must not reload the list');
+    flushSync(() => window.dispatchEvent(new CustomEvent('bytequay:pr-attention-updated', { detail: [row] })));
+    assert(badge()?.includes('Failed'), 'A hidden detail pane must not override incoming attention status');
+    synced.forEach(listener => listener());
+    await until(() => listReads === readsBeforeHiding + 1, 'Background sync must continue with the detail pane hidden');
+    await settle();
+    assert(badge()?.includes('Failed') && refreshes === refreshesBeforeHiding,
+      'A hidden detail pane must accept list status without polling its stale detail');
+    return 'List and detail check status stay in sync across full refreshes';
+  }
+  finally {
+    dispose();
+    checkTimer.restore();
+    detailTimer.restore();
     Object.assign(window, { bridge: originalBridge });
   }
 }

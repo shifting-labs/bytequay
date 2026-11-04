@@ -474,7 +474,7 @@ function PullsContent({
   const routingInitialPr = useRef<string | null>(null);
   const detailState = useRef<PullRequestDetailDto | null>(null);
   const detailMutationVersion = useRef(0);
-  const selectedPullRequest = useRef<{ id: number; key: string; pr: PullRequestDto } | null>(null);
+  const selectedPullRequest = useRef<{ id: number; key: string; pr: PullRequestDto; paneOpen: boolean } | null>(null);
   const listRequest = useRef(0);
   const manualDetailRefreshRequest = useRef(0);
   const toastId = useRef(0);
@@ -504,21 +504,28 @@ function PullsContent({
     return () => { cancelled = true; };
   }, [accountId, bridge, scopedRepository, scopedWorkspaceId]);
 
-  const applyPage = useCallback((result: PullRequestPageDto) => {
+  const reconcileSelectedRow = useCallback((pr: PullRequestDto) => {
     const selected = selectedPullRequest.current;
     const selectedDetail = detailState.current;
-    const pullRequests = selected !== null && selectedDetail !== null
-      && selected.key === `${selectedDetail.repo.toLowerCase()}#${selectedDetail.number}`
-      ? result.pullRequests.map(pr => pr.id === selected.id
-          ? reconcilePullRequestDetail(pr, {
-              state: pr.state,
-              updatedAt: selectedDetail.updatedAt,
-              author: selectedDetail.author,
-              labels: selectedDetail.labels,
-              reviewers: selectedDetail.reviewers,
-            }, viewerLoginRef.current)
-          : pr)
-      : result.pullRequests;
+    if (selected === null || selectedDetail === null || pr.id !== selected.id
+      || selected.key !== `${selectedDetail.repo.toLowerCase()}#${selectedDetail.number}`) return pr;
+    return reconcilePullRequestDetail(pr, {
+      state: pr.state,
+      updatedAt: selectedDetail.updatedAt,
+      author: selectedDetail.author,
+      labels: selectedDetail.labels,
+      reviewers: selectedDetail.reviewers,
+      // Summary rollups can retain an old failed run; keep the open row aligned with its detailed checks.
+      ciStatus: selected.paneOpen ? selectedDetail.ciStatus : undefined,
+      mergeable: selected.paneOpen ? selectedDetail.mergeable : undefined,
+      mergeableState: selected.paneOpen ? selectedDetail.mergeableState : undefined,
+      unavailableSections: selectedDetail.unavailableSections,
+    }, viewerLoginRef.current);
+  }, []);
+
+  const applyPage = useCallback((result: PullRequestPageDto) => {
+    const selected = selectedPullRequest.current;
+    const pullRequests = result.pullRequests.map(reconcileSelectedRow);
     const listed = keepSelectedPullRequest(pullRequests, selected?.pr ?? null);
     setPrs(listed);
     setPage(result.page);
@@ -526,7 +533,7 @@ function PullsContent({
     setSelected(current => listed.some(pr => pr.id === current)
       ? current
       : null);
-  }, []);
+  }, [reconcileSelectedRow]);
 
   const readList = useCallback(async (throughPage?: number): Promise<PullRequestPageDto> => {
     const { workspaceId, page } = listContext.current;
@@ -566,13 +573,13 @@ function PullsContent({
       const updates = new Map(rows.map(pr => [pr.id, pr]));
       const discovered = knownIds === null || rows.some(pr => !knownIds?.has(pr.id));
       knownIds = new Set(updates.keys());
-      setPrs(current => current.map(pr => updates.get(pr.id) ?? pr));
+      setPrs(current => current.map(pr => reconcileSelectedRow(updates.get(pr.id) ?? pr)));
       if (singlePullRequest || !discovered) return;
       void loadList();
     };
     window.addEventListener('bytequay:pr-attention-updated', updateAttention);
     return () => window.removeEventListener('bytequay:pr-attention-updated', updateAttention);
-  }, [loadList, scopedRepository, scopedWorkspaceId, singlePullRequest]);
+  }, [loadList, reconcileSelectedRow, scopedRepository, scopedWorkspaceId, singlePullRequest]);
 
   const refreshList = useCallback(async () => {
     const workspaceId = repositoryScope?.workspaceId;
@@ -767,7 +774,7 @@ function PullsContent({
   const selectedPrRepo = selectedPr?.repo;
   selectedPullRequest.current = selectedPr === null
     ? null
-    : { id: selectedPr.id, key: `${selectedPr.repo.toLowerCase()}#${selectedPr.number}`, pr: selectedPr };
+    : { id: selectedPr.id, key: `${selectedPr.repo.toLowerCase()}#${selectedPr.number}`, pr: selectedPr, paneOpen };
 
   // Only a new selection writes the route. A host may pass a new callback on every render, and a render between another page's
   // hash change and its hashchange event would otherwise replace that route with this pull request's.
@@ -813,7 +820,7 @@ function PullsContent({
       }
       const selected = selectedPullRequest.current;
       setPrs(current => current.map(pr => pr.id === selected?.id
-        ? { ...pr, ciStatus: status.ciStatus, mergeable: status.mergeable, mergeableState: status.mergeableState }
+        ? reconcilePullRequestDetail(pr, { state: pr.state, updatedAt: pr.updatedAt, ...status })
         : pr));
     },
   });
