@@ -29,6 +29,9 @@ public interface IssueClient
     /** One-based pages: open issues newest creation first without {@code since}, otherwise all changed issues oldest update first. */
     IssueSyncPage list(HostingTarget target, Optional<Instant> since, int page);
 
+    /** One page of open issues, newest first; non-blank {@code text} narrows them to a title word or a number, which also finds issues that mention it. */
+    List<RepositoryIssue> search(HostingTarget target, String text, int page, int pageSize);
+
     Optional<RepositoryIssue> find(HostingTarget target, int number);
 
     HostedIssuePreview preview(HostingTarget target, int number);

@@ -386,6 +386,17 @@ final class GitLabHttpClient
         }
     }
 
+    /** List filters for what someone typed, if anything: an item number, which a title search misses, or else title text. */
+    static String searchFilter(String text)
+    {
+        String term = text.strip();
+        String number = term.startsWith("#") || term.startsWith("!") ? term.substring(1) : term;
+        if (term.isEmpty()) {
+            return "";
+        }
+        return number.matches("[0-9]{1,9}") ? "&iids%5B%5D=" + number : "&search=" + encode(term) + "&in=title";
+    }
+
     static String projectPath(HostingTarget target)
     {
         return "projects/" + encode(target.repository().remoteId());

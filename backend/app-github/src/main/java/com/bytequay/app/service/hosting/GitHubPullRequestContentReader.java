@@ -17,8 +17,10 @@ import com.bytequay.app.repository.github.GitHubAccountClient;
 import com.bytequay.app.repository.github.GitHubActionsClient;
 import com.bytequay.app.repository.github.GitHubNotificationClient;
 import com.bytequay.app.repository.github.GitHubPullRequestReadClient;
+import com.bytequay.app.repository.github.GitHubRepoClient;
 import com.bytequay.core.ci.CiHeadSnapshot;
 import com.bytequay.core.domain.DiffFileContent;
+import com.bytequay.core.domain.FetchedPullRequest;
 import com.bytequay.core.domain.MergedPullRequest;
 import com.bytequay.core.domain.PrCheckRunState;
 import com.bytequay.core.domain.PrDiffEtags;
@@ -148,6 +150,16 @@ public class GitHubPullRequestContentReader
         String query = "repo:" + ref.repoFullName() + " is:pr is:merged merged:>=" + LocalDate.ofInstant(since, ZoneOffset.UTC)
                 + " base:\"" + baseBranch.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
         return gitHub.searchPullRequestsPaged(target.access().token(), query, 1, limit).items().stream().map(pr -> pr.title()).collect(toImmutableList());
+    }
+
+    @Override
+    public List<FetchedPullRequest> search(HostingTarget target, boolean merged, Optional<String> excludedAuthor, String text, int page, int pageSize)
+    {
+        PullRequestRef ref = ref(target, 1);
+        String qualifiers = (merged ? "is:pr is:merged" : "is:pr is:open") + excludedAuthor.map(login -> " -author:" + login).orElse("");
+        String query = GitHubRepoClient.searchTerms(RepoRef.of(ref.owner(), ref.repo()), qualifiers, text);
+        // Search cannot order by merge time; a merge updates its request, so update time comes closest.
+        return gitHub.searchPullRequestsPaged(target.access().token(), query, merged ? "updated" : "created", page, pageSize).items();
     }
 
     @Override

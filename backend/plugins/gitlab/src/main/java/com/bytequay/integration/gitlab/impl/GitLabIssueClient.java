@@ -44,6 +44,7 @@ import com.google.common.collect.ImmutableMap;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -57,6 +58,7 @@ import static com.bytequay.integration.gitlab.impl.GitLabHttpClient.encode;
 import static com.bytequay.integration.gitlab.impl.GitLabHttpClient.issuePath;
 import static com.bytequay.integration.gitlab.impl.GitLabHttpClient.mapped;
 import static com.bytequay.integration.gitlab.impl.GitLabHttpClient.projectPath;
+import static com.bytequay.integration.gitlab.impl.GitLabHttpClient.searchFilter;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.util.Objects.requireNonNull;
@@ -116,6 +118,15 @@ public final class GitLabIssueClient
             }
         }
         return new IssueSyncPage(open.build(), closed.build(), response.hasNext());
+    }
+
+    @Override
+    public List<RepositoryIssue> search(HostingTarget target, String text, int page, int pageSize)
+    {
+        checkArgument(page > 0 && pageSize > 0 && pageSize <= 100, "Search pages hold 1 to 100 issues");
+        String path = projectPath(target) + "/issues?scope=all&state=opened" + searchFilter(text) + "&order_by=created_at&sort=desc&per_page=" + pageSize + "&page=" + page;
+        var response = http.get(target.access(), path, Optional.empty(), GitLabIssueResponse[].class);
+        return Arrays.stream(response.body().orElseThrow()).map(issue -> card(target, issue)).collect(toImmutableList());
     }
 
     @Override

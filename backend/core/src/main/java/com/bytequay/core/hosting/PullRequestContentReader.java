@@ -16,6 +16,7 @@ package com.bytequay.core.hosting;
 import com.bytequay.core.domain.DiffCommit;
 import com.bytequay.core.domain.DiffFile;
 import com.bytequay.core.domain.DiffFileContent;
+import com.bytequay.core.domain.FetchedPullRequest;
 import com.bytequay.core.domain.MergedPullRequest;
 import com.bytequay.core.domain.PrCheckRunState;
 import com.bytequay.core.domain.PrDiffEtags;
@@ -48,6 +49,12 @@ public interface PullRequestContentReader
 
     /** Titles of at most {@code limit} requests merged into {@code baseBranch} since {@code since}, newest first. */
     List<String> recentMergedTitles(HostingTarget target, String baseBranch, Instant since, int limit);
+
+    /**
+     * One page of merged requests, newest update first, or else of open requests not by {@code excludedAuthor}, newest first. Non-blank
+     * {@code text} narrows them to a title word or a number; a number also finds requests that mention it.
+     */
+    List<FetchedPullRequest> search(HostingTarget target, boolean merged, Optional<String> excludedAuthor, String text, int page, int pageSize);
 
     /** Merged requests that contain commit {@code sha}; a list the provider cannot return in full fails rather than returning part of it. */
     List<PullRequestAssociation> mergedWithCommit(HostingTarget target, String sha);

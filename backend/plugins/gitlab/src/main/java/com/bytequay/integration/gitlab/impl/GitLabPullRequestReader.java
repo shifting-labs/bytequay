@@ -107,7 +107,7 @@ public final class GitLabPullRequestReader
         }
     }
 
-    private static FetchedPullRequest summary(HostingTarget target, GitLabMergeRequestResponse mr)
+    static FetchedPullRequest summary(HostingTarget target, GitLabMergeRequestResponse mr)
     {
         String projectId = target.repository().remoteId();
         checkArgument(mr.projectId() != null && mr.projectId() > 0 && mr.projectId().toString().equals(projectId), "invalid project identity");

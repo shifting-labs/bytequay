@@ -162,6 +162,33 @@ public class GitHubRepoClient
         return new IssuePage(issues, response.size() == GitHubPaginator.PAGE_SIZE);
     }
 
+    /** {@code search/issues} terms for what someone typed: an item number, which a title-only search misses, or else title words. */
+    public static String searchTerms(RepoRef repo, String qualifiers, String text)
+    {
+        String term = text.strip();
+        String number = term.startsWith("#") ? term.substring(1) : term;
+        // Only plain characters reach the query: the request URI is a template, and GitHub reads a "+" as a space.
+        String words = term.replaceAll("[^\\p{L}\\p{N}_./-]+", " ").strip();
+        String query = "repo:" + repo.fullName() + " " + qualifiers;
+        if (number.matches("[0-9]{1,9}")) {
+            return query + " " + number;
+        }
+        return words.isEmpty() ? query : query + " in:title \"" + words + "\"";
+    }
+
+    /** One page of the open issues a {@link #searchTerms} query finds, newest first. */
+    public List<RepositoryIssue> searchOpenIssues(String pat, String query, int page, int perPage)
+    {
+        checkArgument(page > 0 && perPage > 0 && perPage <= 100, "Search pages hold 1 to 100 issues");
+        IssueSearchResponse response = translating(() -> requireBody(get(gitHubRestClient, pat, uri -> uri.path("/search/issues").queryParam("q", "{query}")
+                        .queryParam("sort", "created").queryParam("order", "desc").queryParam("per_page", perPage).queryParam("page", page).build(query))
+                .retrieve().body(IssueSearchResponse.class), "Missing search response from GitHub"));
+        return Optional.ofNullable(response.items()).orElse(ImmutableList.of()).stream()
+                .filter(value -> value.pullRequest() == null)
+                .map(GitHubRepoClient::issueCard)
+                .collect(toImmutableList());
+    }
+
     /** The sub-issues GitHub lists under an issue, open and closed; they may live in other repositories. */
     public List<ChildIssue> fetchSubIssues(String pat, RepoRef repo, int issueNumber)
     {
@@ -455,6 +482,8 @@ public class GitHubRepoClient
             @JsonProperty("updated_at") java.time.Instant updatedAt,
             @JsonProperty("pull_request") Map<String, Object> pullRequest,
             JsonNode type) {}
+
+    private record IssueSearchResponse(List<IssueResponse> items) {}
 
     private record IssueTypeResponse(String name) {}
 

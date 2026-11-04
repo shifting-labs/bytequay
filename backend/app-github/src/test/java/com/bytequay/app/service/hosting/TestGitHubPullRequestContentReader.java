@@ -327,4 +327,23 @@ class TestGitHubPullRequestContentReader
 
         assertThat(fetcher.recentMergedTitles(target, "release \"2\"", Instant.EPOCH.plus(Duration.ofDays(1)), 20)).containsExactly("Backport 4: Fix dates");
     }
+
+    @Test
+    void searchesPagesOfMergedTitleWordsOrOthersOpenRequestNumbers()
+    {
+        HostingInstance instance = new HostingInstance(1, GITHUB_SERVER.provider(), GITHUB_SERVER.webBaseUrl(), GITHUB_SERVER.apiBaseUrl());
+        HostingRepository repository = new HostingRepository(2, 1, "99", "owner/repo", URI.create("https://github.com/owner/repo"),
+                URI.create("https://github.com/owner/repo.git"), Optional.empty(), Optional.of("main"));
+        HostingTarget target = new HostingTarget(new HostingAccess(instance, "pat"), repository);
+        FetchedPullRequest merged = new FetchedPullRequest(5L, "owner/repo", 5, "Fix C++ dates", "alice", "https://github.com/owner/repo/pull/5",
+                Instant.EPOCH, Instant.EPOCH, PullRequest.Origin.OTHER, ImmutableList.of(), ImmutableMap.of(), false, "closed", Instant.EPOCH, Instant.EPOCH,
+                ImmutableList.of(), null, null, null);
+        when(gitHub.searchPullRequestsPaged("pat", "repo:owner/repo is:pr is:merged in:title \"C x\"", "updated", 1, 20))
+                .thenReturn(new PullRequestHistoryPage(ImmutableList.of(merged), false));
+        when(gitHub.searchPullRequestsPaged("pat", "repo:owner/repo is:pr is:open -author:alice 123", "created", 2, 20))
+                .thenReturn(new PullRequestHistoryPage(ImmutableList.of(), false));
+
+        assertThat(fetcher.search(target, true, Optional.empty(), " C++ {x} ", 1, 20)).containsExactly(merged);
+        assertThat(fetcher.search(target, false, Optional.of("alice"), "#123", 2, 20)).isEmpty();
+    }
 }

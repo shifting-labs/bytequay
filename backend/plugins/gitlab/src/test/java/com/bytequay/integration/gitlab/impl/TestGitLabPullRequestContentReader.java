@@ -730,6 +730,26 @@ class TestGitLabPullRequestContentReader
     }
 
     @Test
+    void searchesPagesOfMergedTitlesOrOthersOpenRequestNumbers()
+    {
+        responses.put("/gitlab/api/v4/projects/42/merge_requests?scope=all&state=merged&search=fix%20dates&in=title&order_by=updated_at&sort=desc&per_page=20&page=1", """
+                [{"id":9007,"iid":7,"project_id":42,"title":"Fix dates","state":"merged","draft":false,"web_url":"%s/-/merge_requests/7",
+                  "author":{"username":"alice"},"labels":[],"created_at":"2026-10-01T10:00:00Z","updated_at":"2026-10-02T10:00:00Z","merged_at":"2026-10-02T10:00:00Z",
+                  "source_branch":"fix-dates"}]
+                """.formatted(repository.webUrl()));
+        responses.put("/gitlab/api/v4/projects/42/merge_requests?scope=all&state=opened&not%5Bauthor_username%5D=alice&iids%5B%5D=7&order_by=created_at&sort=desc"
+                + "&per_page=20&page=2", "[]");
+
+        assertThat(reader.search(target(), true, Optional.empty(), " fix dates ", 1, 20)).singleElement().satisfies(found -> {
+            assertThat(found.number()).isEqualTo(7);
+            assertThat(found.state()).isEqualTo("merged");
+        });
+        assertThat(reader.search(target(), false, Optional.of("alice"), "!7", 2, 20)).isEmpty();
+        assertThat(received).contains("/gitlab/api/v4/projects/42/merge_requests?scope=all&state=opened&not%5Bauthor_username%5D=alice&iids%5B%5D=7"
+                + "&order_by=created_at&sort=desc&per_page=20&page=2");
+    }
+
+    @Test
     void readsTheMergedRequestsIntoThisProjectThatContainACommit()
     {
         String path = "/gitlab/api/v4/projects/42/repository/commits/" + HEAD + "/merge_requests?per_page=100&page=1";

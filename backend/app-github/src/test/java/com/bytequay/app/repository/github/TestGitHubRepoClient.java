@@ -26,11 +26,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.net.URLDecoder;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Optional;
 import java.util.stream.IntStream;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.stream.Collectors.joining;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -437,5 +439,25 @@ class TestGitHubRepoClient
         assertThat(client.fetchSubIssues("pat", REPOSITORY, 7)).containsExactly(
                 new ChildIssue(71, 8, "Parse", false, Optional.of("https://github.com/owner/repo/issues/8"), REPOSITORY.fullName()),
                 new ChildIssue(72, 3, "Docs", true, Optional.empty(), "other/docs"));
+    }
+
+    @Test
+    void searchesPagesOfOpenIssuesByTitleWordOrNumberAndSkipsPullRequests()
+    {
+        assertThat(GitHubRepoClient.searchTerms(REPOSITORY, "is:issue is:open", " C++ {x} ")).isEqualTo("repo:owner/repo is:issue is:open in:title \"C x\"");
+        assertThat(GitHubRepoClient.searchTerms(REPOSITORY, "is:issue is:open", "#123")).isEqualTo("repo:owner/repo is:issue is:open 123");
+        assertThat(GitHubRepoClient.searchTerms(REPOSITORY, "is:issue is:open", " % ")).isEqualTo("repo:owner/repo is:issue is:open");
+        server.expect(request -> assertThat(request.getURI().getPath() + "?" + URLDecoder.decode(request.getURI().getRawQuery(), UTF_8))
+                        .isEqualTo("/search/issues?q=repo:owner/repo is:issue is:open 123&sort=created&order=desc&per_page=20&page=2"))
+                .andRespond(withSuccess("""
+                        {"total_count":2,"incomplete_results":false,"items":[
+                          {"id":10,"number":123,"title":"Issue","state":"open","user":{"login":"alice"},"html_url":"https://github.test/owner/repo/issues/123",
+                           "created_at":"2026-08-20T00:00:00Z","updated_at":"2026-08-21T00:00:00Z"},
+                          {"id":11,"number":8,"title":"PR","state":"open","pull_request":{"url":"pull"},
+                           "created_at":"2026-08-20T00:00:00Z","updated_at":"2026-08-21T00:00:00Z"}]}
+                        """, MediaType.APPLICATION_JSON));
+
+        assertThat(client.searchOpenIssues("pat", "repo:owner/repo is:issue is:open 123", 2, 20)).singleElement()
+                .satisfies(issue -> assertThat(issue.number()).isEqualTo(123));
     }
 }

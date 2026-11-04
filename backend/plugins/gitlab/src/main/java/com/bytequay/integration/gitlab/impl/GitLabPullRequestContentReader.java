@@ -16,6 +16,7 @@ package com.bytequay.integration.gitlab.impl;
 import com.bytequay.core.domain.DiffCommit;
 import com.bytequay.core.domain.DiffFile;
 import com.bytequay.core.domain.DiffFileContent;
+import com.bytequay.core.domain.FetchedPullRequest;
 import com.bytequay.core.domain.MergedPullRequest;
 import com.bytequay.core.domain.PrCheckRunState;
 import com.bytequay.core.domain.PrDiffEtags;
@@ -72,6 +73,7 @@ import static com.bytequay.integration.gitlab.impl.GitLabHttpClient.encode;
 import static com.bytequay.integration.gitlab.impl.GitLabHttpClient.mapped;
 import static com.bytequay.integration.gitlab.impl.GitLabHttpClient.mergeRequestPath;
 import static com.bytequay.integration.gitlab.impl.GitLabHttpClient.projectPath;
+import static com.bytequay.integration.gitlab.impl.GitLabHttpClient.searchFilter;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Throwables.throwIfUnchecked;
 import static com.google.common.collect.ImmutableList.toImmutableList;
@@ -190,6 +192,18 @@ public final class GitLabPullRequestContentReader
         return mapped("merge request", () -> Arrays.stream(requests).filter(request -> request.mergedAt() != null && !instant(request.mergedAt()).isBefore(since))
                 .sorted(comparing((GitLabMergeRequestResponse request) -> instant(request.mergedAt())).reversed())
                 .map(GitLabMergeRequestResponse::title).limit(limit).collect(toImmutableList()));
+    }
+
+    @Override
+    public List<FetchedPullRequest> search(HostingTarget target, boolean merged, Optional<String> excludedAuthor, String text, int page, int pageSize)
+    {
+        checkArgument(page > 0 && pageSize > 0 && pageSize <= 100, "Search pages hold 1 to 100 merge requests");
+        // Ordering by merge time needs GitLab 17.2; a merge also updates a request, so update time comes closest.
+        String path = projectPath(target) + "/merge_requests?scope=all&state=" + (merged ? "merged" : "opened")
+                + excludedAuthor.map(login -> "&not%5Bauthor_username%5D=" + encode(login)).orElse("") + searchFilter(text)
+                + "&order_by=" + (merged ? "updated_at" : "created_at") + "&sort=desc&per_page=" + pageSize + "&page=" + page;
+        GitLabMergeRequestResponse[] requests = get(target.access(), path, GitLabMergeRequestResponse[].class);
+        return mapped("merge request", () -> Arrays.stream(requests).map(request -> GitLabPullRequestReader.summary(target, request)).collect(toImmutableList()));
     }
 
     @Override

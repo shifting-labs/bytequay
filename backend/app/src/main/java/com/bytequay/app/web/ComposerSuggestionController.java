@@ -38,8 +38,9 @@ public class ComposerSuggestionController
     }
 
     @GetMapping
-    public List<ComposerSuggestion> list(@PathVariable String workspaceId, @RequestParam Command command, @RequestParam(defaultValue = "") String search)
+    public List<ComposerSuggestion> list(@PathVariable String workspaceId, @RequestParam Command command, @RequestParam(defaultValue = "") String search,
+            @RequestParam(defaultValue = "1") int page)
     {
-        return suggestions.list(workspaceId, command, search);
+        return suggestions.list(workspaceId, command, search, page);
     }
 }

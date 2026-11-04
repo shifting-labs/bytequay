@@ -76,6 +76,12 @@ public final class GitHubIssueClient
     }
 
     @Override
+    public List<RepositoryIssue> search(HostingTarget target, String text, int page, int pageSize)
+    {
+        return reads.searchOpenIssues(target.access().token(), GitHubRepoClient.searchTerms(repository(target), "is:issue is:open", text), page, pageSize);
+    }
+
+    @Override
     public Optional<RepositoryIssue> find(HostingTarget target, int number)
     {
         return reads.fetchIssue(target.access().token(), repository(target), number);

@@ -565,6 +565,10 @@ public class GitHubPullRequestReadClient
     }
 
     public PullRequestHistoryPage searchPullRequestsPaged(String pat, String query, int page, int perPage) {
+        return searchPullRequestsPaged(pat, query, "updated", page, perPage);
+    }
+
+    public PullRequestHistoryPage searchPullRequestsPaged(String pat, String query, String sort, int page, int perPage) {
         requirePat(pat);
         int safePage = Math.max(1, page);
         int safePerPage = Math.clamp(perPage, 1, 100);
@@ -573,7 +577,7 @@ public class GitHubPullRequestReadClient
                         .queryParam("q", query)
                         .queryParam("per_page", safePerPage)
                         .queryParam("page", safePage)
-                        .queryParam("sort", "updated")
+                        .queryParam("sort", sort)
                         .queryParam("order", "desc")
                         .build())
                         .retrieve()

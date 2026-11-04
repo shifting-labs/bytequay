@@ -38,28 +38,28 @@ class TestComposerSuggestionController
     private final MockMvc mvc = standaloneSetup(new ComposerSuggestionController(suggestions)).build();
 
     @Test
-    void routesCommandAndSearchWithinWorkspace()
+    void routesCommandSearchAndPageWithinWorkspace()
             throws Exception
     {
-        when(suggestions.list("workspace", FIX, "part")).thenReturn(ImmutableList.of(new ComposerSuggestion(
+        when(suggestions.list("workspace", FIX, "part", 2)).thenReturn(ImmutableList.of(new ComposerSuggestion(
                 7, "Repair partial updates", "https://github.com/owner/project/issues/7", "alice", Instant.parse("2026-08-01T00:00:00Z"))));
-        mvc.perform(get("/api/workspaces/workspace/composer-suggestions").param("command", "FIX").param("search", "part"))
+        mvc.perform(get("/api/workspaces/workspace/composer-suggestions").param("command", "FIX").param("search", "part").param("page", "2"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].number").value(7))
                 .andExpect(jsonPath("$[0].title").value("Repair partial updates"))
                 .andExpect(jsonPath("$[0].url").value("https://github.com/owner/project/issues/7"))
                 .andExpect(jsonPath("$[0].author").value("alice"));
-        verify(suggestions).list("workspace", FIX, "part");
+        verify(suggestions).list("workspace", FIX, "part", 2);
     }
 
     @Test
-    void defaultsToUnfilteredRecommendations()
+    void defaultsToTheFirstUnfilteredPage()
             throws Exception
     {
-        when(suggestions.list("workspace", BACKPORT, "")).thenReturn(ImmutableList.of());
+        when(suggestions.list("workspace", BACKPORT, "", 1)).thenReturn(ImmutableList.of());
         mvc.perform(get("/api/workspaces/workspace/composer-suggestions").param("command", "BACKPORT"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isEmpty());
-        verify(suggestions).list("workspace", BACKPORT, "");
+        verify(suggestions).list("workspace", BACKPORT, "", 1);
     }
 
     @Test

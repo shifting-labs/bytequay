@@ -272,6 +272,20 @@ class TestGitLabIssueClient
     }
 
     @Test
+    void searchesPagesOfOpenIssuesByTitleOrNumber()
+    {
+        String byTitle = "/gitlab/api/v4/projects/42/issues?scope=all&state=opened&search=selection&in=title&order_by=created_at&sort=desc&per_page=20&page=2";
+        replies.put("GET " + byTitle, new Reply(200, "[" + issue("opened") + "]", false));
+        replies.put("GET /gitlab/api/v4/projects/42/issues?scope=all&state=opened&iids%5B%5D=7&order_by=created_at&sort=desc&per_page=20&page=1", new Reply(200, "[]", false));
+        replies.put("GET /gitlab/api/v4/projects/42/issues?scope=all&state=opened&order_by=created_at&sort=desc&per_page=20&page=1", new Reply(200, "[]", false));
+
+        assertThat(client.search(target(), "selection", 2, 20)).singleElement().satisfies(issue -> assertThat(issue.number()).isEqualTo(7));
+        assertThat(requested.get()).isEqualTo(byTitle);
+        assertThat(client.search(target(), "#7", 1, 20)).isEmpty();
+        assertThat(client.search(target(), " ", 1, 20)).isEmpty();
+    }
+
+    @Test
     void failsAccessErrorsWithoutPretendingTheIssueListIsEmpty()
     {
         replies.put("GET /gitlab/api/v4/projects/42/issues?scope=all&state=opened&order_by=created_at&sort=desc&per_page=100&page=1", new Reply(403, "{}", false));
