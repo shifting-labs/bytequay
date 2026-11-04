@@ -174,21 +174,6 @@ public class HostingConnectionService
         return new HostingReadSession(accountId, CONNECTED_ACCOUNT, access(accountId));
     }
 
-    /** Verifies an externally owned credential without replacing a separately connected account's token. */
-    public HostingReadSession verifySession(HostingServer server, String scope, String token)
-    {
-        requireNonNull(server, "server is null");
-        checkText(scope, "scope");
-        checkText(token, "token");
-        HostingAccess access = new HostingAccess(server, token);
-        HostingAccounts reader = integrations.of(server).accounts();
-        RemoteHostingAccount remote = reader.verify(access);
-        HostingInstance instance = identities.upsertInstance(server);
-        identities.updateVersion(instance.id(), reader.serverVersion(access));
-        HostingAccount account = identities.upsertAccount(instance.id(), remote);
-        return new HostingReadSession(account.id(), scope, new HostingAccess(instance, token));
-    }
-
     public HostingAccount account(HostingReadSession session)
     {
         HostingAccount account = account(session.accountId());

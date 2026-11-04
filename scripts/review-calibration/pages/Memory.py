@@ -9,7 +9,6 @@ import statistics
 
 import streamlit as st
 
-import activity
 import dashboard
 import memory
 import saved

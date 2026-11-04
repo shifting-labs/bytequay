@@ -5,7 +5,7 @@ import unittest
 
 import activity
 import approvals
-from test_activity import START, command, event, in_order, tool
+from test_activity import START, command, event, in_order
 
 CODEX = "Allow Codex command"
 CLAUDE = "Allow Claude Bash"

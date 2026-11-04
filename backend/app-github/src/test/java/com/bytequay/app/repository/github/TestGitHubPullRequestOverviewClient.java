@@ -15,7 +15,6 @@ package com.bytequay.app.repository.github;
 
 import com.bytequay.core.domain.DiffFile;
 import com.bytequay.core.domain.DiffFileContent;
-import com.bytequay.core.domain.FetchedPullRequest;
 import com.bytequay.core.domain.PrReviewState;
 import com.bytequay.core.domain.PrTimelineEvent;
 import com.bytequay.core.domain.PullRequestRef;
@@ -57,70 +56,6 @@ class TestGitHubPullRequestOverviewClient
     private static final PullRequestRef PULL_REQUEST = PullRequestRef.of("owner", "repo", 42);
 
     private final GitHubPullRequestReadClient client = new GitHubPullRequestReadClient(restClient, graphQlClient);
-
-    @Test
-    void discoversPullRequestsByForkHeadWithBranchRefsAndAllPages()
-    {
-        String firstPage = IntStream.range(1, 101)
-                .mapToObj(number -> """
-                        {"id":%d,"number":%d,"title":"Draft","state":"open","draft":true,
-                         "head":{"ref":"feature/change"},"user":{"login":"contributor"}}
-                        """.formatted(number, number))
-                .collect(joining(",", "[", "]"));
-        server.expect(requestTo("https://api.github.test/repos/owner/repo/pulls?state=all&head=contributor%3Afeature%2Fchange&per_page=100&page=1"))
-                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer pat"))
-                .andRespond(withSuccess(firstPage, MediaType.APPLICATION_JSON));
-        server.expect(requestTo("https://api.github.test/repos/owner/repo/pulls?state=all&head=contributor%3Afeature%2Fchange&per_page=100&page=2"))
-                .andRespond(withSuccess("""
-                        [{"id":101,"number":101,"title":"Earlier attempt","state":"closed",
-                          "merged_at":"2026-09-07T00:00:00Z","head":{"ref":"feature/change"}}]
-                        """, MediaType.APPLICATION_JSON));
-
-        List<FetchedPullRequest> found = client.fetchPullRequestsByHead("pat", RepoRef.of("owner", "repo"), "contributor:feature/change");
-
-        assertThat(found).hasSize(101);
-        assertThat(found.getFirst().headRef()).isEqualTo("feature/change");
-        assertThat(found.getFirst().draft()).isTrue();
-        assertThat(found.getFirst().repo()).isEqualTo("owner/repo");
-        assertThat(found.getLast().state()).isEqualTo("closed");
-        assertThat(found.getLast().mergedAt()).isEqualTo(Instant.parse("2026-09-07T00:00:00Z"));
-    }
-
-    @Test
-    void listReadsKeepPullRequestFacts()
-    {
-        String response = """
-                {"id":12,"number":42,"title":"Fix parser","state":"closed","draft":false,
-                 "html_url":"https://github.com/owner/repo/pull/42","user":{"login":"alice"},
-                 "created_at":"2026-08-19T10:00:00Z","updated_at":"2026-08-20T10:00:00Z",
-                 "closed_at":"2026-08-20T10:00:00Z","merged_at":"2026-08-20T10:00:00Z",
-                 "labels":[{"name":"bug","color":"ff0000"},{"name":"bug","color":"000000"},{"name":"parser"}],
-                 "requested_reviewers":[{"login":"bob"}],"head":{"ref":"feature"},
-                 "mergeable":true,"mergeable_state":"clean"}
-                """;
-        server.expect(requestTo("https://api.github.test/repos/owner/repo/pulls?state=all&head=alice%3Afeature&per_page=100&page=1"))
-                .andRespond(withSuccess("[" + response + "]", MediaType.APPLICATION_JSON));
-
-        FetchedPullRequest listed = client.fetchPullRequestsByHead("pat", RepoRef.of("owner", "repo"), "alice:feature").getFirst();
-
-        assertThat(listed.labels()).containsExactly("bug", "bug", "parser");
-        assertThat(listed.labelColors()).hasSize(1).containsEntry("bug", "ff0000");
-        assertThat(listed.requestedReviewers()).containsExactly("bob");
-        assertThat(listed.author()).isEqualTo("alice");
-        assertThat(listed.headRef()).isEqualTo("feature");
-        assertThat(listed.mergedAt()).isEqualTo(Instant.parse("2026-08-20T10:00:00Z"));
-    }
-
-    @Test
-    void listRejectsMissingReviewerLogins()
-    {
-        server.expect(requestTo("https://api.github.test/repos/owner/repo/pulls?state=all&head=alice%3Afeature&per_page=100&page=1"))
-                .andRespond(withSuccess("""
-                        [{"id":12,"number":42,"title":"Fix parser","state":"open","requested_reviewers":[{}, {"login":"bob"}]}]
-                        """, MediaType.APPLICATION_JSON));
-
-        assertThatThrownBy(() -> client.fetchPullRequestsByHead("pat", RepoRef.of("owner", "repo"), "alice:feature")).isInstanceOf(NullPointerException.class);
-    }
 
     @Test
     void readsDiffContentsAtTheSpecifiedBaseAndHead()

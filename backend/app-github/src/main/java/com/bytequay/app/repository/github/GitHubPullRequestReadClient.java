@@ -76,7 +76,6 @@ import static com.bytequay.core.domain.Checks.checkSha;
 import static com.bytequay.core.domain.Checks.checkText;
 import static com.bytequay.core.domain.Checks.isSha;
 import static com.bytequay.core.domain.PullRequest.Origin.AUTHORED;
-import static com.bytequay.core.domain.PullRequest.Origin.OTHER;
 import static com.bytequay.core.domain.PullRequest.Origin.REVIEW_REQUESTED;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
@@ -111,26 +110,6 @@ public class GitHubPullRequestReadClient
             "comments", "/repos/{owner}/{repo}/issues/{number}/comments",
             "reviewComments", "/repos/{owner}/{repo}/pulls/{number}/comments",
             "issue", "/repos/{owner}/{repo}/issues/{number}");
-
-    /** The list endpoint supplies head refs immediately, without waiting for GitHub's search index. */
-    public List<FetchedPullRequest> fetchPullRequestsByHead(String pat, RepoRef repository, String head)
-    {
-        requirePat(pat);
-        requireNonNull(repository, "repository is null");
-        requireNonNull(head, "head is null");
-        ImmutableList.Builder<FetchedPullRequest> result = ImmutableList.builder();
-        GitHubPaginator.forEachPage(50, page -> translating(() -> get(gitHubRestClient, pat, uri -> uri.path("/repos/{owner}/{repo}/pulls")
-                .queryParam("state", "all")
-                .queryParam("head", "{head}")
-                .queryParam("per_page", GitHubPaginator.PAGE_SIZE)
-                .queryParam("page", page)
-                .build(repository.owner(), repository.repo(), head))
-                .retrieve().body(new ParameterizedTypeReference<List<GitHubPullRequestDetailResponse>>() {})),
-                rows -> rows.forEach(row -> result.add(toPullRequest(row, repository.fullName(),
-                        Optional.ofNullable(row.requestedReviewers()).orElse(ImmutableList.of()).stream()
-                                .map(GitHubUser::login).collect(toImmutableList())))));
-        return result.build();
-    }
 
     /** Reads all PR states for an exact fork or same-repository head, retaining different base branches. */
     public List<PullRequestIdentity> fetchPullRequestIdentities(String pat, RepoRef baseRepository, RepoRef headRepository, String headBranch)
@@ -1383,18 +1362,6 @@ public class GitHubPullRequestReadClient
     private record ViewerReactionNode(String id, List<ViewerReactionGroup> reactionGroups) {}
 
     private record ViewerReactionGroup(String content, Boolean viewerHasReacted) {}
-
-    private static FetchedPullRequest toPullRequest(GitHubPullRequestDetailResponse item, String fullName, List<String> reviewers)
-    {
-        List<GitHubPullRequestDetailResponse.Label> labels = Optional.ofNullable(item.labels()).orElse(ImmutableList.of());
-        return new FetchedPullRequest(
-                item.id(), fullName, item.number(), item.title(), Optional.ofNullable(item.user()).map(GitHubUser::login).orElse(null),
-                item.htmlUrl(), item.createdAt(), item.updatedAt(), OTHER, labels.stream().map(GitHubPullRequestDetailResponse.Label::name).collect(toImmutableList()),
-                labels.stream().filter(label -> label.name() != null && label.color() != null)
-                        .collect(toImmutableMap(GitHubPullRequestDetailResponse.Label::name, GitHubPullRequestDetailResponse.Label::color, (left, right) -> left)),
-                item.draft(), item.state(), item.closedAt(), item.mergedAt(), reviewers, item.mergeable(), item.mergeableState(),
-                Optional.ofNullable(item.head()).map(GitHubPullRequestDetailResponse.Head::ref).orElse(null));
-    }
 
     // ── GraphQL: review-thread resolution ────────────────────────────────
 

@@ -331,28 +331,6 @@ class TestHostingConnectionService
     }
 
     @Test
-    void verifiesAnExternalSessionWithItsConfiguredServerWithoutReplacingTheConnectedToken()
-    {
-        HostingServer server = new HostingServer(GITLAB, instance.webBaseUrl(), instance.apiBaseUrl());
-        when(accounts.verify(any())).thenAnswer(call -> {
-            HostingAccess access = call.getArgument(0);
-            assertThat(access.server()).isEqualTo(server);
-            assertThat(access.token()).isEqualTo("external-token");
-            return new RemoteHostingAccount("42", "alice");
-        });
-        when(identities.upsertInstance(server)).thenReturn(instance);
-        when(identities.upsertAccount(10, new RemoteHostingAccount("42", "alice"))).thenReturn(account);
-
-        HostingReadSession session = service.verifySession(server, "external", "external-token");
-
-        assertThat(service.account(session)).isEqualTo(account);
-        assertThat(session.access().server()).isEqualTo(server);
-        assertThat(session.access().token()).isEqualTo("external-token");
-        assertThat(service.readSession(20).access().token()).isEqualTo("first-secret");
-        verify(credentials, never()).save(anyLong(), anyString(), any());
-    }
-
-    @Test
     void retainedRepositoryLookupIsLocalAndRejectsAmbiguousPaths()
     {
         HostingReadSession session = service.readSession(20);

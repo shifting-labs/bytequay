@@ -16,7 +16,6 @@ import json
 from pathlib import Path
 import sqlite3
 
-import activity
 import records
 import saved
 
