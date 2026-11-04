@@ -746,7 +746,7 @@ class TestAgentReviewService
         HostingInstance instance = new HostingInstance(2, GITLAB, URI.create("https://gitlab.example.com/gitlab"), URI.create("https://gitlab.example.com/gitlab/api/v4"));
         HostingRepository repository = new HostingRepository(22, 2, "123", REPO, URI.create("https://gitlab.example.com/gitlab/owner/repo"),
                 URI.create("https://gitlab.example.com/gitlab/owner/repo.git"), Optional.empty(), Optional.of("main"));
-        PullRequestRead route = new PullRequestRead(new HostingReadSession(9, "gitlab-token", new HostingAccess(instance, "token")), repository, NUMBER, "gitlab-user");
+        PullRequestRead route = new PullRequestRead(new HostingReadSession(9, "gitlab-token", new HostingAccess(instance, "token")), repository, NUMBER, "first.last_name");
         Map<String, String> authentication = ImmutableMap.of("GIT_CONFIG_COUNT", "1");
         when(fixture.hosting.captureRead(WORKSPACE)).thenReturn(new WorkspaceHostingRead(route.session(), repository, route.login()));
         when(fixture.pullRequests.prepareRead(WORKSPACE, REPO, NUMBER)).thenReturn(route);
@@ -770,7 +770,7 @@ class TestAgentReviewService
         verify(fixture.tasks).prepare(command.capture());
         assertThat(command.getValue().workspaceId()).isEqualTo(WORKSPACE);
         assertThat(command.getValue().startCommit()).isEqualTo(NEW_HEAD);
-        assertThat(command.getValue().generatedBranch()).startsWith("gitlab-user/bytequay/");
+        assertThat(command.getValue().generatedBranch()).startsWith("first.last_name/bytequay/");
         verify(fixture.git).run(REPOSITORY, Duration.ofMinutes(2), authentication, ImmutableList.of(
                 "fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "origin",
                 "+refs/merge-requests/7/head:refs/bytequay/review/7", "+refs/heads/main:refs/remotes/origin/main"));

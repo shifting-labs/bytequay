@@ -40,6 +40,15 @@ class TestTaskBranches
     }
 
     @Test
+    void preservesGitLabLoginCharacters()
+    {
+        String branch = TaskBranches.generate(TASK_ID, "First.Last_Name", "Fix bug");
+        assertThat(branch).isEqualTo("first.last_name/bytequay/fix-bug-c587a121");
+        TaskWorktree.checkGeneratedBranch(TASK_ID, branch);
+        assertThat(branch).startsWith(TaskBranches.prefix(branch.split("/", 2)[0]));
+    }
+
+    @Test
     void removesConversationalLeadInsBeforeShorteningTheDescription()
     {
         for (String prefix : new String[] {
@@ -93,12 +102,15 @@ class TestTaskBranches
         TaskWorktree.checkGeneratedBranch(TASK_ID, branch);
         TaskWorktree.checkGeneratedBranch(TASK_ID, "bytequay/task/" + TASK_ID);
         TaskWorktree.checkGeneratedBranch(TASK_ID, "user/bytequay/let-s-refactor-nits-in-delta-lake-c587a121");
-        assertThatThrownBy(() -> TaskBranches.generate(TASK_ID, "../user", "Fix bug"))
-                .isInstanceOf(IllegalArgumentException.class);
+        for (String login : new String[] {"../user", "user..name", "user.lock"}) {
+            assertThatThrownBy(() -> TaskBranches.generate(TASK_ID, login, "Fix bug"))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
         assertThatThrownBy(() -> TaskBranches.generate(TASK_ID, "user", " "))
                 .isInstanceOf(IllegalArgumentException.class);
         for (String invalid : new String[] {
                 "other/branch", "user/bytequay/../fix-c587a121", "user/bytequay/fix.lock-c587a121",
+                "user..name/bytequay/fix-c587a121", "user.lock/bytequay/fix-c587a121", ".user/bytequay/fix-c587a121",
                 "user/bytequay/fix@{1}-c587a121", "fix-dup-table-sample-issue-31178",
                 "bytequay/task/00000000-a71d-40a1-9755-3f6ee9db0547"}) {
             assertThatThrownBy(() -> new TaskWorktree(TASK_ID, "workspace", RepositoryIdentity.valueOf("org/repo"),

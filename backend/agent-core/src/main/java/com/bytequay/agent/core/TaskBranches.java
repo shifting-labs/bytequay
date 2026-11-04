@@ -27,7 +27,7 @@ public final class TaskBranches
 {
     private static final int MAX_SLUG_WORDS = 4;
     private static final int MAX_SLUG_LENGTH = 32;
-    private static final String LOGIN = "[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?";
+    private static final String LOGIN = "[a-z0-9](?:[a-z0-9_.-]{0,37}[a-z0-9_-])?";
     private static final Pattern BRANCH = Pattern.compile(LOGIN + "/bytequay/[a-z0-9]+(?:-[a-z0-9]+)*");
     // The provisional slug is local; semantic naming runs after the conversation starts.
     private static final Pattern REQUEST_PREFIX = Pattern.compile("^(?:(?:let['’]s|let us|please|(?:can|could|would|will) you|"
@@ -35,11 +35,11 @@ public final class TaskBranches
 
     private TaskBranches() {}
 
-    public static String generate(TaskId taskId, String githubLogin, String description)
+    public static String generate(TaskId taskId, String hostingLogin, String description)
     {
         requireNonNull(taskId, "taskId is null");
         checkText(description, "description");
-        String prefix = prefix(githubLogin);
+        String prefix = prefix(hostingLogin);
         String descriptionLine = TaskTitles.firstLine(description).toLowerCase(Locale.ROOT);
         String slug = Normalizer.normalize(REQUEST_PREFIX.matcher(descriptionLine).replaceFirst(""), Normalizer.Form.NFKD)
                 .replaceAll("\\p{M}+", "")
@@ -58,11 +58,12 @@ public final class TaskBranches
         return prefix + (shortSlug.isEmpty() ? "task" : shortSlug) + "-" + taskId.toString().substring(0, 8);
     }
 
-    public static String prefix(String githubLogin)
+    public static String prefix(String hostingLogin)
     {
-        checkText(githubLogin, "githubLogin");
-        String login = githubLogin.toLowerCase(Locale.ROOT);
-        checkArgument(login.matches(LOGIN), "githubLogin is not a safe GitHub login");
+        checkText(hostingLogin, "hostingLogin");
+        String login = hostingLogin.toLowerCase(Locale.ROOT);
+        checkArgument(login.matches(LOGIN) && !login.contains("..") && !login.endsWith(".lock"),
+                "hostingLogin is not a safe Git branch component");
         return login + "/bytequay/";
     }
 
@@ -73,6 +74,6 @@ public final class TaskBranches
 
     static boolean matches(String branch)
     {
-        return branch.length() <= 128 && BRANCH.matcher(branch).matches();
+        return branch.length() <= 128 && !branch.contains("..") && !branch.contains(".lock/") && BRANCH.matcher(branch).matches();
     }
 }
