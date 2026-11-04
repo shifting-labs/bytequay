@@ -540,6 +540,9 @@ guidance and lets a task start work there.
 
 **Pause** holds the task; **Abort** closes the PR and deletes the work branch.
 **Backport** carries a PR down the line, one cherry-pick per repository.
+To ask before a PR merges, type **@backport** and its number or link in the
+destination's task composer. Each step waits for its PR to merge; ByteQuay
+never merges one itself.
 Each backport PR uses the destination repository’s template and title conventions
 from recently merged PRs. Without a clear convention, its title is
 **Backport: _source PR title_**.
