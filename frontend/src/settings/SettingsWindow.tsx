@@ -15,6 +15,7 @@ import { clock } from '@bytequay/ui/displayText';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   DevelopmentAutomationDto,
+  AgentModelSettingDto,
   AgentModelType,
   AgentRuleDto,
   AgentSkillDto,
@@ -80,6 +81,7 @@ export default function SettingsWindow({ section, workspace, onWorkspacesChanged
   const checkedAt = models?.checkedAt ? clock(new Date(models.checkedAt)) : null;
   const modelRequest = useRef(0);
   const modelSaves = useRef<Promise<unknown>>(Promise.resolve());
+  const [modelSavesPending, setModelSavesPending] = useState(0);
   const [skills, setSkills] = useState<AgentSkillDto[] | null>(null);
   const [skillsBusy, setSkillsBusy] = useState(false);
   const [rules, setRules] = useState<AgentRuleDto[] | null>(null);
@@ -184,7 +186,7 @@ export default function SettingsWindow({ section, workspace, onWorkspacesChanged
     const id = workspaceRef.current;
     if (id === null) return;
     const request = ++workspaceRequest.current;
-    window.bridge.getWorkspaceSettings(id)
+    return window.bridge.getWorkspaceSettings(id)
       .then(value => {
         if (workspaceRef.current !== id || request !== workspaceRequest.current) return;
         setWsSettings(value);
@@ -216,6 +218,7 @@ export default function SettingsWindow({ section, workspace, onWorkspacesChanged
     const scope = modelWorkspaceId;
     setChecking(false);
     setError(null);
+    setModelSavesPending(value => value + 1);
     // Keep writes ordered and prevent a provider read started before this edit from reverting it.
     modelSaves.current = modelSaves.current.then(save)
       .then(value => {
@@ -234,16 +237,29 @@ export default function SettingsWindow({ section, workspace, onWorkspacesChanged
           setModelsScope(scope);
         }
         catch { /* Keep the last displayed choices beside the save error until the user retries. */ }
-      });
+      })
+      .finally(() => setModelSavesPending(value => value - 1));
+  };
+
+  const saveWorkspaceModel = (save: () => Promise<AgentModelSettingDto>) => {
+    if (workspace === null) return;
+    const scope = workspace.id;
+    workspaceRequest.current += 1;
+    setError(null);
+    setModelSavesPending(value => value + 1);
+    modelSaves.current = modelSaves.current.then(save)
+      .then(saved => {
+        if (workspaceRef.current !== scope) return;
+        setWsSettings(current => current === null ? null : { ...current, agents: current.agents.map(agent => agent.type === saved.type ? saved : agent) });
+        return refreshWorkspaceSettings();
+      })
+      .catch(failure => { if (workspaceRef.current === scope) report(failure); })
+      .finally(() => setModelSavesPending(value => value - 1));
   };
 
   const chooseWorkspaceModel = (type: AgentModelType, choice: ModelChoice) => {
     if (workspace === null) return;
-    workspaceRequest.current += 1;
-    setError(null);
-    window.bridge.setWorkspaceAgentModel(workspace.id, type, choice.configId, choice.model, choice.effort)
-      .then(refreshWorkspaceSettings)
-      .catch(report);
+    saveWorkspaceModel(() => window.bridge.setWorkspaceAgentModel(workspace.id, type, choice.configId, choice.model, choice.effort));
   };
 
   const addClaudeAccount = async (label: string, login: ClaudeLogin) => {
@@ -370,6 +386,7 @@ export default function SettingsWindow({ section, workspace, onWorkspacesChanged
               onAddClaudeAccount={addClaudeAccount}
               onRemoveClaudeAccount={removeClaudeAccount}
               checking={checking}
+              saving={modelSavesPending > 0}
               checkedAt={checkedAt}
               error={error}
               onCheck={() => loadModels(true)}
@@ -503,13 +520,12 @@ export default function SettingsWindow({ section, workspace, onWorkspacesChanged
               settings={wsSettings}
               models={modelsScope === modelWorkspaceId ? models : null}
               checking={checking}
+              saving={modelSavesPending > 0}
               checkedAt={checkedAt}
               error={error}
               onChoose={chooseWorkspaceModel}
               onUseGlobal={type => {
-                workspaceRequest.current += 1;
-                setError(null);
-                window.bridge.clearWorkspaceAgentModel(workspace.id, type).then(refreshWorkspaceSettings).catch(report);
+                saveWorkspaceModel(() => window.bridge.clearWorkspaceAgentModel(workspace.id, type));
               }}
               onCheck={() => { void loadModels(true).then(refreshWorkspaceSettings); }}
               onSignIn={providerId => setSigningIn({

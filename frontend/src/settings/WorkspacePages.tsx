@@ -136,12 +136,13 @@ export function WorkspaceRepositoryPage({ workspace, settings, error, onUnlinkUp
 }
 
 export function WorkspaceAgentsPage({
-  workspace, settings, models, checking, checkedAt, error, onChoose, onUseGlobal, onCheck, onSignIn, onAddClaudeAccount, onRemoveClaudeAccount, onRestrictClaudeAccount,
+  workspace, settings, models, checking, saving = false, checkedAt, error, onChoose, onUseGlobal, onCheck, onSignIn, onAddClaudeAccount, onRemoveClaudeAccount, onRestrictClaudeAccount,
 }: {
   workspace: WorkspaceDto;
   settings: WorkspaceSettingsDto | null;
   models: ModelSettingsDto | null;
   checking: boolean;
+  saving?: boolean;
   checkedAt: string | null;
   error: string | null;
   onChoose: (type: AgentModelType, choice: ModelChoice) => void;
@@ -166,7 +167,7 @@ export function WorkspaceAgentsPage({
           : settings.agents.map(agent => (
             <SettingsRow key={agent.type} title={typeLabel(agent.type)}
               subtitle={`${agent.explicit ? 'For this repository' : 'Global default'} · ${agent.label}`}>
-              <AgentModelControls agent={agent} settings={models} onChoose={choice => onChoose(agent.type, choice)} />
+              <AgentModelControls agent={agent} settings={models} saving={saving} onChoose={choice => onChoose(agent.type, choice)} />
               {agent.explicit
                 ? <button type="button" className="setw-link" onClick={() => onUseGlobal(agent.type)}>Use global</button>
                 : <Badge>global default</Badge>}

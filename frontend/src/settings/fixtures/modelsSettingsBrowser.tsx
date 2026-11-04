@@ -178,6 +178,45 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
       assert(view.host.textContent?.includes('Model save unavailable') === true, 'The failed latest save remains visible');
       assert(view.host.querySelector('[aria-label="Development model"]')?.textContent?.includes('Opus') === true, 'The control reflects the earlier persisted choice');
     },
+    async 'effort edits wait for the selected global or workspace model to finish saving'(view: View) {
+      const catalog: ModelSettingsDto = { ...withAccount, providers: withAccount.providers.map(provider => ({ ...provider,
+        models: provider.models.map(model => ({ ...model, efforts: ['low', 'high'] })),
+      })) };
+      await settle(); view.finish(catalog); await settle();
+      for (const workspace of [false, true]) {
+        if (workspace) { view.render('ws-agents', 'repo-a'); await settle(); view.finish(catalog); await settle(); }
+        const pending = Promise.withResolvers<void>();
+        const writes: string[] = [];
+        const saveGlobal = window.bridge.setAgentModel;
+        const saveWorkspace = window.bridge.setWorkspaceAgentModel;
+        const readWorkspace = window.bridge.getWorkspaceSettings;
+        let failRead = workspace;
+        window.bridge.getWorkspaceSettings = async (...args) => {
+          if (failRead) { failRead = false; throw new Error('Workspace refresh unavailable'); }
+          return readWorkspace(...args);
+        };
+        const waitForFirst = async (configId: string) => { writes.push(configId); if (writes.length === 1) await pending.promise; };
+        window.bridge.setAgentModel = async (...args) => { await waitForFirst(args[1]); return { ...catalog, agents: (await saveGlobal(...args)).agents }; };
+        window.bridge.setWorkspaceAgentModel = async (...args) => { await waitForFirst(args[2]); return saveWorkspace(...args); };
+        try {
+          element<HTMLButtonElement>('[aria-label="Development model"]', view.host).click(); await settle();
+          const choice = [...view.host.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(button => button.textContent?.includes('Opus') && button.textContent?.includes('Claude Code'));
+          assert(choice !== undefined, 'The other model is available'); choice.click(); await settle();
+          const effort = element<HTMLButtonElement>('[aria-label="Development effort"]', view.host);
+          assert(effort.disabled, 'Effort cannot submit the previous model while the selected model is saving');
+          effort.click(); await settle();
+          assert(writes.join() === 'claude' && view.host.querySelector('[role="listbox"]') === null, 'A pending save cannot open an effort edit');
+          pending.resolve(); await settle();
+          assert(!effort.disabled, 'Effort is available after the saved model reaches the controls');
+          assert(element('[aria-label="Development model"]', view.host).textContent?.includes('Opus'), 'The saved model stays visible even when its follow-up refresh fails');
+          effort.click(); await settle();
+          const low = [...view.host.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(button => button.textContent?.trim() === 'low');
+          assert(low !== undefined, 'The new model offers low effort'); low.click(); await settle();
+          assert(writes.join() === 'claude,claude', 'The effort edit keeps the newly selected model');
+        }
+        finally { window.bridge.setAgentModel = saveGlobal; window.bridge.setWorkspaceAgentModel = saveWorkspace; window.bridge.getWorkspaceSettings = readWorkspace; }
+      }
+    },
     async 'global providers hide repository accounts and their models'(view: View) {
       await settle(); view.finish({ ...withAccount, providers: withAccount.providers.map(provider => provider.id === 'claude'
         ? { ...provider, readiness: 'AUTHENTICATION_REQUIRED', diagnostic: '' } : provider) }); await settle();
@@ -318,6 +357,7 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
         return agents[0];
       },
       openProviderSignIn: async laneId => { signIns.push(laneId); return { terminalId: laneId, scrollback: 'Choose an email in your browser' }; },
+      cancelProviderSignIn: async () => {},
       onReviewTerminalEvent: listener => { terminalEvent = listener; return () => {}; },
       writeReviewTerminal: () => {},
       resizeReviewTerminal: () => {},

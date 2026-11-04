@@ -99,9 +99,10 @@ export function typeLabel(type: AgentModelType): string {
  * the workspace page can put them beside its own override controls without
  * repeating the type's name.
  */
-export function AgentModelControls({ agent, settings, inheritLabel, onChoose, onInherit, onAddKey }: {
+export function AgentModelControls({ agent, settings, saving = false, inheritLabel, onChoose, onInherit, onAddKey }: {
   agent: AgentModelSettingDto;
   settings: ModelSettingsDto;
+  saving?: boolean;
   /** Offered as the first option when this type may follow another; absent for Development. */
   inheritLabel?: string;
   onChoose: (choice: ModelChoice) => void;
@@ -142,11 +143,12 @@ export function AgentModelControls({ agent, settings, inheritLabel, onChoose, on
       {!inheriting && efforts.length > 0 && (
         <SelectPill
           quiet
+          disabled={saving}
           ariaLabel={`${typeLabel(agent.type)} effort`}
           value={agent.effort ?? ''}
           label={agent.effort ?? 'default'}
           options={efforts.map(effort => ({ value: effort, label: effort }))}
-          onSelect={effort => onChoose({ configId: agent.configId, model: agent.model, effort })}
+          onSelect={effort => { if (!saving) onChoose({ configId: agent.configId, model: agent.model, effort }); }}
         />
       )}
     </>
@@ -157,6 +159,7 @@ export function AgentModelControls({ agent, settings, inheritLabel, onChoose, on
 function AgentModelRow({ agent, subtitle, ...controls }: {
   agent: AgentModelSettingDto;
   settings: ModelSettingsDto;
+  saving?: boolean;
   subtitle?: string;
   inheritLabel?: string;
   onChoose: (choice: ModelChoice) => void;
@@ -170,10 +173,11 @@ function AgentModelRow({ agent, subtitle, ...controls }: {
   );
 }
 
-export default function ModelsPage({ settings, checkedAt, checking, error, onCheck, onSignIn, onChoose, onInherit, onAddKey, onRemoveKey, onAddClaudeAccount, onRemoveClaudeAccount }: {
+export default function ModelsPage({ settings, checkedAt, checking, saving = false, error, onCheck, onSignIn, onChoose, onInherit, onAddKey, onRemoveKey, onAddClaudeAccount, onRemoveClaudeAccount }: {
   settings: ModelSettingsDto;
   checkedAt: string | null;
   checking: boolean;
+  saving?: boolean;
   error: string | null;
   onCheck: () => void;
   /** Opens that lane's sign-in terminal; absent where no terminal can be opened. */
@@ -201,6 +205,7 @@ export default function ModelsPage({ settings, checkedAt, checking, error, onChe
           <AgentModelRow
             agent={development}
             settings={globalSettings}
+            saving={saving}
             subtitle="Task turns and CI Autofix"
             onChoose={choice => onChoose('DEVELOPMENT', choice)}
             onAddKey={() => setAddingKey(true)}
@@ -210,6 +215,7 @@ export default function ModelsPage({ settings, checkedAt, checking, error, onChe
           <AgentModelRow
             agent={review}
             settings={globalSettings}
+            saving={saving}
             subtitle="Pull-request reviews and discussions"
             inheritLabel="Same as Development"
             onChoose={choice => onChoose('REVIEW', choice)}
