@@ -67,7 +67,7 @@ export default function PullMetadata({ detail, contributorsWorkspaceId, onDetail
   }, [key]);
 
   const toggle = (kind: MetadataPickerKind) => {
-    if (updatingRef.current) return;
+    if (updatingRef.current || loading) return;
     setQuery('');
     setError(null);
     setOpen(current => current === kind ? null : kind);
@@ -147,7 +147,7 @@ export default function PullMetadata({ detail, contributorsWorkspaceId, onDetail
         const removed = new Set(changes.filter(candidate => !candidate.selected).map(candidate => candidate.login.toLowerCase()));
         const next = [...visibleDetail.assignees.filter(login => !removed.has(login.toLowerCase())),
           ...changes.filter(candidate => candidate.selected).map(candidate => candidate.login)];
-        await bridge.updatePrMetadata(visibleDetail.repo, visibleDetail.number, next, visibleDetail.labels.map(label => label.name));
+        await bridge.updatePrMetadata(visibleDetail.repo, visibleDetail.number, { assignees: next });
         commit(current => ({ ...current, assignees: next }));
       }
       else {
@@ -177,7 +177,7 @@ export default function PullMetadata({ detail, contributorsWorkspaceId, onDetail
     <div className="pr-meta" ref={root}>
       <div className="pr-meta__picker">
         <button type="button" className={`pr-meta__chip${open === 'reviewers' ? ' is-open' : ''}`}
-          disabled={updating} aria-expanded={open === 'reviewers'} aria-haspopup="listbox" onClick={() => toggle('reviewers')}>
+          disabled={updating || loading} aria-expanded={open === 'reviewers'} aria-haspopup="listbox" onClick={() => toggle('reviewers')}>
           <small>Reviewers</small>
           {visibleDetail.reviewers.length === 0 && 'None'}
           {visibleDetail.reviewers.slice(0, visibleDetail.reviewers.length > 3 ? 2 : 3).map(reviewer => (
@@ -195,7 +195,7 @@ export default function PullMetadata({ detail, contributorsWorkspaceId, onDetail
       </div>
       <div className="pr-meta__picker">
         <button type="button" className={`pr-meta__chip${open === 'assignees' ? ' is-open' : ''}`}
-          disabled={updating} aria-expanded={open === 'assignees'} aria-haspopup="listbox" onClick={() => toggle('assignees')}>
+          disabled={updating || loading} aria-expanded={open === 'assignees'} aria-haspopup="listbox" onClick={() => toggle('assignees')}>
           <User size={15} strokeWidth={1.4} aria-hidden="true" /> <small>Assignees</small>
           {visibleDetail.assignees.slice(0, visibleDetail.assignees.length > 3 ? 2 : 3).map(login => (
             <span className="pr-meta__item" key={login}>
@@ -211,7 +211,7 @@ export default function PullMetadata({ detail, contributorsWorkspaceId, onDetail
       </div>
       <div className="pr-meta__picker">
         <button type="button" className={`pr-meta__chip${open === 'labels' ? ' is-open' : ''}`}
-          disabled={updating} aria-expanded={open === 'labels'} aria-haspopup="listbox" onClick={() => toggle('labels')}>
+          disabled={updating || loading} aria-expanded={open === 'labels'} aria-haspopup="listbox" onClick={() => toggle('labels')}>
           {visibleDetail.labels.length === 0 && 'No labels'}
           {visibleDetail.labels.slice(0, visibleDetail.labels.length > 3 ? 2 : 3).map(label => (
             <span className="pr-meta__item" key={label.name}>
@@ -233,7 +233,7 @@ export default function PullMetadata({ detail, contributorsWorkspaceId, onDetail
               current => ({ ...current, labels: next }),
               current => current.labels === next ? { ...current, labels: previous } : current,
               () => bridge.updatePrMetadata(
-                visibleDetail.repo, visibleDetail.number, visibleDetail.assignees, next.map(value => value.name)),
+                visibleDetail.repo, visibleDetail.number, { labels: next.map(value => value.name) }),
             );
           }} />}
       </div>

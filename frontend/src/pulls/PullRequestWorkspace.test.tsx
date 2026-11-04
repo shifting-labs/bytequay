@@ -94,4 +94,11 @@ describe('repository viewer avatars', () => {
     expect(api.getWorkspaceHostingViewer).not.toHaveBeenCalled();
     expect(api.fetchRepoUsers).not.toHaveBeenCalled();
   });
+
+  it('routes partial metadata without adding an untouched field', async () => {
+    const updatePrMetadata = vi.fn(async () => {});
+    const routed = routedPullRequestBridge({ updatePrMetadata } as unknown as Bridge, { accountId: 11 });
+    await routed.updatePrMetadata('group/project', 4, { labels: [] });
+    expect(updatePrMetadata).toHaveBeenCalledWith('group/project', 4, { labels: [] }, { accountId: 11 });
+  });
 });

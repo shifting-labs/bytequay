@@ -1740,12 +1740,12 @@ public class PullRequestService
         actions.markReadyForReview(route);
     }
 
-    public void updateMetadata(String repo, int number, List<String> assignees, List<String> labels)
+    public void updateMetadata(String repo, int number, Optional<List<String>> assignees, Optional<List<String>> labels)
     {
         actions.updateMetadata(prepareRead(repo, number), assignees, labels);
     }
 
-    public void updateMetadata(PullRequestRead route, List<String> assignees, List<String> labels)
+    public void updateMetadata(PullRequestRead route, Optional<List<String>> assignees, Optional<List<String>> labels)
     {
         actions.updateMetadata(route, assignees, labels);
     }

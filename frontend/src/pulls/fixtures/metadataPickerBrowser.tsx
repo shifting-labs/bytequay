@@ -107,8 +107,8 @@ export async function runBatch(): Promise<string> {
     await f.choose('assignees', 'alice');
     assert(f.assigneeWrites.length === 0 && f.detail().assignees.join() === 'bob', 'Assignee drafts must remain local until Save');
     await f.click('Save changes');
-    assert(Number(f.assigneeWrites.length) === 1 && f.assigneeWrites[0][2].slice().sort().join() === 'alice,carol'
-      && f.assigneeWrites[0][3].join() === 'bug', 'Save must send all assignees once and preserve labels');
+    assert(Number(f.assigneeWrites.length) === 1 && f.assigneeWrites[0][2].assignees?.slice().sort().join() === 'alice,carol'
+      && !('labels' in f.assigneeWrites[0][2]), 'An assignee edit must leave remote labels untouched');
     assert(f.detail().assignees.slice().sort().join() === 'alice,carol', 'Saved assignees must reach the shared detail');
     return 'Passed';
   }
@@ -147,6 +147,30 @@ export async function runDismissal(): Promise<string> {
     await f.click('Save changes');
     assert(f.reviewerWrites.map(([, , login, requested]) => `${login}:${requested}`).join() === 'carol:true',
       'Saving after refresh must preserve completed reviews and keep the remaining draft');
+    return 'Passed';
+  }
+  finally { f.dispose(); }
+}
+
+export async function runPickerLoading(): Promise<string> {
+  const f = mount();
+  const users = Promise.withResolvers<Awaited<ReturnType<Bridge['fetchRepoUsers']>>>();
+  let labelsRead = false;
+  window.bridge.fetchRepoUsers = () => users.promise;
+  window.bridge.fetchRepoLabels = async () => { labelsRead = true; return [{ id: 1, name: 'bug', color: 'ff0000' }]; };
+  try {
+    await settle(); await f.open('reviewers');
+    const labels = f.host.querySelectorAll<HTMLButtonElement>('.pr-meta__chip')[2];
+    assert(labels.disabled, 'A pending people fetch must block switching to an unloaded picker');
+    labels.click(); await settle();
+    assert(f.host.querySelector('[aria-label="Search reviewers"]') !== null, 'A blocked switch keeps the current picker visible');
+    users.resolve([]); await settle();
+    assert(!labels.disabled, 'Pickers are available again after loading completes');
+    labels.click(); await settle();
+    assert(labelsRead && f.host.querySelector('[aria-label="Search labels"]') !== null, 'The label picker loads its own options');
+    f.option('bug').click(); await settle();
+    assert(f.assigneeWrites.length === 1 && JSON.stringify(f.assigneeWrites[0][2]) === '{"labels":[]}',
+      'Removing the last label sends an empty selection without overwriting remote assignees');
     return 'Passed';
   }
   finally { f.dispose(); }

@@ -55,6 +55,7 @@ import java.util.function.Supplier;
 
 import static com.bytequay.core.domain.Checks.checkText;
 import static com.bytequay.core.domain.Checks.normalizeNames;
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.util.Objects.requireNonNull;
 
@@ -237,12 +238,13 @@ final class PullRequestActions
         afterWrite(route, () -> recent.pullRequestAction(rowId.apply(route).orElseThrow(), RecentReason.EDITED, 0));
     }
 
-    void updateMetadata(PullRequestRead route, List<String> assignees, List<String> labels)
+    void updateMetadata(PullRequestRead route, Optional<List<String>> assignees, Optional<List<String>> labels)
     {
+        checkArgument(assignees.isPresent() || labels.isPresent(), "assignees or labels must be provided");
         integrations.of(route.target()).writer().updateMetadata(
                 route.target(), route.number(),
-                normalizeNames(assignees, "assignees"),
-                normalizeNames(labels, "labels"));
+                assignees.map(values -> normalizeNames(values, "assignees")),
+                labels.map(values -> normalizeNames(values, "labels")));
         afterWrite(route, () -> {
             recent.pullRequestAction(rowId.apply(route).orElseThrow(), RecentReason.EDITED, 0);
             invalidatePullRequestDetail(route);

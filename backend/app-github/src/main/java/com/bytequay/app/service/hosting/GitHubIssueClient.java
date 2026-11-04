@@ -140,7 +140,7 @@ public final class GitHubIssueClient
     @Override
     public IssueMetadata updateMetadata(HostingTarget target, int number, List<String> assignees, List<String> labels)
     {
-        var updated = writes.updateIssueMetadata(target.access().token(), issue(target, number), assignees, labels);
+        var updated = writes.updateIssueMetadata(target.access().token(), issue(target, number), Optional.of(assignees), Optional.of(labels));
         return new IssueMetadata(updated.assignees(), updated.labels(), updated.updatedAt());
     }
 

@@ -86,6 +86,16 @@ async function startMain(): Promise<void> {
   await expect(desktop.listeners.get('ready')?.()).rejects.toThrow('End test startup');
 }
 
+it.each([{ assignees: [] }, { labels: ['bug'] }])('sends only the requested PR metadata fields: %j', async metadata => {
+  await startMain();
+  const fetch = vi.fn(async () => new Response(null, { status: 204 }));
+  vi.stubGlobal('fetch', fetch);
+  await desktop.handlers.get('prs:metadata:update')?.({}, 'owner/project', 7, metadata, { accountId: 11 });
+  expect(fetch).toHaveBeenCalledWith(expect.stringContaining('accountId=11'), expect.objectContaining({
+    method: 'PATCH', body: JSON.stringify(metadata),
+  }));
+});
+
 it('scopes composer suggestions and encodes literal searches and pages without accepting unknown commands', async () => {
   await startMain();
   const fetch = vi.fn(async () => new Response('[]'));

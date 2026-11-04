@@ -157,16 +157,12 @@ public class GitHubPullRequestWriteClient
         return issueTypeName(updateIssue(pat, issue, request).type());
     }
 
-    public IssueMetadata updateIssueMetadata(String pat, PullRequestRef issue, List<String> assignees, List<String> labels)
+    public IssueMetadata updateIssueMetadata(String pat, PullRequestRef issue, Optional<List<String>> assignees, Optional<List<String>> labels)
     {
-        checkArgument(assignees != null || labels != null, "assignees or labels must be provided");
+        checkArgument(assignees.isPresent() || labels.isPresent(), "assignees or labels must be provided");
         Map<String, Object> request = new LinkedHashMap<>();
-        if (assignees != null) {
-            request.put("assignees", ImmutableList.copyOf(assignees));
-        }
-        if (labels != null) {
-            request.put("labels", ImmutableList.copyOf(labels));
-        }
+        assignees.ifPresent(values -> request.put("assignees", ImmutableList.copyOf(values)));
+        labels.ifPresent(values -> request.put("labels", ImmutableList.copyOf(values)));
         UpdatedIssue updated = updateIssue(pat, issue, request);
         return new IssueMetadata(
                 Optional.ofNullable(updated.assignees()).orElse(ImmutableList.of()).stream()

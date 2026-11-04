@@ -485,8 +485,8 @@ class LiveGitLabCompatibility
         act("writer.updateDescription(!" + mr + ", with a probe line)",
                 () -> writer.updateDescription(target, mr, need(description, "description failed") + "\n\nByteQuay probe " + stamp));
         act("writer.updateDescription(!" + mr + ", original)", () -> writer.updateDescription(target, mr, need(description, "description failed")));
-        act("writer.updateMetadata(!" + mr + ", [" + login + "], labels + " + PROBE_LABEL + ")", () -> writer.updateMetadata(target, mr, ImmutableList.of(login),
-                ImmutableSet.<String>builder().addAll(need(detail, "fetch failed").labels()).add(PROBE_LABEL).build().asList()));
+        act("writer.updateMetadata(!" + mr + ", [" + login + "], labels + " + PROBE_LABEL + ")", () -> writer.updateMetadata(target, mr, Optional.of(ImmutableList.of(login)),
+                Optional.of(ImmutableSet.<String>builder().addAll(need(detail, "fetch failed").labels()).add(PROBE_LABEL).build().asList())));
         String other = reviewer.orElse(login);
         act("writer.updateReviewer(!" + mr + ", " + other + ", requested)", () -> writer.updateReviewer(target, mr, other, true));
         act("writer.updateReviewer(!" + mr + ", " + other + ", removed)", () -> writer.updateReviewer(target, mr, other, false));

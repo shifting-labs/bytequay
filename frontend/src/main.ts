@@ -1728,10 +1728,9 @@ function registerIpc(): void {
     _event,
     repo: string,
     number: number,
-    assignees: string[],
-    labels: string[],
+    metadata: { assignees?: string[]; labels?: string[] },
     route?: PullRequestRoute,
-  ) => backendJson(prUrl('/prs/metadata', repo, number, {}, route), jsonInit('PATCH', { assignees, labels })));
+  ) => backendJson(prUrl('/prs/metadata', repo, number, {}, route), jsonInit('PATCH', metadata)));
   ipcMain.handle('prs:reviewer:update', (
     _event,
     repo: string,

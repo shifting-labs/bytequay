@@ -261,7 +261,7 @@ class TestWorkspaceIssueService
                 new GitHubPullRequestWriteClient.IssueMetadata(
                         ImmutableList.of("alice"), ImmutableList.of("bug"), NOW);
         when(issueWrites.updateIssueMetadata(
-                "token", ref, ImmutableList.of("alice"), ImmutableList.of("bug")))
+                "token", ref, Optional.of(ImmutableList.of("alice")), Optional.of(ImmutableList.of("bug"))))
                 .thenReturn(updated);
 
         assertThat(service.updateMetadata(

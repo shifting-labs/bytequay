@@ -25,6 +25,7 @@ afterAll(() => fixture?.dispose());
 it.each([
   ['stages people across searches and saves reviewer and assignee batches', 'runBatch'],
   ['discards unsaved selections and preserves completed reviews', 'runDismissal'],
+  ['loads each picker and sends only the edited metadata field', 'runPickerLoading'],
   ['retains successful reviewer changes when a later request fails', 'runPartialFailure'],
   ['guards pending saves and isolates completion after navigating to another PR', 'runPendingSave'],
 ])('%s in Chromium', async (_name, scenario) => {

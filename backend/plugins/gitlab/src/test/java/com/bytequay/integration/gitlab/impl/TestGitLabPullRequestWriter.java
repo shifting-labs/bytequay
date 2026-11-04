@@ -135,6 +135,20 @@ class TestGitLabPullRequestWriter
         assertThat(received).isEmpty();
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void metadataUpdatesLeaveTheOtherFieldUntouched(boolean assignees)
+    {
+        responses.put("PUT " + PREFIX, "{}");
+
+        writer.updateMetadata(target(), 7,
+                assignees ? Optional.of(ImmutableList.of()) : Optional.empty(),
+                assignees ? Optional.empty() : Optional.of(ImmutableList.of()));
+
+        assertThat(received).hasSize(1);
+        assertThat(received.getFirst().body()).isEqualTo(assignees ? "{\"assignee_ids\":[]}" : "{\"labels\":\"\"}");
+    }
+
     @Test
     void mergeCarriesTheObservedHeadAndSquashChoice()
             throws Exception

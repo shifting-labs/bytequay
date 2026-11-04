@@ -478,8 +478,22 @@ class TestGitHubPullRequestWriteClient
                         }
                         """, MediaType.APPLICATION_JSON));
 
-        assertThat(client.updateIssueMetadata("pat", PullRequestRef.of("upstream", "project", 12), ImmutableList.of("alice"), ImmutableList.of("bug")))
+        assertThat(client.updateIssueMetadata("pat", PullRequestRef.of("upstream", "project", 12), Optional.of(ImmutableList.of("alice")), Optional.of(ImmutableList.of("bug"))))
                 .isEqualTo(new GitHubPullRequestWriteClient.IssueMetadata(ImmutableList.of("alice"), ImmutableList.of("bug"), java.time.Instant.parse("2026-08-23T10:00:00Z")));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void metadataUpdatesLeaveTheOtherFieldUntouched(boolean assignees)
+    {
+        server.expect(requestTo("https://api.github.test/repos/upstream/project/issues/12"))
+                .andExpect(method(HttpMethod.PATCH))
+                .andExpect(content().json(assignees ? "{\"assignees\":[]}" : "{\"labels\":[]}", true))
+                .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+
+        client.updateIssueMetadata("pat", PullRequestRef.of("upstream", "project", 12),
+                assignees ? Optional.of(ImmutableList.of()) : Optional.empty(),
+                assignees ? Optional.empty() : Optional.of(ImmutableList.of()));
     }
 
     @Test

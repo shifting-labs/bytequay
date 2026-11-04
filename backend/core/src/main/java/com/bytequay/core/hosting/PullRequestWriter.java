@@ -20,6 +20,7 @@ import com.bytequay.core.domain.PrTimelineEvent;
 import com.bytequay.core.domain.RepoRef;
 
 import java.util.List;
+import java.util.Optional;
 
 /** Provider operations performed only after an application-authorized write. */
 public interface PullRequestWriter
@@ -45,7 +46,7 @@ public interface PullRequestWriter
 
     void markReady(HostingTarget target, int number);
 
-    void updateMetadata(HostingTarget target, int number, List<String> assignees, List<String> labels);
+    void updateMetadata(HostingTarget target, int number, Optional<List<String>> assignees, Optional<List<String>> labels);
 
     void updateReviewer(HostingTarget target, int number, String login, boolean requested);
 

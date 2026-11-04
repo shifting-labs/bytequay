@@ -46,6 +46,8 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.server.ResponseStatusException;
@@ -85,6 +87,23 @@ class TestPullRequestRefreshControllers
     private static final Instant NOW = Instant.parse("2026-08-24T00:00:00Z");
     private static final HostingReadSession SESSION = new HostingReadSession(1, "account", new HostingAccess(
             new HostingInstance(1, HostingProvider.GITHUB, URI.create("https://github.com"), URI.create("https://api.github.com")), "token"));
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void metadataKeepsOmittedFieldsSeparateFromEmptySelections(boolean assignees)
+            throws Exception
+    {
+        PullRequestService pullRequests = pullRequests();
+        var mvc = standaloneSetup(new PullRequestController(pullRequests, mock(PullRequestRefreshService.class))).build();
+
+        mvc.perform(patch("/prs/metadata").queryParam("repo", "owner/repo").queryParam("number", "7")
+                        .contentType(MediaType.APPLICATION_JSON).content(assignees ? "{\"assignees\":[]}" : "{\"labels\":[]}"))
+                .andExpect(status().isNoContent());
+
+        verify(pullRequests).updateMetadata(read("owner/repo", 7),
+                assignees ? Optional.of(ImmutableList.of()) : Optional.empty(),
+                assignees ? Optional.empty() : Optional.of(ImmutableList.of()));
+    }
 
     @Test
     void openingRequestsFreshDiscussionWithoutForcingTheEntireSnapshot()

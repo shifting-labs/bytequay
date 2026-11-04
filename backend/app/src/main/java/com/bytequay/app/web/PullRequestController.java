@@ -265,7 +265,7 @@ public class PullRequestController
 
     public record ResolutionRequest(boolean resolved) {}
 
-    public record MetadataRequest(List<String> assignees, List<String> labels) {}
+    public record MetadataRequest(Optional<List<String>> assignees, Optional<List<String>> labels) {}
 
     public record ReviewerRequest(String login, boolean requested) {}
 

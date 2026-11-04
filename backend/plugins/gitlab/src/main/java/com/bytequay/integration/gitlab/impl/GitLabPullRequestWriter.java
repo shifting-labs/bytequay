@@ -43,7 +43,9 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -168,10 +170,13 @@ public final class GitLabPullRequestWriter
     }
 
     @Override
-    public void updateMetadata(HostingTarget target, int number, List<String> assignees, List<String> labels)
+    public void updateMetadata(HostingTarget target, int number, Optional<List<String>> assignees, Optional<List<String>> labels)
     {
-        List<Long> ids = assignees.stream().map(login -> http.user(target.access(), login).id()).collect(toImmutableList());
-        http.put(target.access(), mergeRequestPath(target, number), new Metadata(ids, String.join(",", labels)), Void.class);
+        checkArgument(assignees.isPresent() || labels.isPresent(), "assignees or labels must be provided");
+        Map<String, Object> request = new LinkedHashMap<>();
+        assignees.ifPresent(values -> request.put("assignee_ids", values.stream().map(login -> http.user(target.access(), login).id()).collect(toImmutableList())));
+        labels.ifPresent(values -> request.put("labels", String.join(",", values)));
+        http.put(target.access(), mergeRequestPath(target, number), request, Void.class);
     }
 
     @Override
@@ -402,7 +407,6 @@ public final class GitLabPullRequestWriter
     private record Title(String title) {}
     private record Description(String description) {}
     private record State(@JsonProperty("state_event") String state) {}
-    private record Metadata(@JsonProperty("assignee_ids") List<Long> assignees, String labels) {}
     private record Reviewers(@JsonProperty("reviewer_ids") List<Long> reviewers) {}
     private record Resolved(boolean resolved) {}
     private record Sha(String sha) {}

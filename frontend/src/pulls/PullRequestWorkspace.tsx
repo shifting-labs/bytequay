@@ -117,7 +117,7 @@ export function routedPullRequestBridge(bridge: Bridge, route: PullRequestRoute)
     fetchRepoUsers: (repo) => bridge.fetchRepoUsers(repo, route),
     fetchRepoTeams: (repo) => bridge.fetchRepoTeams(repo, route),
     fetchRepoLabels: (repo) => bridge.fetchRepoLabels(repo, route),
-    updatePrMetadata: (repo, number, assignees, labels) => bridge.updatePrMetadata(repo, number, assignees, labels, route),
+    updatePrMetadata: (repo, number, metadata) => bridge.updatePrMetadata(repo, number, metadata, route),
     updatePrReviewer: (repo, number, login, requested) => bridge.updatePrReviewer(repo, number, login, requested, route),
     fetchMergeMode: (repo, branch) => bridge.fetchMergeMode(repo, branch, route),
     fetchPrConflicts: (repo, number) => bridge.fetchPrConflicts(repo, number, route),

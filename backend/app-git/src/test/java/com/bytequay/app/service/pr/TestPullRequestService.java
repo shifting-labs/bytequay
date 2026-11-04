@@ -1743,12 +1743,27 @@ class TestPullRequestService
     {
         when(store.findByHostingRepository(20, 7)).thenReturn(Optional.of(storedPullRequest()));
 
-        service.updateMetadata("owner/repo", 7, ImmutableList.of(" alice "), ImmutableList.of("bug"));
+        service.updateMetadata("owner/repo", 7, Optional.of(ImmutableList.of(" alice ")), Optional.of(ImmutableList.of("bug")));
 
-        verify(writes).updateIssueMetadata("pat", PullRequestRef.of("owner", "repo", 7), ImmutableList.of("alice"), ImmutableList.of("bug"));
+        verify(writes).updateIssueMetadata("pat", PullRequestRef.of("owner", "repo", 7), Optional.of(ImmutableList.of("alice")), Optional.of(ImmutableList.of("bug")));
         verify(detailStore).updateEtag(12L, Optional.empty());
         verify(detailStore, never()).deleteByPrIds(any());
         verify(diffStore, never()).deleteByPrIds(any());
+    }
+
+    @Test
+    void updatesOnlyTheSelectedMetadataField()
+    {
+        when(store.findByHostingRepository(20, 7)).thenReturn(Optional.of(storedPullRequest()));
+
+        service.updateMetadata("owner/repo", 7, Optional.of(ImmutableList.of(" alice ")), Optional.empty());
+        service.updateMetadata("owner/repo", 7, Optional.empty(), Optional.of(ImmutableList.of()));
+
+        verify(writes).updateIssueMetadata("pat", PullRequestRef.of("owner", "repo", 7), Optional.of(ImmutableList.of("alice")), Optional.empty());
+        verify(writes).updateIssueMetadata("pat", PullRequestRef.of("owner", "repo", 7), Optional.empty(), Optional.of(ImmutableList.of()));
+        assertThatThrownBy(() -> service.updateMetadata("owner/repo", 7, Optional.empty(), Optional.empty()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("assignees or labels");
     }
 
     @Test

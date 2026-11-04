@@ -1806,7 +1806,7 @@ export type Bridge = LabBridge & WorkItemBridge & JiraBridge & GoogleBridge & Ar
   /** The owner's teams as owner/slug; empty for a personal account. */
   fetchRepoTeams: (repo: string, route?: PullRequestRoute) => Promise<string[]>;
   fetchRepoLabels: (repo: string, route?: PullRequestRoute) => Promise<RepoLabelDto[]>;
-  updatePrMetadata: (repo: string, number: number, assignees: string[], labels: string[], route?: PullRequestRoute) => Promise<void>;
+  updatePrMetadata: (repo: string, number: number, metadata: { assignees?: string[]; labels?: string[] }, route?: PullRequestRoute) => Promise<void>;
   updatePrReviewer: (repo: string, number: number, login: string, requested: boolean, route?: PullRequestRoute) => Promise<void>;
   fetchMergeMode: (repo: string, branch: string, route?: PullRequestRoute) => Promise<MergeModeDto>;
   fetchPrConflicts: (repo: string, number: number, route?: PullRequestRoute) => Promise<PullRequestConflictsDto>;

@@ -116,7 +116,7 @@ public class GitHubPullRequestWriter
     }
 
     @Override
-    public void updateMetadata(HostingTarget target, int number, List<String> assignees, List<String> labels)
+    public void updateMetadata(HostingTarget target, int number, Optional<List<String>> assignees, Optional<List<String>> labels)
     {
         writes.updateIssueMetadata(target.access().token(), ref(target, number), assignees, labels);
     }
