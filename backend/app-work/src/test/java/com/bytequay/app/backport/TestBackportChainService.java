@@ -61,6 +61,8 @@ import com.bytequay.core.ci.CiAutofixRun;
 import com.bytequay.core.ci.CiAutofixRunId;
 import com.bytequay.core.ci.CiAutofixStore;
 import com.bytequay.core.domain.MergedPullRequest;
+import com.bytequay.core.domain.PullRequest;
+import com.bytequay.core.domain.PullRequestDetail;
 import com.bytequay.core.domain.PullRequestIdentity;
 import com.bytequay.core.domain.PullRequestRef;
 import com.bytequay.core.domain.RepoRef;
@@ -72,8 +74,10 @@ import com.bytequay.core.hosting.HostingRepository;
 import com.bytequay.core.hosting.HostingServer;
 import com.bytequay.core.hosting.PullRequestContentReader;
 import com.bytequay.core.hosting.PullRequestWriter;
+import com.bytequay.core.store.PullRequestStore;
 import com.bytequay.core.store.WorkspaceStore;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -142,6 +146,7 @@ class TestBackportChainService
     private final WorkspacePullRequestService delivery = mock(WorkspacePullRequestService.class);
     private final CiAutofixStore ciStore = mock(CiAutofixStore.class);
     private final CiAutofixService ci = mock(CiAutofixService.class);
+    private final PullRequestStore pullRequests = mock(PullRequestStore.class);
     private final Map<String, BackportChain> saved = new ConcurrentHashMap<>();
     private final Map<String, CherryPickExecution> children = new ConcurrentHashMap<>();
     private final Map<String, Workspace> workspaceData = new ConcurrentHashMap<>();
@@ -724,6 +729,31 @@ class TestBackportChainService
         return saved.get(chain.id());
     }
 
+    @Test
+    void waitingOnAnOpenPullRequestAsksTheHostingServiceAgainOnlyWhenItsStoredRowChanges()
+    {
+        var service = service();
+        var chain = service.start("p3", new BackportChainService.StartRequest("p4", 4, ImmutableList.of("p3"), ImmutableList.of(-1)));
+        when(workspaces.findHostingRepositoryId("p4")).thenReturn(Optional.of(40L));
+        when(pullRequests.findByHostingRepository(40L, 4)).thenReturn(Optional.of(row(4, "open")));
+        service.advance(chain.id());
+        service.advance(chain.id());
+        verify(prs, times(2)).identity(any(), eq(4));
+
+        merge(4);
+        when(pullRequests.findByHostingRepository(40L, 4)).thenReturn(Optional.of(row(4, "merged")));
+        service.advance(chain.id());
+        verify(prs, times(3)).identity(any(), eq(4));
+        assertThat(current(chain).hops().getFirst().landedSource()).isPresent();
+    }
+
+    private static PullRequest row(int number, String state)
+    {
+        return new PullRequest(40, "test/p" + number, number, "Fix", "test", "https://github.com/test/p" + number + "/pull/" + number, NOW, NOW,
+                PullRequest.Origin.OTHER, ImmutableList.of(), ImmutableMap.of(), false, null, null, null, ImmutableList.of(), PullRequestDetail.CiStatus.NONE,
+                0, 0, 0, state, null, null, null, null, null, null, null, null, null, null);
+    }
+
     private void merge(int number)
     {
         var pr = remote.get(number);
@@ -769,7 +799,7 @@ class TestBackportChainService
         return new BackportChainService(chains, workspaces, tasks, turns, related, relationships, repositories, remotes, models,
                 integrations(pullRequests(GITHUB, prs, mock(PullRequestWriter.class)), pullRequests(GITLAB, mock(PullRequestContentReader.class),
                         mock(PullRequestWriter.class))), hosting, landed, previews, executions, executionStore, delivery, ciStore, ci,
-                Clock.fixed(NOW, ZoneOffset.UTC), git, drafts);
+                Clock.fixed(NOW, ZoneOffset.UTC), git, drafts, pullRequests);
     }
 
     private static Workspace workspace(int number)

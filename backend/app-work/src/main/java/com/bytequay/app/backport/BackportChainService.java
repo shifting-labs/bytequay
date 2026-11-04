@@ -55,6 +55,7 @@ import com.bytequay.core.hosting.HostingCapabilities;
 import com.bytequay.core.hosting.HostingFailure;
 import com.bytequay.core.hosting.HostingTarget;
 import com.bytequay.core.hosting.PullRequestContentReader;
+import com.bytequay.core.store.PullRequestStore;
 import com.bytequay.core.store.WorkspaceStore;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Striped;
@@ -62,11 +63,15 @@ import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.Lock;
 import java.util.function.BiFunction;
 import java.util.stream.IntStream;
@@ -82,6 +87,9 @@ import static java.util.Objects.requireNonNull;
 @Service
 public class BackportChainService
 {
+    // How long a pull request read open is trusted while its stored row stays open; a stalled repository sync delays a merge by at most this.
+    private static final Duration RECHECK = Duration.ofMinutes(10);
+
     private final BackportChainStore chains;
     private final WorkspaceStore workspaces;
     private final AgentTaskStore tasks;
@@ -103,6 +111,9 @@ public class BackportChainService
     private final Clock clock;
     private final GitCommandRunner git;
     private final BackportDrafts drafts;
+    private final PullRequestStore pullRequests;
+    // ponytail: in memory, so a restart asks the hosting service about each waiting pull request once more.
+    private final Map<PullRequestRef, Instant> readOpen = new ConcurrentHashMap<>();
     private final Striped<Lock> locks = Striped.lock(64);
     private final Striped<Lock> requests = Striped.lock(64);
 
@@ -111,7 +122,7 @@ public class BackportChainService
             WorkspaceRemoteSourceService remotes, ModelSettingsService models, HostingIntegrations integrations,
             WorkspaceHostingService hosting, MergedPullRequestResolver landed, CherryPickPreviewService previews,
             CherryPickExecutionService executions, CherryPickExecutionStore executionStore, WorkspacePullRequestService delivery,
-            CiAutofixStore ciStore, CiAutofixService ci, Clock clock, GitCommandRunner git, BackportDrafts drafts)
+            CiAutofixStore ciStore, CiAutofixService ci, Clock clock, GitCommandRunner git, BackportDrafts drafts, PullRequestStore pullRequests)
     {
         this.chains = chains;
         this.workspaces = workspaces;
@@ -134,6 +145,7 @@ public class BackportChainService
         this.clock = clock;
         this.git = git;
         this.drafts = requireNonNull(drafts, "drafts is null");
+        this.pullRequests = requireNonNull(pullRequests, "pullRequests is null");
     }
 
     public record SourcePullRequest(String workspaceId, int number)
@@ -521,6 +533,9 @@ public class BackportChainService
             Optional<PullRequestRef> sourcePr = chain.sourcePr(index);
             if (hop.landedSource().isEmpty() && hop.selection().isEmpty()) {
                 checkState(sourcePr.isPresent(), "Select landed commits in the previous destination to continue after its no-op.");
+                if (stillOpen(source, sourcePr.orElseThrow())) {
+                    continue;
+                }
                 var pr = identity(source, sourcePr.orElseThrow());
                 String branch = hop.sourceHop() < 0 ? chain.sourceBranch() : executionStore.findByIdempotencyKey(chain.executionKey(hop.sourceHop()))
                         .orElseThrow(() -> new IllegalStateException("Previous execution is unavailable")).workspace().workBranch();
@@ -533,8 +548,11 @@ public class BackportChainService
                 }
                 checkState(pr.state() != PullRequestIdentity.State.CLOSED, "Source PR was closed without merging");
                 if (pr.state() != PullRequestIdentity.State.MERGED) {
+                    readOpen.put(sourcePr.orElseThrow(), clock.instant());
                     continue;
                 }
+                // Siblings that copy the same pull request read it afresh rather than trust the stored row the sync has not updated yet.
+                readOpen.remove(sourcePr.orElseThrow());
                 if (hop.sourceHop() < 0 && !chain.sourceMerged()) {
                     chain = chains.save(chain.withSourceMerged(clock.instant()));
                 }
@@ -596,12 +614,17 @@ public class BackportChainService
                         PullRequestRef.of(hop.route().repository().owner(), hop.route().repository().repo(), published)), clock.instant()));
                 return;
             }
-            var pr = identity(hop.route(), hop.pullRequest().orElseThrow());
-            verifyPr(hop.route(), execution.workspace().workBranch(), pr);
-            checkState(pr.state() != PullRequestIdentity.State.CLOSED, "Backport PR was closed without merging");
-            if (pr.state() == PullRequestIdentity.State.MERGED) {
-                chains.save(chain.withHop(index, hop.finish(false), clock.instant()));
-                return;
+            PullRequestRef published = hop.pullRequest().orElseThrow();
+            if (!stillOpen(hop.route(), published)) {
+                var pr = identity(hop.route(), published);
+                verifyPr(hop.route(), execution.workspace().workBranch(), pr);
+                checkState(pr.state() != PullRequestIdentity.State.CLOSED, "Backport PR was closed without merging");
+                if (pr.state() == PullRequestIdentity.State.MERGED) {
+                    readOpen.remove(published);
+                    chains.save(chain.withHop(index, hop.finish(false), clock.instant()));
+                    return;
+                }
+                readOpen.put(published, clock.instant());
             }
             ciStore.findByIdempotencyKey("cherry-pick-delivery-ci:" + execution.id()).ifPresent(run -> {
                 checkState(run.status() != CiAutofixRun.Status.PAUSED, run.summary().orElse("CI needs attention"));
@@ -612,6 +635,17 @@ public class BackportChainService
         if (chain.hops().stream().allMatch(Hop::completed)) {
             chains.save(chain.withState(State.COMPLETED, Optional.empty(), clock.instant()));
         }
+    }
+
+    /**
+     * Whether the hosting service said {@code pullRequest} was open within {@link #RECHECK} and its stored row, which the repository sync
+     * updates, still says so. Chains advance every few seconds, and asking the hosting service each time would spend its rate limit on waiting.
+     */
+    private boolean stillOpen(Route route, PullRequestRef pullRequest)
+    {
+        return Optional.ofNullable(readOpen.get(pullRequest)).filter(read -> read.isAfter(clock.instant().minus(RECHECK))).isPresent()
+                && workspaces.findHostingRepositoryId(route.workspaceId()).flatMap(id -> pullRequests.findByHostingRepository(id, pullRequest.number()))
+                        .filter(row -> row.state().equals("open")).isPresent();
     }
 
     private PullRequestIdentity identity(Route route, PullRequestRef pullRequest)
