@@ -51,6 +51,7 @@ import type {
   ModelSettingsDto,
   PullRequestTaskLink,
   ReviewFixSummaryDto,
+  RuleAuthorization,
   UsageAccountDto,
 } from '../types';
 
@@ -258,7 +259,7 @@ export function parseAgentTask(value: unknown, path = 'task'): AgentTaskDto {
     mutationClaim: source.mutationClaim === null || source.mutationClaim === undefined
       ? null
       : claim(source.mutationClaim, `${path}.mutationClaim`),
-    version: count(source.version, `${path}.version`),
+    version: ruleRevision(source.version, `${path}.version`),
     createdAt: text(source.createdAt, `${path}.createdAt`),
     updatedAt: text(source.updatedAt, `${path}.updatedAt`),
     terminalAt: optionalText(source.terminalAt, `${path}.terminalAt`),
@@ -296,7 +297,7 @@ function reviewFixSummary(value: unknown, path: string): ReviewFixSummaryDto {
 function autoMergeSummary(value: unknown, path: string): AutoMergeSummaryDto {
   const source = object(value, path);
   return {
-    state: enumText(source.state, ['WAITING', 'READY', 'MERGING', 'MERGED', 'QUEUED', 'FAILED', 'CANCELLED'] as const, `${path}.state`),
+    state: enumText(source.state, ['WAITING', 'READY', 'MERGING', 'MERGED', 'QUEUED', 'FAILED', 'UNKNOWN', 'CANCELLED'] as const, `${path}.state`),
     mergeAt: optionalText(source.mergeAt, `${path}.mergeAt`),
     message: optionalText(source.message, `${path}.message`),
   };
@@ -458,7 +459,7 @@ export function parseAgentTurn(value: unknown, path = 'turn'): AgentTurnDto {
     },
     ...(source.developmentResult === undefined ? {} : { developmentResult: source.developmentResult === null ? null : parseDevelopmentResult(source.developmentResult, `${path}.developmentResult`) }),
     state: text(source.state, `${path}.state`),
-    version: count(source.version, `${path}.version`),
+    version: ruleRevision(source.version, `${path}.version`),
     createdAt: text(source.createdAt, `${path}.createdAt`),
     startedAt: optionalText(source.startedAt, `${path}.startedAt`),
     endedAt: optionalText(source.endedAt, `${path}.endedAt`),
@@ -638,9 +639,9 @@ export function parseAgentSkills(value: unknown): AgentSkillDto[] {
   });
 }
 
-const RULE_EVENTS = ['REVIEW_REQUESTED', 'PULL_REQUEST_UPDATED', 'ISSUE_ASSIGNED', 'PULL_REQUEST_BEHIND', 'PULL_REQUEST_MERGED'] as const;
-const RULE_ACTIONS = ['REVIEW', 'TASK', 'REBASE', 'BACKPORT'] as const;
-const RULE_AGREEMENTS = ['REVIEWED', 'STARTED_TASK', 'UPDATED_BRANCH', 'OPENED_BACKPORT'] as const;
+const RULE_EVENTS = ['REVIEW_REQUESTED', 'PULL_REQUEST_UPDATED', 'ISSUE_ASSIGNED', 'PULL_REQUEST_BEHIND', 'PULL_REQUEST_MERGED', 'PERMISSION_REQUESTED', 'PULL_REQUEST_READY'] as const;
+const RULE_ACTIONS = ['REVIEW', 'TASK', 'REBASE', 'BACKPORT', 'ALLOW', 'MERGE'] as const;
+const RULE_AGREEMENTS = ['REVIEWED', 'STARTED_TASK', 'UPDATED_BRANCH', 'OPENED_BACKPORT', 'ALLOWED', 'MERGED'] as const;
 const RULE_MODES = ['OBSERVE', 'SUGGEST', 'AUTO'] as const;
 const RULE_VERDICTS = ['PENDING', 'AGREED', 'EDITED', 'DISAGREED'] as const;
 
@@ -654,6 +655,9 @@ export function parseAgentRuleDefinition(value: unknown, path = 'agentRule'): Ag
     paths: strings('paths'),
     labels: strings('labels'),
     authors: strings('authors'),
+    hosts: strings('hosts'),
+    operations: strings('operations'),
+    ownedLines: flag(source.ownedLines, `${path}.ownedLines`),
     action: enumText(source.action, RULE_ACTIONS, `${path}.action`),
     agreement: enumText(source.agreement, RULE_AGREEMENTS, `${path}.agreement`),
     withinDays: count(source.withinDays, `${path}.withinDays`),
@@ -668,6 +672,7 @@ export function parseAgentRules(value: unknown): AgentRuleDto[] {
     return {
       id: text(source.id, `${path}.id`),
       text: text(source.text, `${path}.text`),
+      version: ruleRevision(source.version, `${path}.version`),
       mode: enumText(source.mode, RULE_MODES, `${path}.mode`),
       paused: flag(source.paused, `${path}.paused`),
       recordSince: text(source.recordSince, `${path}.recordSince`),
@@ -678,6 +683,16 @@ export function parseAgentRules(value: unknown): AgentRuleDto[] {
       disagreed: count(source.disagreed, `${path}.disagreed`),
     };
   });
+}
+
+function ruleRevision(value: unknown, path: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new Error(`Malformed ${path}`);
+  return value;
+}
+
+export function parseRuleAuthorization(value: unknown, path = 'ruleAuthorization'): RuleAuthorization {
+  const source = object(value, path);
+  return { ruleId: text(source.ruleId, `${path}.ruleId`), ruleName: text(source.ruleName, `${path}.ruleName`), ruleVersion: ruleRevision(source.ruleVersion, `${path}.ruleVersion`) };
 }
 
 export function parseAgentRuleRuns(value: unknown): AgentRuleRunDto[] {
@@ -691,6 +706,8 @@ export function parseAgentRuleRuns(value: unknown): AgentRuleRunDto[] {
       verdict: enumText(source.verdict, RULE_VERDICTS, `${path}.verdict`),
       suggestion: flag(source.suggestion, `${path}.suggestion`),
       skipped: optionalText(source.skipped, `${path}.skipped`),
+      outcome: optionalText(source.outcome, `${path}.outcome`),
+      authorization: source.authorization == null ? null : parseRuleAuthorization(source.authorization, `${path}.authorization`),
     };
   });
 }

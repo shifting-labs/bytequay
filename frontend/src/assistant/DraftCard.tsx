@@ -15,6 +15,7 @@ import { useAsyncAction } from '../useAsyncAction';
 import { useState } from 'react';
 import { ArrowUpRight, LoaderCircle, Lock, TriangleAlert } from 'lucide-react';
 import { SourceIcon } from '../cards/Card';
+import { CardState } from './Cards';
 import type { AgendaTargetDto, AssistantItemDto } from '../types';
 
 /**
@@ -53,6 +54,7 @@ export default function DraftCard({ item, created, onCreated, onOpen }: {
   const locked = made && !busy;
   return (
     <form className="assistant-draft" aria-label="New issue as an Epic" onSubmit={event => { event.preventDefault(); void create(); }}>
+      <CardState state="PROPOSAL" />
       <div className="assistant-draft__head">
         <SourceIcon source="issue" />
         <span>New issue as an Epic</span>

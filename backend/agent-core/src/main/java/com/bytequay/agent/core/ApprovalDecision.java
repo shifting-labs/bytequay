@@ -13,6 +13,7 @@
  */
 package com.bytequay.agent.core;
 
+import com.bytequay.core.domain.RuleAuthorization;
 import com.google.common.collect.ImmutableMap;
 
 import java.time.Instant;
@@ -32,7 +33,8 @@ public record ApprovalDecision(
         /** What the user answered a question tool with, keyed by question; empty for every other approval. */
         Map<String, String> answers,
         Instant resolvedAt,
-        boolean timedOut)
+        boolean timedOut,
+        Optional<RuleAuthorization> authorization)
 {
     public ApprovalDecision
     {
@@ -41,10 +43,18 @@ public record ApprovalDecision(
         checkOptionalText(scopedPermission, "scopedPermission");
         answers = ImmutableMap.copyOf(answers);
         requireNonNull(resolvedAt, "resolvedAt is null");
+        requireNonNull(authorization, "authorization is null");
+        checkArgument(authorization.isEmpty() || decision == Decision.ALLOW && !forTask, "a rule authorizes only this request");
         checkArgument(decision != Decision.DENY || scopedPermission.isEmpty(), "a denied decision cannot grant a scoped permission");
         checkArgument(decision != Decision.DENY || answers.isEmpty(), "a denied decision cannot answer a question");
         checkArgument(!forTask || decision == Decision.ALLOW, "only an allow can cover the task");
         checkArgument(!timedOut || decision == Decision.DENY, "an approval timeout must deny");
+    }
+
+    public ApprovalDecision(ApprovalId approvalId, Decision decision, Optional<String> scopedPermission, boolean forTask,
+            Map<String, String> answers, Instant resolvedAt, boolean timedOut)
+    {
+        this(approvalId, decision, scopedPermission, forTask, answers, resolvedAt, timedOut, Optional.empty());
     }
 
     public ApprovalDecision(ApprovalId approvalId, Decision decision, Optional<String> scopedPermission, boolean forTask, Instant resolvedAt, boolean timedOut)

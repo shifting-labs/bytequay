@@ -64,7 +64,9 @@ final class MemoryAssistantStore
     @Override
     public synchronized void add(AssistantItem item)
     {
-        items.add(item);
+        if (items.stream().noneMatch(existing -> existing.id().equals(item.id()))) {
+            items.add(item);
+        }
     }
 
     @Override

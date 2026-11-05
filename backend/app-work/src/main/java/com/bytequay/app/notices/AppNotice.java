@@ -13,6 +13,9 @@
  */
 package com.bytequay.app.notices;
 
+import com.bytequay.app.utils.ContextText;
+import com.bytequay.core.domain.RuleRun;
+
 import java.time.Instant;
 import java.util.Optional;
 
@@ -40,8 +43,34 @@ public record AppNotice(
         String laneId,
         Optional<String> workItemId,
         Instant occurredAt,
-        Optional<Instant> expiresAt)
+        Optional<Instant> expiresAt,
+        Optional<RuleRun> ruleRun)
 {
+    public AppNotice(String id, Kind kind, String taskId, String workspaceId, Optional<String> turnId, Optional<String> reviewId, String title,
+            Optional<String> pullRequest, Optional<String> pullRequestTitle, Optional<String> branch, Optional<Changes> changes, String message,
+            String repository, String laneId, Optional<String> workItemId, Instant occurredAt, Optional<Instant> expiresAt)
+    {
+        this(id, kind, taskId, workspaceId, turnId, reviewId, title, pullRequest, pullRequestTitle, branch, changes, message, repository, laneId, workItemId,
+                occurredAt, expiresAt, Optional.empty());
+    }
+
+    public String summaryLine()
+    {
+        return "“" + ContextText.excerpt(title.strip().replaceAll("\\s+", " "), 80) + "”: " + message;
+    }
+
+    public AppNotice withRuleRun(RuleRun run)
+    {
+        return new AppNotice(id, kind, taskId, workspaceId, turnId, reviewId, title, pullRequest, pullRequestTitle, branch, changes, message, repository, laneId,
+                workItemId, occurredAt, expiresAt, Optional.of(run));
+    }
+
+    public AppNotice withMessage(String summary)
+    {
+        return new AppNotice(id, kind, taskId, workspaceId, turnId, reviewId, title, pullRequest, pullRequestTitle, branch, changes, summary, repository, laneId,
+                workItemId, occurredAt, expiresAt, ruleRun);
+    }
+
     public enum Kind
     {
         TURN_FINISHED,

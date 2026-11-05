@@ -25,13 +25,15 @@ import static java.util.Objects.requireNonNull;
  *
  * @param message why it is waiting, or what the merge did, in words for the task's status
  */
-public record AutoMerge(String taskId, String headSha, Optional<Instant> readySince, Optional<Instant> startedAt, Optional<Outcome> outcome, Optional<String> message)
+public record AutoMerge(String taskId, String headSha, Optional<Instant> readySince, Optional<Instant> startedAt, Optional<Outcome> outcome,
+        Optional<String> message, Optional<String> actionKey)
 {
     public enum Outcome
     {
         MERGED,
         QUEUED,
         FAILED,
+        UNKNOWN,
         CANCELLED,
     }
 
@@ -43,6 +45,17 @@ public record AutoMerge(String taskId, String headSha, Optional<Instant> readySi
         requireNonNull(startedAt, "startedAt is null");
         requireNonNull(outcome, "outcome is null");
         requireNonNull(message, "message is null");
+        requireNonNull(actionKey, "actionKey is null");
+    }
+
+    public AutoMerge(String taskId, String headSha, Optional<Instant> readySince, Optional<Instant> startedAt, Optional<Outcome> outcome, Optional<String> message)
+    {
+        this(taskId, headSha, readySince, startedAt, outcome, message, Optional.empty());
+    }
+
+    public AutoMerge authorizedBy(String key)
+    {
+        return new AutoMerge(taskId, headSha, readySince, startedAt, outcome, message, Optional.of(key));
     }
 
     public static AutoMerge waiting(String taskId, String headSha, String reason)
@@ -52,16 +65,16 @@ public record AutoMerge(String taskId, String headSha, Optional<Instant> readySi
 
     public AutoMerge ready(Instant since)
     {
-        return new AutoMerge(taskId, headSha, Optional.of(since), startedAt, outcome, Optional.empty());
+        return new AutoMerge(taskId, headSha, Optional.of(since), startedAt, outcome, Optional.empty(), actionKey);
     }
 
     public AutoMerge started(Instant now)
     {
-        return new AutoMerge(taskId, headSha, readySince, Optional.of(now), outcome, message);
+        return new AutoMerge(taskId, headSha, readySince, Optional.of(now), outcome, message, actionKey);
     }
 
     public AutoMerge ended(Outcome result, String detail)
     {
-        return new AutoMerge(taskId, headSha, readySince, startedAt, Optional.of(result), Optional.of(detail));
+        return new AutoMerge(taskId, headSha, readySince, startedAt, Optional.of(result), Optional.of(detail), actionKey);
     }
 }

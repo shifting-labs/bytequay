@@ -123,6 +123,15 @@ describe('agent event contract', () => {
       .toEqual(['ALLOW_ONCE', 'ALLOW_FOR_TASK', 'DENY']);
   });
 
+  it('preserves rule authorization on a resolved request and rejects malformed revisions', () => {
+    const stored = fixture.events.find(event => event.type === 'approval_resolved');
+    if (stored === undefined) throw new Error('The fixture needs a resolved approval');
+    const authorization = { ruleId: 'network', ruleName: 'Build access', ruleVersion: 2 };
+    const event = { ...stored, sequence: 1, payload: { ...stored.payload, authorization } };
+    expect(parseAgentEventSequence([event])[0]).toMatchObject({ payload: { authorization } });
+    expect(() => parseAgentEventSequence([{ ...event, payload: { ...event.payload, authorization: { ...authorization, ruleVersion: '2' } } }])).toThrow(/ruleVersion/);
+  });
+
   it('keeps shared primitive validation and requires explicit nulls in event fields', () => {
     const event = fixture.events[0];
     for (const invalid of [

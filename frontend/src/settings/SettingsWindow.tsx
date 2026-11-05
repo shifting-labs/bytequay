@@ -456,6 +456,10 @@ export default function SettingsWindow({ section, workspace, onWorkspacesChanged
                 const saved = id === null ? window.bridge.addAgentRule(text) : window.bridge.updateAgentRule(id, text);
                 return saved.then(setRules).finally(() => setRulesBusy(false));
               }}
+              onActivate={rule => {
+                setRulesBusy(true);
+                return window.bridge.activateAgentRule(rule.id, rule.version).then(setRules).finally(() => setRulesBusy(false));
+              }}
               onPause={rule => {
                 setRulesBusy(true);
                 window.bridge.pauseAgentRule(rule.id, !rule.paused)

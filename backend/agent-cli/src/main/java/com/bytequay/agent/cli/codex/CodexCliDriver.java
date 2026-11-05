@@ -2209,7 +2209,8 @@ public final class CodexCliDriver
                     // On-request approval asks only for what the sandbox would not allow.
                     false,
                     source(serverRequest, itemId),
-                    Instant.ofEpochMilli(startedAtMs));
+                    Instant.ofEpochMilli(startedAtMs),
+                    serverRequest instanceof CodexProtocol.CommandApprovalRequest command ? CodexApprovalScopes.command(command.params(), objectMapper) : Optional.empty());
             return ask(approvalRequest, serverRequest).thenApply(value -> approvalResponse(serverRequest, value, expectedTurn));
         }
 

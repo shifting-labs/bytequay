@@ -13,8 +13,8 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import {
-  AlarmClock, ArrowUpRight, Ban, CalendarCheck, CheckCheck, CircleCheck, CircleDot, CircleX, Clock, Flag, History, ListEnd, ListPlus, ListTodo, MessageCircleQuestion,
-  MessageSquareReply, Play, RotateCw, Send, ShieldCheck, SquarePen, SquarePlus, TimerOff, TriangleAlert, X, type LucideIcon,
+  AlarmClock, ArrowUpRight, Ban, CalendarCheck, CheckCheck, CircleDot, Clock, Flag, History, ListEnd, ListPlus, ListTodo,
+  MessageSquareReply, Play, RotateCw, Send, ShieldCheck, SquarePen, SquarePlus, SlidersHorizontal, TriangleAlert, X, type LucideIcon,
 } from 'lucide-react';
 import { relativeTime } from '@bytequay/ui/relativeTime';
 import Composer from '../Composer';
@@ -33,10 +33,10 @@ import { errorMessage } from '../errorMessage';
 import { settingsRoute, type SettingsSection } from '../settings/routes';
 import type { AgendaTargetDto, AssistantItemDto, AssistantReceiptDto, AssistantRowDto, AssistantSummaryDto } from '../types';
 import AssistantList from './AssistantList';
-import { ApprovalCard, NoticeCard, ResultCard, RunningCard, RunningFold, StopButton } from './Cards';
+import { ApprovalCard, DurableReportCard, NoticeCard, ReportEvidence, ResultCard, RunningCard, RunningFold, StopButton } from './Cards';
 import DraftCard from './DraftCard';
 import {
-  SUGGESTION, arrivedOpen, createdDrafts, decisionOrder, endedTurns, inAnswerOrder, linkRefs, pageRoute, refFromHref, refLabel, takesSuggestion, type AssistantRequest,
+  SUGGESTION, arrivedOpen, createdDrafts, decisionOrder, endedTurns, inAnswerOrder, isRulesCommand, linkRefs, pageRoute, refFromHref, refLabel, takesSuggestion, type AssistantRequest,
   type AssistantView, type Pill, type WaitingCard,
 } from './model';
 import AssistantPills, { useWaiting } from './Pills';
@@ -201,6 +201,11 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
   // Sent at once, even while a reply is written, with the cards and page on screen now; the backend answers it in turn.
   const submitText = (text: string) => {
     if (!chatEnabled || text === '') return;
+    if (isRulesCommand(text)) {
+      setDraft('');
+      leave(() => onPage(settingsRoute('rules')));
+      return;
+    }
     void send(text, visible.current, screen).then(sent => {
       if (!sent) {
         setDraft(current => current.trim() === '' ? text : current);
@@ -296,7 +301,7 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
   const reportEntry = (item: AssistantItemDto) => {
     const notice = waiting.find(each => each.id === item.report?.noticeId);
     // Not while the task waits on an approval, which its card's buttons answer.
-    const replyable = latestReports.get(item.report?.target.id ?? '') === item.id && notice?.id.startsWith(APPROVAL_NOTICE) !== true;
+    const replyable = item.report?.target.kind === 'TASK' && latestReports.get(item.report?.target.id ?? '') === item.id && notice?.id.startsWith(APPROVAL_NOTICE) !== true;
     return <Report key={item.id} item={item} notice={notice} conversation={conversation} onAnswered={answeredNotice} onOpenNotice={openNotice}
       onClearNotice={clearNotice} onShow={show} onReply={replyable ? replyOnReport(item.id) : undefined} />;
   };
@@ -344,12 +349,15 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
         event.preventDefault();
         pills.focus();
       }}
-      header={waitingIds.size > 0 && <div className="assistant-waiting-line"><Clock size={12} aria-hidden="true" />{waitingIds.size} waiting · answers after the current reply</div>}
+      header={<>
+        {waitingIds.size > 0 && <div className="assistant-waiting-line"><Clock size={12} aria-hidden="true" />{waitingIds.size} waiting · answers after the current reply</div>}
+        {(chat?.assessing ?? 0) > 0 && <div className="assistant-waiting-line">Reviewing {chat?.assessing} {chat?.assessing === 1 ? 'result' : 'results'} in the background · you can keep chatting</div>}
+      </>}
       notice={(error ?? failure) !== null && <p className="assistant-error" role="alert">{error ?? failure}</p>}
       submitEnabled={draft.trim() !== '' && !sending} showSubmit={!running || draft.trim() !== ''}
       submitLabel={busy ? 'Send after the current reply' : 'Send to the Assistant'} submitTitle={busy ? 'Answers after the current reply (Enter)' : 'Send (Enter)'}
       trailingActions={running && draft.trim() === '' && (
-        <button type="button" className="agt-send is-stop" aria-label="Stop the reply" title="Stop the reply" onClick={stop}>
+        <button type="button" className="agt-send is-stop" aria-label="Stop this reply" title="Stop this reply" onClick={stop}>
           <span className="agt-stop-square" aria-hidden="true" />
         </button>
       )}>
@@ -363,6 +371,7 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
         </span>
       )}
       <span className="assistant-spacer" />
+      <IconButton label="Rules" title="Rules" onClick={() => openSettings('rules')}><SlidersHorizontal size={15} aria-hidden="true" /></IconButton>
       {chat?.model && <span className="assistant-model" title={`Answers with ${chat.model}`}>{chat.model}</span>}
       {talkOpen && <IconButton label="New conversation" title="New conversation (⌘N)" onClick={startNew}><SquarePen size={15} aria-hidden="true" /></IconButton>}
       {latest !== undefined && (
@@ -373,7 +382,7 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
     <div className="assistant-off">
       <p>Task notices and your conversation are still available.</p>
       <button type="button" className="assistant-link" onClick={() => openSettings('features')}>Set up Assistant in Settings</button>
-      {running && <button type="button" className="assistant-link" onClick={stop}>Stop the reply</button>}
+      {running && <button type="button" className="assistant-link" onClick={stop}>Stop this reply</button>}
     </div>
   );
 
@@ -500,7 +509,7 @@ function AssistantViews({ notices, view, lane, card, talk, pointsDown, composer,
       body = <>
         {decisions.length > 0 && <>{section('Decision')}{decisions.map(decisionCard)}</>}
         {running.length > 0 && <>{section('Running')}<RunningFold count={running.length} onOpen={() => onView('running')} /></>}
-        {finished.length > 0 && <>{section('Finished')}{finished.map(resultCard)}</>}
+        {finished.length > 0 && <>{section('Results')}{finished.map(resultCard)}</>}
       </>;
       break;
     case 'today':
@@ -595,7 +604,7 @@ function Entry({ item, waiting, rows, drafts, model, retryable, onRetry, onSetti
 
 /**
  * What a task the conversation started or sent words to raised: while its notice lasts, that notice's own card, answered or opened in
- * place; after, one line that opens the task. A task's latest report takes a reply.
+ * place; after, the durable result and its evidence remain. A task's latest report takes a reply.
  */
 function Report({ item, notice, conversation, onAnswered, onOpenNotice, onClearNotice, onShow, onReply }: {
   item: AssistantItemDto;
@@ -610,24 +619,25 @@ function Report({ item, notice, conversation, onAnswered, onOpenNotice, onClearN
   const report = item.report;
   if (report === null) return null;
   let entry: ReactNode;
-  if (notice !== undefined) {
+  if (notice !== undefined && report.outcome === null) {
     const open = () => onOpenNotice(notice.id);
     const clear = () => onClearNotice(notice.id);
-    entry = report.state !== 'DECISION' ? <ResultCard notice={notice} onShow={onShow} onOpen={open} onClear={clear} />
-      : notice.id.startsWith(APPROVAL_NOTICE)
+    const pending = report.state === 'APPROVAL_REQUIRED' || report.state === 'ANSWER_REQUIRED';
+    entry = <>
+      {pending && notice.id.startsWith(APPROVAL_NOTICE)
         ? <ApprovalCard notice={notice} focused={false} conversation={conversation} onAnswered={() => onAnswered(notice.id)} onOpen={open} onClear={clear} />
-        : <NoticeCard notice={notice} focused={false} onOpen={open} onClear={clear} />;
+        : report.state === 'PROPOSAL' || report.state === 'ATTENTION' || pending
+          ? <NoticeCard notice={notice} focused={false} onOpen={open} onClear={clear} />
+          : report.state === 'COMPLETED' || report.state === 'PROGRESS'
+            ? <DurableReportCard report={report} text={item.text} onOpen={() => onShow(report.target)} />
+            : <ResultCard notice={notice} onShow={onShow} onOpen={open} onClear={clear} />}
+      {report.state !== 'COMPLETED' && report.state !== 'PROGRESS' && <div className="assistant-report-details">
+        {report.assessment !== null && <div className="assistant-card__assessment">{report.assessment}</div>}
+        <ReportEvidence report={report} />
+      </div>}
+    </>;
   }
-  else {
-    const Icon = report.state === 'FAILED' ? CircleX : report.state === 'READY' ? CircleCheck : report.noticeId.startsWith('stuck:') ? TimerOff : MessageCircleQuestion;
-    entry = (
-      <div className="assistant-receipt" title={item.text}>
-        <Icon className="assistant-receipt__icon" size={14} aria-hidden="true" />
-        <div className="assistant-receipt__text"><span className="assistant-receipt__lead">{item.text}</span></div>
-        <button type="button" className="assistant-button" onClick={() => onShow(report.target)}>Open</button>
-      </div>
-    );
-  }
+  else entry = <DurableReportCard report={report} text={item.text} onOpen={() => onShow(report.target)} />;
   return <>{entry}{onReply !== undefined && <ReplyToTask onSend={onReply} />}</>;
 }
 

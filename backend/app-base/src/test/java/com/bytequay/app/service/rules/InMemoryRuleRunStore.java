@@ -43,8 +43,20 @@ public class InMemoryRuleRunStore
     }
 
     @Override
+    public List<RuleRun> recent()
+    {
+        return runs.values().stream().sorted(Comparator.comparing(RuleRun::occurredAt).reversed()).limit(1000).collect(toImmutableList());
+    }
+
+    @Override
+    public List<RuleRun> pendingAutomatic()
+    {
+        return runs.values().stream().filter(RuleRun::needsReconciliation).sorted(Comparator.comparing(RuleRun::occurredAt)).collect(toImmutableList());
+    }
+
+    @Override
     public void deleteBefore(Instant cutoff)
     {
-        runs.values().removeIf(run -> run.occurredAt().isBefore(cutoff));
+        runs.values().removeIf(run -> !run.needsReconciliation() && run.occurredAt().isBefore(cutoff));
     }
 }

@@ -1396,6 +1396,10 @@ class TestCodexCliDriver
                 .findFirst().orElseThrow().detail())
                 .contains("Reason: Need [REDACTED] to download Maven dependencies")
                 .doesNotContain("known-secret");
+        assertThat(approvals.stream().filter(request -> request.source().providerItemId().orElseThrow().equals("exec-network"))
+                .findFirst().orElseThrow().scope()).hasValueSatisfying(scope -> assertThat(scope.hosts()).containsExactly("example.com"));
+        assertThat(approvals.stream().filter(request -> request.source().providerItemId().orElseThrow().equals("exec-permission"))
+                .findFirst().orElseThrow().scope()).isEmpty();
         assertThat(approvals.stream().map(ProviderApprovalRequest::detail).toList())
                 .anySatisfy(detail -> assertThat(detail).contains("network", "enabled"))
                 .anySatisfy(detail -> assertThat(detail).contains("Network approval", "example.com"))

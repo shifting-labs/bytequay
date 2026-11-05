@@ -13,12 +13,16 @@
  */
 package com.bytequay.persistence.sqlite.store;
 
+import com.bytequay.core.domain.RuleAuthorization;
 import com.bytequay.core.domain.RuleRun;
 import com.bytequay.persistence.sqlite.converter.JsonColumns;
+import com.google.common.collect.ImmutableList;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 
 import static com.bytequay.core.domain.RuleRun.Verdict.AGREED;
 import static com.bytequay.core.domain.RuleRun.Verdict.EDITED;
@@ -55,6 +59,37 @@ class TestSqliteRuleRunStore
                 .started("task:3f2c8a62-6f0e-4d3e-9a64-9b3a3c1f0e21").decide(EDITED);
         store.save(suggestion);
         assertThat(store.findByRule("rule-1")).containsExactly(suggestion);
+    }
+
+    @Test
+    void unfinishedActionsSurviveHistoryLimitsAndAgeUntilTheirResultIsKnown()
+    {
+        Instant now = Instant.parse("2026-11-03T08:00:00Z");
+        Instant old = now.minus(Duration.ofDays(40));
+        RuleAuthorization authorization = new RuleAuthorization("removed-rule", "Merge approved changes", 2);
+        RuleRun initial = RuleRun.automatic(authorization, "pr:7:ready:head", "acme/warehouse#7", "Initial", old);
+        RuleRun waiting = RuleRun.automatic(authorization, "pr:8:ready:head", "acme/warehouse#8", "Waiting", old).started("pr:8").finished("WAITING");
+        RuleRun queued = RuleRun.automatic(authorization, "pr:9:ready:head", "acme/warehouse#9", "Queued", old).started("pr:9").finished("QUEUED");
+        RuleRun unknown = RuleRun.automatic(authorization, "pr:10:ready:head", "acme/warehouse#10", "Unknown", old).started("pr:10").finished("UNKNOWN");
+        RuleRun review = RuleRun.automatic(authorization, "pr:11:head:head", "acme/warehouse#11", "Review", old).finished("STARTING");
+        RuleRun unknownReview = RuleRun.automatic(authorization, "pr:12:head:head", "acme/warehouse#12", "Uncertain review", old)
+                .skip("Review startup was not confirmed").finished("UNKNOWN");
+        List<RuleRun> unfinished = ImmutableList.of(initial, waiting, queued, unknown, review, unknownReview);
+        unfinished.forEach(store::save);
+        store.save(RuleRun.observed("old-observation", "pr:1:head:head", "acme/warehouse#1", "Old", old));
+        for (int i = 0; i < 1001; i++) {
+            store.save(RuleRun.observed("observations", "pr:" + i + ":head:head", "acme/warehouse#" + i, "Recent", now.plusSeconds(i)));
+        }
+
+        assertThat(store.recent()).hasSize(1000).doesNotContainAnyElementsOf(unfinished);
+        store.deleteBefore(now.minus(Duration.ofDays(30)));
+        assertThat(store.pendingAutomatic()).containsExactlyInAnyOrderElementsOf(unfinished);
+        assertThat(store.findByRule("old-observation")).isEmpty();
+
+        unfinished.forEach(run -> store.save(run.finished("CANCELLED")));
+        assertThat(store.pendingAutomatic()).isEmpty();
+        store.deleteBefore(now.minus(Duration.ofDays(30)));
+        assertThat(store.findByRule("removed-rule")).isEmpty();
     }
 
     @Test

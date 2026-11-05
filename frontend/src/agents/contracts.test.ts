@@ -28,6 +28,9 @@ import {
   parseAgentProviderUnavailable,
   parseAgentQueue,
   parseAgentQueuedInput,
+  parseAgentRuleDefinition,
+  parseAgentRules,
+  parseAgentRuleRuns,
   parseAgentSkillInput,
   parseAgentSkills,
   parseAgentTask,
@@ -70,6 +73,27 @@ describe('agent skills bridge contract', () => {
     expect(() => parseAgentSkills({ skills: [skill] })).toThrow('Malformed agentSkills');
     expect(() => parseAgentSkills([{ ...skill, instructions: 42 }])).toThrow('Malformed agentSkills[0].instructions');
     expect(() => parseAgentSkillInput({ ...skill, enabled: 'false' })).toThrow('Malformed agentSkill.enabled');
+  });
+});
+
+describe('rule authorization bridge contract', () => {
+  const definition = { name: 'Build access', event: 'PERMISSION_REQUESTED', repositories: ['owner/repository'], paths: [], labels: [], authors: [],
+    hosts: ['packages.example.test'], operations: ['network-access'], ownedLines: false, action: 'ALLOW', agreement: 'ALLOWED', withinDays: 3, body: 'Allow package reads.' };
+  const authorization = { ruleId: 'build', ruleName: 'Build access', ruleVersion: 2 };
+
+  it('retains the displayed revision and exact permission scope', () => {
+    const rule = { id: 'build', version: 2, text: 'rule', mode: 'AUTO', paused: false, recordSince: '2026-11-01T10:00:00Z', rule: definition,
+      runs: 3, agreed: 0, edited: 0, disagreed: 0 };
+    expect(parseAgentRules([rule])).toEqual([rule]);
+    expect(() => parseAgentRules([{ ...rule, version: '2' }])).toThrow(/version/);
+    expect(() => parseAgentRuleDefinition({ ...definition, hosts: '*' })).toThrow(/hosts/);
+  });
+
+  it('keeps actual rule outcomes distinct from observational agreement', () => {
+    const run = { subject: 'approval:one', title: 'Read package metadata', occurredAt: '2026-11-01T10:00:00Z', verdict: 'PENDING', suggestion: false,
+      skipped: null, outcome: 'ALLOWED', authorization };
+    expect(parseAgentRuleRuns([run])).toEqual([run]);
+    expect(() => parseAgentRuleRuns([{ ...run, authorization: { ...authorization, ruleVersion: -1 } }])).toThrow(/ruleVersion/);
   });
 });
 

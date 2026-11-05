@@ -11,10 +11,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import type { AgentRuleRunDto } from '../types';
+import { parseAgentRuleRuns } from '../agents/contracts';
+
 export const NOTICE_KINDS = ['TURN_FINISHED', 'QUESTION', 'APPROVAL', 'FAILURE', 'RECOVERY', 'STUCK', 'QUEUE_PAUSED', 'CI_ATTENTION', 'NEXT_WORK'] as const;
 export const NOTICE_WIDTH = 340;
 export type NoticeKind = typeof NOTICE_KINDS[number];
 export type AppNotice = {
+  ruleRun?: AgentRuleRunDto | null;
   id: string; kind: NoticeKind; taskId: string; workspaceId: string; turnId: string | null; reviewId: string | null;
   title: string; pullRequest: string | null; pullRequestTitle: string | null; changes: NoticeChanges | null;
   message: string; repository: string; laneId: string; occurredAt: string;
@@ -113,6 +117,7 @@ export function parseNotices(value: unknown): AppNotice[] {
     return { id: item.id, kind: item.kind, taskId: item.taskId, workspaceId: item.workspaceId, turnId: item.turnId, reviewId: item.reviewId,
       title: item.title, pullRequest: item.pullRequest, pullRequestTitle: item.pullRequestTitle, changes: parseChanges(item.changes),
       message: item.message, repository: item.repository, laneId: item.laneId, occurredAt: item.occurredAt,
+      ...(item.ruleRun == null ? {} : { ruleRun: parseAgentRuleRuns([item.ruleRun])[0] }),
       ...(branch === null ? {} : { branch }), ...(workItemId === null ? {} : { workItemId }), ...(expiresAt === null ? {} : { expiresAt }) } as AppNotice;
   });
 }

@@ -13,6 +13,7 @@
  */
 package com.bytequay.app.service.rules;
 
+import com.bytequay.agent.spi.ProviderApprovalScope;
 import com.bytequay.app.service.rules.RuleDefinition.Action;
 import com.bytequay.app.service.rules.RuleDefinition.Agreement;
 import com.bytequay.app.service.rules.RuleDefinition.Event;
@@ -46,7 +47,8 @@ public final class RuleText
     public static final int MAXIMUM_LENGTH = 20_000;
 
     private static final String DASHES = "---";
-    private static final Set<String> KEYS = ImmutableSet.of("name", "when", "repositories", "paths", "labels", "authors", "does", "agrees-when", "within");
+    private static final Set<String> KEYS = ImmutableSet.of(
+            "name", "when", "repositories", "paths", "labels", "authors", "does", "agrees-when", "within", "hosts", "operations", "owned-lines");
     private static final Pattern REPOSITORY = Pattern.compile("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+");
     private static final Pattern WITHIN = Pattern.compile("(\\d{1,2})d");
     private static final int MAXIMUM_DAYS = 30;
@@ -73,7 +75,7 @@ public final class RuleText
             int colon = line.indexOf(':');
             checkArgument(colon > 0, "Header lines read \"key: value\", not \"%s\"", line.strip());
             String key = line.substring(0, colon).strip();
-            checkArgument(!key.equals("mode"), "Remove the mode line: a rule's record sets its mode, and every new rule starts in Observe");
+            checkArgument(!key.equals("mode"), "Remove the mode line: save a rule in Observe, then explicitly activate it to authorize actions");
             checkArgument(KEYS.contains(key), "Unknown header line \"%s\"; a rule may have %s", key, String.join(", ", KEYS));
             checkArgument(header.put(key, line.substring(colon + 1).strip()) == null, "The header has two \"%s\" lines", key);
         }
@@ -95,7 +97,26 @@ public final class RuleText
         checkArgument(paths.isEmpty() || event.pullRequest(), "\"paths\" only fits pull request events, not \"%s\"", event.key());
         paths.forEach(path -> checkArgument(glob(path), "\"%s\" is not a path pattern such as src/storage/**", path));
         int withinDays = Optional.ofNullable(header.get("within")).map(RuleText::days).orElse(action == Action.BACKPORT ? 7 : 3);
-        return new RuleDefinition(name, event, repositories, paths, values(header, "labels"), values(header, "authors"), action, agreement, withinDays, body);
+        List<String> hosts = values(header, "hosts");
+        hosts.forEach(host -> checkArgument(ProviderApprovalScope.validHost(host), "Write an exact DNS host without a URL, wildcard or port, not \"%s\"", host));
+        List<String> operations = values(header, "operations");
+        operations.forEach(operation -> checkArgument(ProviderApprovalScope.Operation.fromKey(operation).isPresent(),
+                "Unknown permission operation \"%s\"; use network-access or github-read", operation));
+        boolean ownedLines = Optional.ofNullable(header.get("owned-lines")).map(value -> {
+            checkArgument(value.equals("true") || value.equals("false"), "Write \"owned-lines\" as true or false");
+            return Boolean.parseBoolean(value);
+        }).orElse(false);
+        checkArgument(!ownedLines || event.pullRequest(), "\"owned-lines\" only fits pull request events");
+        if (event == Event.PERMISSION_REQUESTED) {
+            checkArgument(!hosts.isEmpty() && !operations.isEmpty(), "Permission rules need exact \"hosts\" and explicit \"operations\"");
+            checkArgument(values(header, "labels").isEmpty() && values(header, "authors").isEmpty(),
+                    "Permission rules use repositories, hosts and operations, not labels or authors");
+        }
+        else {
+            checkArgument(hosts.isEmpty() && operations.isEmpty(), "\"hosts\" and \"operations\" only fit permission-requested rules");
+        }
+        return new RuleDefinition(name, event, repositories, paths, values(header, "labels"), values(header, "authors"), hosts, operations, ownedLines,
+                action, agreement, withinDays, body);
     }
 
     private static boolean glob(String path)

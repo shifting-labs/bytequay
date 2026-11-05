@@ -84,9 +84,11 @@ public class AssistantController
 
     @PostMapping("/assistant/stop")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void stop()
+    public void stop(@RequestBody RetryRequest request)
     {
-        assistant.stop();
+        checkArgument(request != null, "conversationId is required");
+        checkConversation(request.conversationId());
+        assistant.stop(request.conversationId());
     }
 
     @PostMapping("/assistant/retry")

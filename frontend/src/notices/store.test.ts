@@ -246,3 +246,12 @@ it('rejects malformed data at the desktop boundary', () => {
     expect(() => parseNotices([{ ...review, changes }])).toThrow();
   }
 });
+
+
+it('keeps rule authorization and the verified action outcome across the desktop notice boundary', () => {
+  const ruleRun = { subject: 'owner/repo#42', title: 'Improve recovery', occurredAt: '2026-11-01T10:00:00Z', verdict: 'PENDING' as const,
+    suggestion: false, skipped: null, outcome: 'MERGED', authorization: { ruleId: 'merge', ruleName: 'Merge approved work', ruleVersion: 2 } };
+  const result = { ...notice('rule-action:merge:pr:42'), taskId: 'rule:merge', ruleRun };
+  expect(parseNotices([result])).toEqual([result]);
+  expect(() => parseNotices([{ ...result, ruleRun: { ...ruleRun, authorization: { ...ruleRun.authorization, ruleVersion: '2' } } }])).toThrow();
+});

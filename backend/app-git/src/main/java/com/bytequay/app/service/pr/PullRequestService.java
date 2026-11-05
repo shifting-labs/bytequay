@@ -1447,6 +1447,12 @@ public class PullRequestService
         return refreshDetailOnce(route, RefreshPolicy.forced()).detail();
     }
 
+    /** Refreshes the facts an explicitly authorized automatic action is about to use, under its captured account. */
+    public PullRequestDetail refreshForAction(PullRequestRead route)
+    {
+        return refreshAllPullRequestDetailFromRemote(route);
+    }
+
     private DetailRefresh refreshDetailOnce(PullRequestRead route, RefreshPolicy policy)
     {
         prepareRead(route);

@@ -32,7 +32,7 @@ import static java.util.Objects.requireNonNull;
  * @param items the conversation's messages, replies, receipts, lists and failures, oldest first
  * @param rows each ref the conversation's lists name that still resolves, read now; a ref missing here is gone
  */
-public record AssistantView(String id, Optional<String> model, boolean running, List<String> waiting, List<AssistantItem> items, Map<String, AssistantRow> rows)
+public record AssistantView(String id, Optional<String> model, boolean running, List<String> waiting, List<AssistantItem> items, Map<String, AssistantRow> rows, int assessing)
 {
     public AssistantView
     {

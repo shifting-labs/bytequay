@@ -22,6 +22,7 @@ import com.bytequay.agent.cli.mcp.PermissionBroker;
 import com.bytequay.agent.cli.process.LaunchIntentRecorder;
 import com.bytequay.agent.cli.process.ProcessSupervisor;
 import com.bytequay.agent.cli.process.impl.DefaultProcessSupervisor;
+import com.bytequay.agent.core.AgentApprovalPolicy;
 import com.bytequay.agent.core.AgentApprovalService;
 import com.bytequay.agent.core.AgentCompletionService;
 import com.bytequay.agent.core.AgentEventService;
@@ -303,9 +304,11 @@ public class AgentConfiguration
             AgentEventService eventService,
             ScheduledExecutorService agentApprovalScheduler,
             Clock agentClock,
-            AgentRuntimeRegistry runtimeRegistry)
+            AgentRuntimeRegistry runtimeRegistry,
+            AgentApprovalPolicy approvalPolicy)
     {
-        return new DefaultAgentApprovalService(approvalStore, turnStore, unitOfWork, outboxStore, eventService, agentApprovalScheduler, agentClock, runtimeRegistry);
+        return new DefaultAgentApprovalService(approvalStore, turnStore, unitOfWork, outboxStore, eventService,
+                agentApprovalScheduler, agentClock, runtimeRegistry, approvalPolicy);
     }
 
     @Bean

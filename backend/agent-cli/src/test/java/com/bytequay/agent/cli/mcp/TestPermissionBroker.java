@@ -26,6 +26,7 @@ import com.bytequay.agent.spi.LocalReviewBridge;
 import com.bytequay.agent.spi.MemoryBridge;
 import com.bytequay.agent.spi.ProviderApprovalDecision;
 import com.bytequay.agent.spi.ProviderApprovalRequest;
+import com.bytequay.agent.spi.ProviderApprovalScope;
 import com.bytequay.agent.spi.PullRequestCiBridge;
 import com.bytequay.agent.spi.RelatedWorkspaceBridge;
 import com.bytequay.agent.spi.ReviewBridge;
@@ -1322,9 +1323,20 @@ class TestPermissionBroker
                 .isEqualTo("deny");
         assertThat(approval.get().kind()).isEqualTo(ProviderApprovalRequest.Kind.FILE_CHANGE);
         assertThat(approval.get().sandboxed()).isFalse();
+        assertThat(permission(broker, token, "WebFetch", "url", "https://api.github.com/repos/acme/warehouse")).isEqualTo("deny");
+        assertThat(approval.get().scope()).hasValueSatisfying(scope -> {
+            assertThat(scope.operation()).isEqualTo(ProviderApprovalScope.Operation.NETWORK_ACCESS);
+            assertThat(scope.hosts()).containsExactly("api.github.com");
+        });
+        assertThat(permission(broker, token, "Bash", "command", "gh pr view 42 --repo github.com/acme/warehouse")).isEqualTo("deny");
+        assertThat(approval.get().scope()).hasValueSatisfying(scope -> {
+            assertThat(scope.operation()).isEqualTo(ProviderApprovalScope.Operation.GITHUB_READ);
+            assertThat(scope.repository()).contains("acme/warehouse");
+        });
         String chain = "git status && gh pr view 42 && git push origin HEAD";
         assertThat(permission(broker, token, "Bash", "command", chain)).isEqualTo("deny");
         assertThat(approval.get().detail()).contains(chain);
+        assertThat(approval.get().scope()).isEmpty();
         assertThat(approval.get().sandboxed()).isTrue();
         Map<String, Object> retry = ImmutableMap.of("command", "mvn test", "dangerouslyDisableSandbox", true);
         assertThat(permission(broker, token, "Bash", retry)).isEqualTo("deny");

@@ -1489,6 +1489,8 @@ function registerIpc(): void {
     ipcMain.handle(`settings:agent-rules:${step}`, (_event, id: string) =>
       backendJson(`${backendBase()}/api/settings/agent-rules/${encodeURIComponent(id)}/${step}`, { method: 'POST' }).then(parseAgentRules));
   }
+  ipcMain.handle('settings:agent-rules:activate', (_event, id: string, version: unknown) =>
+    backendJson(`${backendBase()}/api/settings/agent-rules/${encodeURIComponent(id)}/activate`, jsonInit('POST', { version })).then(parseAgentRules));
   ipcMain.handle('settings:agent-rules:dismiss', (_event, id: string, key: unknown) =>
     backendJson(`${backendBase()}/api/settings/agent-rules/${encodeURIComponent(id)}/dismiss`, jsonInit('POST', { key: String(key) })).then(parseAgentRules));
   ipcMain.handle('settings:quiet-hours', () =>
@@ -1647,7 +1649,8 @@ function registerIpc(): void {
     backendJson(`${backendBase()}/api/assistant/conversations/${encodeURIComponent(String(conversationId))}`, { headers: agentHeaders() }));
   ipcMain.handle('assistant:send', (_event, conversationId: unknown, text: unknown, visible: unknown, onScreen: unknown, key: unknown) =>
     backendJson(`${backendBase()}/api/assistant/messages`, jsonInit('POST', { conversationId, text, visible, onScreen, key }, agentHeaders())));
-  ipcMain.handle('assistant:stop', () => backendJson(`${backendBase()}/api/assistant/stop`, { method: 'POST', headers: agentHeaders() }));
+  ipcMain.handle('assistant:stop', (_event, conversationId: unknown) =>
+    backendJson(`${backendBase()}/api/assistant/stop`, jsonInit('POST', { conversationId }, agentHeaders())));
   ipcMain.handle('assistant:retry', (_event, conversationId: unknown) =>
     backendJson(`${backendBase()}/api/assistant/retry`, jsonInit('POST', { conversationId }, agentHeaders())));
   ipcMain.handle('assistant:answered', (_event, conversationId: unknown, approvalId: unknown) =>

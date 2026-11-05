@@ -35,7 +35,8 @@ public record ProviderApprovalRequest(
         /** Whether the action stays inside the provider's sandbox. Requests saved before this flag read as false. */
         boolean sandboxed,
         ProviderAgentEventSource source,
-        Instant requestedAt)
+        Instant requestedAt,
+        Optional<ProviderApprovalScope> scope)
 {
     /**
      * The scope of a question with choices the agent asks the user. Every lane presents one this way, with the questions in the
@@ -54,10 +55,19 @@ public record ProviderApprovalRequest(
         checkOptionalText(taskScope, "taskScope");
         requireNonNull(source, "source is null");
         requireNonNull(requestedAt, "requestedAt is null");
+        requireNonNull(scope, "scope is null");
+        checkArgument(scope.isEmpty() || (kind == Kind.COMMAND || kind == Kind.TOOL) && !requestedPermissions.contains(QUESTION_TOOL),
+                "only a concrete command or tool operation can carry an approval scope");
         checkArgument(requestedPermissions.stream().noneMatch(String::isBlank), "requestedPermissions contains a blank value");
         checkArgument(!availableDecisions.isEmpty(), "availableDecisions is empty");
         checkArgument(availableDecisions.contains(Decision.DENY), "availableDecisions does not contain DENY");
         checkArgument(!availableDecisions.contains(Decision.ALLOW_FOR_TASK) || taskScope.isPresent(), "ALLOW_FOR_TASK is offered without a taskScope");
+    }
+
+    public ProviderApprovalRequest(Kind kind, String title, String detail, List<String> requestedPermissions, List<Decision> availableDecisions,
+            Optional<String> taskScope, boolean sandboxed, ProviderAgentEventSource source, Instant requestedAt)
+    {
+        this(kind, title, detail, requestedPermissions, availableDecisions, taskScope, sandboxed, source, requestedAt, Optional.empty());
     }
 
     /** A request nothing task-wide can cover, such as one from a provider that names no scope. */

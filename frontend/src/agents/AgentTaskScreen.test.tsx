@@ -1629,9 +1629,17 @@ describe('agent task detail', () => {
     const markup = body({ task: task('t-1', 'OPEN', 'x'), events, connection: 'open' });
     const approval = markup.match(/<div class="agt-appr-done"[^]*?<\/div>/)?.[0];
     expect(approval).toBeDefined();
-    expect(approval).toContain('Approved once');
+    expect(approval).toContain('Allowed once');
     expect(approval).not.toMatch(/\d+:\d{2}|<span>·/);
     expect(markup).toContain('Turn 1 · Worked for 11s');
+  });
+
+  it('attributes rule-authorized permission without offering another decision', () => {
+    const authorized = events.map((event): AgentEventEnvelope => event.type === 'approval_resolved'
+      ? { ...event, payload: { ...event.payload, authorization: { ruleId: 'network', ruleName: 'Build access', ruleVersion: 3 } } } : event);
+    const markup = body({ task: task('t-1', 'OPEN', 'x'), events: authorized, connection: 'open' });
+    expect(markup).toContain('Allowed under Build access');
+    expect(markup).not.toContain('Approved once');
   });
 
   it('offers the task-wide allow the design draws, and shows an allow that covered the task', () => {
@@ -1646,7 +1654,7 @@ describe('agent task detail', () => {
 
     // Drawn between Allow once and Deny as a plain button, the way the design draws it.
     expect(markup).toMatch(/Allow once<\/button><button type="button" class="agt-decision" aria-label="Allow for this task: Run a command in this workspace">Allow for this task<\/button><button type="button" class="agt-decision is-deny"/);
-    expect(markup).toContain('Approved for this task —');
+    expect(markup).toContain('Allowed for this task —');
   });
 
   it('answers a question tool in place of allowing its raw input', () => {
@@ -1914,7 +1922,7 @@ describe('agent task detail', () => {
     expect(markup).toContain('>Deny<');
     // The asking agent is part of the identity of the request, not decoration.
     expect(markup).toContain('root agent');
-    expect(markup).toContain('Approved once');
+    expect(markup).toContain('Allowed once');
     expect(markup).toContain('git push origin fix/preview-limit');
     // The scope is what the decision is actually about.
     expect(markup).toContain('cwd: workspaces/riley-repository');

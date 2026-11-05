@@ -100,6 +100,29 @@ Reading and private discussion do not publish anything. GitHub writes need a
 direct user action or an explicitly accepted automation scope. A completed
 agent task does not by itself prove that the user's goal has been achieved.
 
+### One Assistant, independent work
+
+The Assistant is one place to ask, decide, and understand results. Independent
+tasks and result interpretation can run in parallel behind it. A slow result
+review must not occupy the user's conversation, and stopping a reply is separate
+from stopping the work it describes.
+
+Follow-up belongs to a durable relationship between a chat and its work. History
+provides evidence; explicit follow state determines what needs attention. The
+Assistant can explain a result or stay quiet when nothing useful changed. Source
+state determines whether approval or an answer is still needed, a result is ready,
+or a work item is complete. The seven card families are Approval required, Answer
+required, Proposal, Result ready, Completed, Attention, and Progress. A permission
+approval is a receipt for that operation, never proof that the whole task succeeded.
+
+Rules share that same execution and reporting path. Observation and suggestions
+do not grant automatic authority. Activating a displayed rule revision grants
+its explicit scope; edits require activation again, and pause revokes future
+actions. Supported exact permissions can then proceed without another approval
+card. The result retains the rule's name and revision so the user can understand
+what was done on their behalf. Actions whose remote outcome is uncertain remain
+visible and are not silently retried.
+
 ### Keep work local
 
 All ByteQuay app data is stored locally on the Mac, including conversations,

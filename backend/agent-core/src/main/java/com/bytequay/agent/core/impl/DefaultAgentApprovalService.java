@@ -15,6 +15,7 @@ package com.bytequay.agent.core.impl;
 
 import com.bytequay.agent.core.AgentApproval;
 import com.bytequay.agent.core.AgentApprovalEvents;
+import com.bytequay.agent.core.AgentApprovalPolicy;
 import com.bytequay.agent.core.AgentApprovalService;
 import com.bytequay.agent.core.AgentConflictException;
 import com.bytequay.agent.core.AgentEventOutboxEntry;
@@ -34,7 +35,9 @@ import com.bytequay.agent.core.store.AgentEventOutboxStore;
 import com.bytequay.agent.core.store.AgentTurnStore;
 import com.bytequay.agent.core.store.AgentUnitOfWork;
 import com.bytequay.agent.spi.ProviderApprovalRequest;
+import com.bytequay.core.domain.RuleAuthorization;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -63,6 +66,7 @@ import static java.util.Objects.requireNonNull;
 public final class DefaultAgentApprovalService
         implements AgentApprovalService
 {
+    private final AgentApprovalPolicy policy;
     private final AgentApprovalStore approvalStore;
     private final AgentTurnStore turnStore;
     private final AgentUnitOfWork unitOfWork;
@@ -81,8 +85,10 @@ public final class DefaultAgentApprovalService
             AgentEventService eventService,
             ScheduledExecutorService scheduler,
             Clock clock,
-            AgentRuntimeRegistry runtimeRegistry)
+            AgentRuntimeRegistry runtimeRegistry,
+            AgentApprovalPolicy policy)
     {
+        this.policy = requireNonNull(policy, "policy is null");
         this.approvalStore = requireNonNull(approvalStore, "approvalStore is null");
         this.turnStore = requireNonNull(turnStore, "turnStore is null");
         this.unitOfWork = requireNonNull(unitOfWork, "unitOfWork is null");
@@ -99,6 +105,17 @@ public final class DefaultAgentApprovalService
         requireNonNull(request, "request is null");
         requireNonNull(timeout, "timeout is null");
         checkArgument(!timeout.isZero() && !timeout.isNegative(), "timeout must be positive");
+
+        Optional<ApprovalDecision> automatic;
+        synchronized (runtimeRegistry.taskLock(request.taskId())) {
+            Optional<RuleAuthorization> authorization = request.providerRequest().scope().isPresent()
+                    && request.providerRequest().availableDecisions().contains(ALLOW_ONCE) ? policy.authorize(request) : Optional.empty();
+            automatic = authorization.map(value -> allowByRule(request, value));
+        }
+        if (automatic.isPresent()) {
+            drainPending(outboxStore, eventService, request.taskId());
+            return CompletableFuture.completedFuture(automatic.orElseThrow());
+        }
 
         PendingApproval live = new PendingApproval();
         if (pending.putIfAbsent(request.id(), live) != null) {
@@ -129,6 +146,21 @@ public final class DefaultAgentApprovalService
         catch (RuntimeException failure) {
             return handleRegistrationFailure(stored, live, persisted, requestEventDrained, failure);
         }
+    }
+
+    private ApprovalDecision allowByRule(ApprovalRequest request, RuleAuthorization authorization)
+    {
+        requireTurnAcceptsDecision(AgentApproval.pending(request));
+        ApprovalDecision decision = new ApprovalDecision(request.id(), ApprovalDecision.Decision.ALLOW, Optional.empty(), false,
+                ImmutableMap.of(), clock.instant(), false, Optional.of(authorization));
+        AgentApproval stored = new AgentApproval(request, Optional.of(decision), Optional.of(AgentEventPayload.ApprovalOutcome.ALLOWED));
+        unitOfWork.execute(() -> {
+            approvalStore.insert(stored);
+            outboxStore.insert(requestEvent(stored, EventId.random()));
+            outboxStore.insert(resolutionEvent(request, decision, AgentEventPayload.ApprovalOutcome.ALLOWED, EventId.random()));
+            return null;
+        });
+        return decision;
     }
 
     private CompletionStage<ApprovalDecision> handleRegistrationFailure(
@@ -395,7 +427,7 @@ public final class DefaultAgentApprovalService
                 request.taskId(),
                 Optional.of(request.turnId()),
                 AgentApprovalEvents.source(providerRequest),
-                AgentApprovalEvents.requested(request.id().toString(), providerRequest),
+                AgentApprovalEvents.requested(request.id().toString(), providerRequest, approval.pending()),
                 request.requestedAt());
     }
 
@@ -406,7 +438,7 @@ public final class DefaultAgentApprovalService
                 request.taskId(),
                 Optional.of(request.turnId()),
                 AgentApprovalEvents.source(request.providerRequest()),
-                new AgentEventPayload.ApprovalResolved(request.id().toString(), outcome, decision.forTask()),
+                new AgentEventPayload.ApprovalResolved(request.id().toString(), outcome, decision.forTask(), decision.authorization()),
                 decision.resolvedAt());
     }
 

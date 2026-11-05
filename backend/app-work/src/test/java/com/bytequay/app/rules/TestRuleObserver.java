@@ -16,25 +16,30 @@ package com.bytequay.app.rules;
 import com.bytequay.app.jira.JiraService;
 import com.bytequay.app.service.InMemoryAppSettingsStore;
 import com.bytequay.app.service.credentials.CredentialService;
+import com.bytequay.app.service.pr.PullRequestService;
 import com.bytequay.app.service.rules.AgentRuleService;
 import com.bytequay.app.service.rules.InMemoryRuleRunStore;
+import com.bytequay.app.workspace.WorkspaceHostingService;
 import com.bytequay.core.backport.BackportChainStore;
 import com.bytequay.core.domain.DiffFile;
 import com.bytequay.core.domain.HandledAction;
 import com.bytequay.core.domain.HostedIssueSource;
 import com.bytequay.core.domain.IssueTask;
+import com.bytequay.core.domain.PrRawDetail;
 import com.bytequay.core.domain.PullRequest;
 import com.bytequay.core.domain.PullRequestDetail;
 import com.bytequay.core.domain.RepoRef;
 import com.bytequay.core.domain.RepositoryIssue;
 import com.bytequay.core.domain.RepositoryIssuePage;
 import com.bytequay.core.domain.RuleRun;
+import com.bytequay.core.domain.StoredPrDetail;
 import com.bytequay.core.domain.StoredPrDiff;
 import com.bytequay.core.domain.Workspace;
 import com.bytequay.core.domain.Workspace.Topology;
 import com.bytequay.core.hosting.HostingServer;
 import com.bytequay.core.store.IssueDevelopmentStore;
 import com.bytequay.core.store.JiraIssueTaskStore;
+import com.bytequay.core.store.PrDetailStore;
 import com.bytequay.core.store.PrDiffStore;
 import com.bytequay.core.store.PullRequestStore;
 import com.bytequay.core.store.RepositoryIssueStore;
@@ -44,6 +49,9 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.MockMakers;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -63,11 +71,13 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.withSettings;
 
 class TestRuleObserver
 {
@@ -85,15 +95,142 @@ class TestRuleObserver
     private final JiraService jira = mock(JiraService.class);
     private final CredentialService credentials = mock(CredentialService.class);
     private final RuleWork work = mock(RuleWork.class);
+    private final WorkspaceHostingService hosting = mock(WorkspaceHostingService.class);
+    private final PrDetailStore details = mock(PrDetailStore.class);
     private final RuleObserver observer = new RuleObserver(rules, runs, work, pullRequests, diffs, workspaces, issues, issueTasks, jira, mock(JiraIssueTaskStore.class),
-            mock(BackportChainStore.class), credentials, clock);
+            mock(BackportChainStore.class), credentials, clock, details, mock(PullRequestService.class), mock(RuleLineOwnership.class), hosting);
 
     @BeforeEach
     void setUp()
     {
         when(workspaces.findAll()).thenReturn(ImmutableList.of(WAREHOUSE));
         when(credentials.cachedLogin()).thenReturn(Optional.of("viewer"));
+        when(hosting.viewerLogin(WAREHOUSE.id())).thenReturn(Optional.of("viewer"));
         when(jira.attention()).thenReturn(ImmutableList.of());
+    }
+
+    @Test
+    void activatingAnObservedRuleAuthorizesANewRunOnceForThatRevision()
+    {
+        String id = rule("""
+                when: review-requested
+                does: review
+                agrees-when: reviewed
+                """);
+        PullRequest asked = pullRequest(7, "octocat", SAVED.plusSeconds(60), null, null, "clean");
+        candidates(asked);
+        tick(Duration.ofMinutes(2));
+        assertThat(rules.record(id)).hasSize(1);
+
+        rules.activate(id, rules.list().getFirst().version());
+        when(work.starting(any())).thenReturn(true);
+        tick(Duration.ofMinutes(1));
+        tick(Duration.ofMinutes(1));
+
+        assertThat(rules.record(id)).hasSize(2).filteredOn(run -> run.authorization().isPresent()).singleElement()
+                .satisfies(run -> assertThat(run.authorization().orElseThrow().ruleVersion()).isEqualTo(rules.list().getFirst().version()));
+        verify(work, times(1)).start(any(), any());
+    }
+
+    @Test
+    void pausingARuleStillObservesAMergeAlreadyAccepted()
+    {
+        String id = rule("""
+                when: pull-request-ready
+                does: merge
+                agrees-when: merged
+                """);
+        rules.activate(id, rules.list().getFirst().version());
+        var authorization = rules.authorization(id, rules.list().getFirst().version()).orElseThrow();
+        RuleRun queued = RuleRun.automatic(authorization, "pr:7:rule:1:ready:head", "acme/warehouse#7", "Change", SAVED)
+                .started("pr:7").finished("QUEUED");
+        runs.save(queued);
+        rules.pause(id, true);
+
+        tick(Duration.ofMinutes(1));
+
+        verify(work).reconcileMerge(queued);
+        verify(work, never()).start(any(), eq(queued));
+    }
+
+    @Test
+    void aMergeInterruptedBeforeItsRunReceiptIsReconciledEvenAfterDeletingTheRule()
+    {
+        String id = rule("""
+                when: pull-request-ready
+                does: merge
+                agrees-when: merged
+                """);
+        rules.activate(id, rules.list().getFirst().version());
+        RuleRun starting = RuleRun.automatic(rules.authorization(id, rules.list().getFirst().version()).orElseThrow(),
+                "pr:7:rule:1:ready:head", "acme/warehouse#7", "Change", SAVED);
+        runs.save(starting);
+        rules.remove(id);
+
+        tick(Duration.ofMinutes(1));
+
+        verify(work).reconcileMerge(starting);
+        verify(work, never()).start(any(), any());
+    }
+
+    @Test
+    void mergeCandidatesAndAtMeUseTheWatchedWorkspacesAccount()
+    {
+        String id = rule("""
+                when: pull-request-ready
+                authors: [@me]
+                does: merge
+                agrees-when: merged
+                """);
+        rules.activate(id, rules.list().getFirst().version());
+        when(hosting.viewerLogin(WAREHOUSE.id())).thenReturn(Optional.of("workspace-viewer"));
+        PullRequest own = pullRequest(7, "workspace-viewer", null, null, SAVED, "clean", PullRequestDetail.CiStatus.PASSING);
+        PullRequest otherAccount = pullRequest(8, "viewer", null, null, SAVED, "clean", PullRequestDetail.CiStatus.PASSING);
+        candidates(own, otherAccount);
+        when(pullRequests.findById(7)).thenReturn(Optional.of(own));
+        when(pullRequests.findById(8)).thenReturn(Optional.of(otherAccount));
+        PrRawDetail raw = mock(PrRawDetail.class, withSettings().mockMaker(MockMakers.INLINE));
+        when(raw.headSha()).thenReturn("head-1");
+        StoredPrDetail detail = new StoredPrDetail(raw, ImmutableList.of(), ImmutableList.of(), ImmutableList.of(), ImmutableList.of(), true);
+        when(details.find(anyLong())).thenReturn(Optional.of(detail));
+
+        tick(Duration.ofMinutes(1));
+
+        assertThat(subjects(id)).containsExactly("acme/warehouse#7");
+        verify(work, times(1)).start(any(), any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void deletingOrEditingARuleStillReconcilesItsAcceptedMerge(boolean deleted)
+    {
+        String id = rule("""
+                when: pull-request-ready
+                does: merge
+                agrees-when: merged
+                """);
+        rules.activate(id, rules.list().getFirst().version());
+        var authorization = rules.authorization(id, rules.list().getFirst().version()).orElseThrow();
+        RuleRun queued = RuleRun.automatic(authorization, "pr:7:rule:1:ready:head", "acme/warehouse#7", "Change", SAVED)
+                .started("pr:7").finished("QUEUED");
+        runs.save(queued);
+        if (deleted) {
+            rules.remove(id);
+        }
+        else {
+            rules.update(id, rules.list().getFirst().text().replace("pull-request-ready", "review-requested")
+                    .replace("does: merge", "does: review").replace("agrees-when: merged", "agrees-when: reviewed"));
+        }
+        doAnswer(invocation -> {
+            runs.save(queued.finished("MERGED"));
+            return null;
+        }).when(work).reconcileMerge(queued);
+
+        tick(Duration.ofMinutes(1));
+
+        verify(work).reconcileMerge(queued);
+        verify(work, never()).start(any(), eq(queued));
+        assertThat(runs.findByRule(id)).containsExactly(queued.finished("MERGED"));
     }
 
     @Test
@@ -317,9 +454,14 @@ class TestRuleObserver
 
     private static PullRequest pullRequest(long id, String author, Instant requested, Instant reviewed, Instant head, String mergeState)
     {
+        return pullRequest(id, author, requested, reviewed, head, mergeState, PullRequestDetail.CiStatus.NONE);
+    }
+
+    private static PullRequest pullRequest(long id, String author, Instant requested, Instant reviewed, Instant head, String mergeState, PullRequestDetail.CiStatus ci)
+    {
         return new PullRequest(id, "acme/warehouse", (int) id, "Change " + id, author, "https://github.com/acme/warehouse/pull/" + id, SAVED, SAVED,
                 PullRequest.Origin.OTHER, ImmutableList.of(), ImmutableMap.of(), false, null, reviewed, reviewed == null ? null : HandledAction.COMMENTED,
-                requested == null ? ImmutableList.of() : ImmutableList.of("viewer"), PullRequestDetail.CiStatus.NONE,
+                requested == null ? ImmutableList.of() : ImmutableList.of("viewer"), ci,
                 1, 0, 0, "open", null, null, true, mergeState, head, "feature", null, null, requested, null);
     }
 

@@ -35,6 +35,7 @@ import com.bytequay.agent.spi.DevelopmentResultReport;
 import com.bytequay.agent.spi.ProviderTurnRef;
 import com.bytequay.app.agent.runtime.AgentServingGate;
 import com.bytequay.app.discussion.ReviewFixService;
+import com.bytequay.app.service.pr.PullRequestRead;
 import com.bytequay.app.service.pr.PullRequestService;
 import com.bytequay.app.service.settings.AppPreferences;
 import com.bytequay.app.service.settings.AppSettingsService;
@@ -44,9 +45,11 @@ import com.bytequay.core.ci.CiAutofixStore;
 import com.bytequay.core.domain.MergeResult;
 import com.bytequay.core.domain.PrMergeQueueRemoval;
 import com.bytequay.core.domain.PrRawDetail;
+import com.bytequay.core.domain.PrReviewState;
 import com.bytequay.core.domain.PrTimelineEvent;
 import com.bytequay.core.domain.PrTimelinePayload;
 import com.bytequay.core.domain.PullRequest;
+import com.bytequay.core.domain.PullRequestDetail;
 import com.bytequay.core.domain.PullRequestReplacement;
 import com.bytequay.core.domain.RepoRef;
 import com.bytequay.core.domain.StoredPrDetail;
@@ -68,6 +71,7 @@ import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.bytequay.agent.core.AgentTaskFixtures.created;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -76,7 +80,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.doThrow;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -100,10 +104,152 @@ class TestAutoMergeService
     private final Map<String, AutoMerge> rows = new HashMap<>();
     private final AgentTurnStore turns = mock(AgentTurnStore.class);
     private final PullRequestReplacementStore replacements = mock(PullRequestReplacementStore.class);
-    private final AutoMergeService service = new AutoMergeService(mock(AgentTaskStore.class), turns, mock(QueuedInputStore.class),
+    private final AgentTaskStore tasks = mock(AgentTaskStore.class);
+    private final AutoMergeService service = new AutoMergeService(tasks, turns, mock(QueuedInputStore.class),
             mock(AgentServingGate.class, withSettings().mockMaker(MockMakers.INLINE)), ownership, pullRequests, details, ciRuns, reviewFixes, new MemoryStore(),
             replacements, settings, clock);
     private final AgentTask task = task();
+
+    @Test
+    void activeRuleMergesTheCurrentApprovedHeadOnceWithoutTheTaskDelay()
+    {
+        PullRequestRead route = ruleReady(HEAD);
+        assertThat(service.mergeAuthorized(route, pullRequest(), HEAD, "rule-run", fresh -> true, () -> true).outcome()).contains(AutoMerge.Outcome.MERGED);
+        assertThat(service.mergeAuthorized(route, pullRequest(), HEAD, "rule-run", fresh -> true, () -> true).outcome()).contains(AutoMerge.Outcome.MERGED);
+        verify(pullRequests, times(1)).mergePullRequest(route, 12L, "rebase", HEAD);
+    }
+
+    @Test
+    void activeRuleWaitsWhenApprovalBelongsToAnOlderCommit()
+    {
+        PullRequestRead route = ruleReady("b".repeat(40));
+        assertThat(service.mergeAuthorized(route, pullRequest(), HEAD, "rule-run", fresh -> true, () -> true).startedAt()).isEmpty();
+        verify(pullRequests, never()).mergePullRequest(eq(route), anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    void pausingTheRuleDuringRefreshPreventsTheWrite()
+    {
+        PullRequestRead route = ruleReady(HEAD);
+        AtomicInteger checks = new AtomicInteger();
+        assertThat(service.mergeAuthorized(route, pullRequest(), HEAD, "rule-run", fresh -> true, () -> checks.incrementAndGet() == 1).outcome())
+                .contains(AutoMerge.Outcome.CANCELLED);
+        verify(pullRequests, never()).mergePullRequest(eq(route), anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    void ruleCannotOverrideAnExplicitStopForTheAssociatedTask()
+    {
+        PullRequestRead route = ruleReady(HEAD);
+        when(tasks.listLive()).thenReturn(ImmutableList.of(task));
+        rows.put(task.id().toString(), AutoMerge.waiting(task.id().toString(), HEAD, "Ready").ended(AutoMerge.Outcome.CANCELLED, "Stopped"));
+        assertThat(service.mergeAuthorized(route, pullRequest(), HEAD, "rule-run", fresh -> true, () -> true).outcome()).contains(AutoMerge.Outcome.CANCELLED);
+        verify(pullRequests, never()).mergePullRequest(eq(route), anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    void uncertainRuleMergeIsRecordedAndNeverResent()
+    {
+        PullRequestRead route = ruleReady(HEAD);
+        when(pullRequests.mergePullRequest(route, 12L, "rebase", HEAD)).thenThrow(new IllegalStateException("Connection ended"));
+        assertThat(service.mergeAuthorized(route, pullRequest(), HEAD, "rule-run", fresh -> true, () -> true).outcome()).contains(AutoMerge.Outcome.UNKNOWN);
+        assertThat(service.mergeAuthorized(route, pullRequest(), HEAD, "rule-run", fresh -> true, () -> true).outcome()).contains(AutoMerge.Outcome.UNKNOWN);
+        verify(pullRequests, times(1)).mergePullRequest(route, 12L, "rebase", HEAD);
+    }
+
+    @Test
+    void uncertainMergeStaysHeldEvenWhenTheHeadChanges()
+    {
+        PullRequestRead route = ruleReady(HEAD);
+        when(pullRequests.mergePullRequest(route, 12L, "rebase", HEAD)).thenThrow(new IllegalStateException("Connection ended"));
+        service.mergeAuthorized(route, pullRequest(), HEAD, "rule-run", fresh -> true, () -> true);
+        String next = "d".repeat(40);
+        when(pullRequests.refreshForAction(route).headSha()).thenReturn(next);
+
+        assertThat(service.mergeAuthorized(route, pullRequest(), next, "rule-run", fresh -> true, () -> true).outcome()).contains(AutoMerge.Outcome.UNKNOWN);
+        verify(pullRequests, times(1)).mergePullRequest(eq(route), anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    void pausedRuleStillReportsTheCompletedMergeItAlreadyStarted()
+    {
+        PullRequestRead route = ruleReady(HEAD);
+        when(pullRequests.mergePullRequest(route, 12L, "rebase", HEAD)).thenReturn(MergeResult.enqueued("Queued"));
+        assertThat(service.mergeAuthorized(route, pullRequest(), HEAD, "rule-run", fresh -> true, () -> true).outcome()).contains(AutoMerge.Outcome.QUEUED);
+        when(pullRequests.refreshForAction(route).mergedAt()).thenReturn(clock.instant());
+
+        assertThat(service.mergeAuthorized(route, pullRequest(), HEAD, "rule-run", fresh -> true, () -> false).outcome()).contains(AutoMerge.Outcome.MERGED);
+        verify(pullRequests, times(1)).mergePullRequest(eq(route), anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    void taskAndRuleShareOneMergeOperation()
+    {
+        PullRequestRead route = ruleReady(HEAD);
+        service.mergeAuthorized(route, pullRequest(), HEAD, "rule-run", fresh -> true, () -> true);
+        when(settings.preferences()).thenReturn(new AppPreferences(7, 14, AppTheme.SYSTEM, 30, 0));
+
+        service.advance(task);
+
+        assertThat(summary().state()).isEqualTo("MERGED");
+        verify(pullRequests, never()).mergePullRequest(anyString(), anyInt(), anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    void refreshedMetadataMustStillMatchTheRuleScope()
+    {
+        PullRequestRead route = ruleReady(HEAD);
+
+        assertThat(service.mergeAuthorized(route, pullRequest(), HEAD, "rule-run", fresh -> false, () -> true).outcome()).contains(AutoMerge.Outcome.CANCELLED);
+
+        verify(pullRequests, never()).mergePullRequest(eq(route), anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    void aRuleDoesNotClaimAMergeAlreadyCompletedBySomeoneElse()
+    {
+        PullRequestRead route = ruleReady(HEAD);
+        when(pullRequests.refreshForAction(route).mergedAt()).thenReturn(clock.instant());
+
+        assertThat(service.mergeAuthorized(route, pullRequest(), HEAD, "rule-run", fresh -> true, () -> true).outcome()).contains(AutoMerge.Outcome.CANCELLED);
+
+        verify(pullRequests, never()).mergePullRequest(eq(route), anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    void twoRulesCannotClaimTheSameMerge()
+    {
+        PullRequestRead route = ruleReady(HEAD);
+        assertThat(service.mergeAuthorized(route, pullRequest(), HEAD, "first-run", fresh -> true, () -> true).outcome()).contains(AutoMerge.Outcome.MERGED);
+
+        assertThat(service.mergeAuthorized(route, pullRequest(), HEAD, "second-run", fresh -> true, () -> true).outcome()).contains(AutoMerge.Outcome.CANCELLED);
+
+        verify(pullRequests, times(1)).mergePullRequest(route, 12L, "rebase", HEAD);
+    }
+
+    private PullRequestRead ruleReady(String approvedHead)
+    {
+        PullRequestRead route = mock(PullRequestRead.class, withSettings().mockMaker(MockMakers.INLINE));
+        when(route.login()).thenReturn("me");
+        PullRequestDetail fresh = mock(PullRequestDetail.class, withSettings().mockMaker(MockMakers.INLINE));
+        when(fresh.id()).thenReturn(12L);
+        when(fresh.number()).thenReturn(12);
+        when(fresh.repo()).thenReturn(REPO);
+        when(fresh.headSha()).thenReturn(HEAD);
+        when(fresh.author()).thenReturn("me");
+        when(fresh.state()).thenReturn("open");
+        when(fresh.mergeable()).thenReturn(true);
+        when(fresh.mergeableState()).thenReturn("clean");
+        when(fresh.viewerCanWrite()).thenReturn(true);
+        when(fresh.ciStatus()).thenReturn(PullRequestDetail.CiStatus.PASSING);
+        when(pullRequests.refreshForAction(route)).thenReturn(fresh);
+        when(pullRequests.mergePullRequest(route, 12L, "rebase", HEAD)).thenReturn(new MergeResult(HEAD, true, "Merged"));
+        StoredPrDetail cached = details.find(12L).orElseThrow();
+        when(details.find(12L)).thenReturn(Optional.of(new StoredPrDetail(cached.raw(),
+                ImmutableList.of(new PrReviewState(1L, "reviewer", null, false, "APPROVED", CREATED, "", "", approvedHead)),
+                ImmutableList.of(), ImmutableList.of(), ImmutableList.of(), true)));
+        return route;
+    }
 
     @BeforeEach
     void setUp()
@@ -324,7 +470,7 @@ class TestAutoMergeService
     void aFailedMergeWaitsForANewHeadAndAnUnfinishedOneIsNeverSentAgain()
     {
         when(settings.preferences()).thenReturn(new AppPreferences(7, 14, AppTheme.SYSTEM, 30, 0));
-        doThrow(new IllegalStateException("Head branch was modified")).when(pullRequests).mergePullRequest(REPO, 12, 12L, "rebase", HEAD);
+        when(pullRequests.mergePullRequest(REPO, 12, 12L, "rebase", HEAD)).thenReturn(new MergeResult(HEAD, false, "Head branch was modified"));
 
         service.advance(task);
         service.advance(task);
@@ -343,7 +489,7 @@ class TestAutoMergeService
         rows.put(task.id().toString(), AutoMerge.waiting(task.id().toString(), HEAD, "ready").ready(clock.instant()).started(clock.instant()));
         cache(HEAD, false, "clean");
         service.advance(task);
-        assertThat(summary().state()).isEqualTo("FAILED");
+        assertThat(summary().state()).isEqualTo("UNKNOWN");
         assertThat(summary().message().orElseThrow()).startsWith("The merge's outcome is unknown");
         verify(pullRequests, times(1)).mergePullRequest(REPO, 12, 12L, "rebase", HEAD);
     }

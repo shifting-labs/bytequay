@@ -24,6 +24,7 @@ import com.bytequay.agent.core.store.QueuedInputStore;
 import com.bytequay.agent.spi.DevelopmentResultReport;
 import com.bytequay.app.agent.runtime.AgentServingGate;
 import com.bytequay.app.discussion.ReviewFixService;
+import com.bytequay.app.service.pr.PullRequestRead;
 import com.bytequay.app.service.pr.PullRequestService;
 import com.bytequay.app.service.settings.AppSettingsService;
 import com.bytequay.app.workspace.TaskPullRequestOwnership;
@@ -32,8 +33,10 @@ import com.bytequay.core.ci.CiAutofixStore;
 import com.bytequay.core.domain.MergeResult;
 import com.bytequay.core.domain.PrMergeQueueRemoval;
 import com.bytequay.core.domain.PrRawDetail;
+import com.bytequay.core.domain.PrReviewState;
 import com.bytequay.core.domain.PrTimelineEvent;
 import com.bytequay.core.domain.PullRequest;
+import com.bytequay.core.domain.PullRequestDetail;
 import com.bytequay.core.domain.StoredPrDetail;
 import com.bytequay.core.merge.AutoMerge;
 import com.bytequay.core.merge.AutoMergeStore;
@@ -55,6 +58,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.BooleanSupplier;
+import java.util.function.Predicate;
 
 import static com.google.common.base.Preconditions.checkState;
 import static java.util.Comparator.comparing;
@@ -71,7 +76,7 @@ public class AutoMergeService
 {
     private static final Logger log = LoggerFactory.getLogger(AutoMergeService.class);
     private static final Set<String> MERGEABLE = ImmutableSet.of("clean", "has_hooks");
-    private static final Set<AutoMerge.Outcome> FINAL = ImmutableSet.of(AutoMerge.Outcome.MERGED, AutoMerge.Outcome.CANCELLED);
+    private static final Set<AutoMerge.Outcome> FINAL = ImmutableSet.of(AutoMerge.Outcome.MERGED, AutoMerge.Outcome.CANCELLED, AutoMerge.Outcome.UNKNOWN);
     private static final Set<String> QUEUE_EVENTS = ImmutableSet.of("added_to_merge_queue", "removed_from_merge_queue", "auto_merge_disabled");
     // GitHub stamps queue events with its own clock; the slack keeps a local clock running ahead from hiding them.
     private static final Duration CLOCK_SLACK = Duration.ofMinutes(1);
@@ -147,7 +152,7 @@ public class AutoMergeService
             return;
         }
         if (saved.filter(merge -> merge.startedAt().isPresent() && merge.outcome().isEmpty()).isPresent()) {
-            store.save(saved.orElseThrow().ended(AutoMerge.Outcome.FAILED, "The merge's outcome is unknown; check the pull request before merging it"));
+            store.save(saved.orElseThrow().ended(AutoMerge.Outcome.UNKNOWN, "The merge's outcome is unknown; check the pull request before merging it"));
             return;
         }
         pullRequests.warmDetail(pr.repo(), pr.number(), DETAIL_FRESHNESS);
@@ -293,27 +298,136 @@ public class AutoMergeService
 
     private void merge(AutoMerge ready, PullRequest pr, PrRawDetail raw)
     {
+        merge(ready, pr, raw, Optional.empty());
+    }
+
+    /** A rule grants the same checked merge, immediately, for an owned PR and one explicitly approved head. */
+    public synchronized AutoMerge mergeAuthorized(PullRequestRead route, PullRequest pr, String expectedHead, String actionKey,
+            Predicate<PullRequestDetail> matches, BooleanSupplier authorized)
+    {
+        String key = "pr:" + pr.id();
+        AutoMerge pending = AutoMerge.waiting(key, expectedHead, "Checking the rule's merge conditions").authorizedBy(actionKey);
+        Optional<AutoMerge> prior = store.find(key).filter(value -> value.startedAt().isPresent());
+        if (prior.isEmpty() && !authorized.getAsBoolean()) {
+            return pending.ended(AutoMerge.Outcome.CANCELLED, "The rule changed or was paused");
+        }
+        PullRequestDetail fresh = pullRequests.refreshForAction(route);
+        Optional<StoredPrDetail> detail = details.find(pr.id());
+        checkState(fresh.id() == pr.id() && fresh.number() == pr.number() && fresh.repo().equalsIgnoreCase(pr.repo()), "The refreshed pull request changed identity");
+        if (prior.isPresent() && !prior.orElseThrow().actionKey().filter(actionKey::equals).isPresent()
+                && (prior.orElseThrow().headSha().equals(expectedHead) || prior.orElseThrow().outcome().isEmpty()
+                        || prior.orElseThrow().outcome().filter(AutoMerge.Outcome.UNKNOWN::equals).isPresent())) {
+            return pending.ended(AutoMerge.Outcome.CANCELLED, "Another authorized action already owns this merge; inspect its result");
+        }
+        if (fresh.mergedAt() != null) {
+            if (prior.isEmpty()) {
+                return pending.ended(AutoMerge.Outcome.CANCELLED, "The pull request was already merged; this rule did not send a merge");
+            }
+            AutoMerge merged = prior.orElse(pending).ended(AutoMerge.Outcome.MERGED, "Merged");
+            store.save(merged);
+            return merged;
+        }
+        if (!"open".equalsIgnoreCase(fresh.state())) {
+            return pending.ended(AutoMerge.Outcome.CANCELLED, "The pull request was closed without merging");
+        }
+        if (prior.filter(value -> value.outcome().isEmpty() || value.outcome().filter(AutoMerge.Outcome.UNKNOWN::equals).isPresent()).isPresent()) {
+            AutoMerge unknown = prior.orElseThrow().ended(AutoMerge.Outcome.UNKNOWN, "The merge outcome is unknown; check the pull request before merging it");
+            store.save(unknown);
+            return unknown;
+        }
+        if (!expectedHead.equals(fresh.headSha())) {
+            return pending.ended(AutoMerge.Outcome.CANCELLED, "The pull request has a new head; this action is no longer current");
+        }
+        if (detail.isEmpty() || !expectedHead.equals(detail.orElseThrow().raw().headSha())) {
+            return pending;
+        }
+        if (prior.filter(value -> value.headSha().equals(expectedHead) && value.outcome().filter(AutoMerge.Outcome.QUEUED::equals).isPresent()).isPresent()) {
+            AutoMerge queued = prior.orElseThrow();
+            AutoMerge observed = leftQueue(detail.orElseThrow().timeline(), queued.startedAt().orElseThrow())
+                    .map(reason -> queued.ended(AutoMerge.Outcome.FAILED, reason)).orElse(queued);
+            store.save(observed);
+            return observed;
+        }
+        if (!fresh.author().equalsIgnoreCase(route.login()) || !"open".equalsIgnoreCase(fresh.state()) || fresh.draft()
+                || fresh.ciStatus() != PullRequestDetail.CiStatus.PASSING || !fresh.viewerCanWrite() || !approvedHead(detail.orElseThrow(), expectedHead)) {
+            return pending;
+        }
+        if (!matches.test(fresh)) {
+            return pending.ended(AutoMerge.Outcome.CANCELLED, "The pull request no longer matches the rule's scope");
+        }
+        if (!Boolean.TRUE.equals(fresh.mergeable()) || !MERGEABLE.contains(Optional.ofNullable(fresh.mergeableState()).orElse("").toLowerCase(Locale.ROOT))) {
+            return pending;
+        }
+        for (AgentTask task : tasks.listLive()) {
+            if (!task.interactive() || ownership.linkedPullRequest(task).filter(linked -> linked.id() == pr.id()).isEmpty()) {
+                continue;
+            }
+            Optional<AutoMerge> taskMerge = store.find(task.id().toString());
+            if (taskMerge.flatMap(AutoMerge::outcome).filter(AutoMerge.Outcome.CANCELLED::equals).isPresent()) {
+                return pending.ended(AutoMerge.Outcome.CANCELLED, "Auto-merge was stopped for this work");
+            }
+            if (replacements.find(task.id().toString()).filter(operation -> !operation.completed()).isPresent()
+                    || waitingFor(task, pr, detail.orElseThrow()).isPresent()) {
+                return pending;
+            }
+        }
+        if (!authorized.getAsBoolean()) {
+            return pending.ended(AutoMerge.Outcome.CANCELLED, "The rule changed or was paused");
+        }
+        return merge(pending.ready(clock.instant()), pr, detail.orElseThrow().raw(), Optional.of(route));
+    }
+
+    static boolean approvedHead(StoredPrDetail detail, String head)
+    {
+        if (!detail.reviewsComplete() || !detail.checkRunsComplete() || !detail.unavailableSections().isEmpty()) {
+            return false;
+        }
+        var verdicts = PrReviewState.latestVerdicts(detail.reviews());
+        return verdicts.stream().noneMatch(review -> "CHANGES_REQUESTED".equals(review.state()))
+                && verdicts.stream().anyMatch(review -> "APPROVED".equals(review.state()) && head.equals(review.commitId()));
+    }
+
+    private AutoMerge merge(AutoMerge ready, PullRequest pr, PrRawDetail raw, Optional<PullRequestRead> route)
+    {
+        String operation = "pr:" + pr.id();
+        Optional<AutoMerge> earlier = store.find(operation).filter(value -> value.startedAt().isPresent()
+                && (value.headSha().equals(ready.headSha()) || value.outcome().isEmpty() || value.outcome().filter(AutoMerge.Outcome.UNKNOWN::equals).isPresent()));
+        if (earlier.isPresent()) {
+            AutoMerge observed = earlier.orElseThrow();
+            AutoMerge result = observed.outcome().isPresent() ? observed
+                    : observed.ended(AutoMerge.Outcome.UNKNOWN, "The merge outcome is unknown; refresh the pull request before retrying");
+            store.save(new AutoMerge(ready.taskId(), result.headSha(), result.readySince(), result.startedAt(), result.outcome(), result.message(), result.actionKey()));
+            return result;
+        }
         AutoMerge started = ready.started(clock.instant());
+        // Both task automation and rules reserve the PR operation before sending it, so overlapping rules cannot merge twice.
+        store.save(new AutoMerge(operation, started.headSha(), started.readySince(), started.startedAt(), started.outcome(), started.message(), started.actionKey()));
         store.save(started);
+        AutoMerge finished;
         try {
-            boolean queue = raw.baseRef() != null && pullRequests.hasMergeQueue(pr.repo(), raw.baseRef());
-            MergeResult result = pullRequests.mergePullRequest(pr.repo(), pr.number(), pr.id(), queue ? "queue" : "rebase", started.headSha());
+            boolean queue = raw.baseRef() != null && route.map(read -> pullRequests.hasMergeQueue(read, raw.baseRef()))
+                    .orElseGet(() -> pullRequests.hasMergeQueue(pr.repo(), raw.baseRef()));
+            MergeResult result = route.map(read -> pullRequests.mergePullRequest(read, pr.id(), queue ? "queue" : "rebase", started.headSha()))
+                    .orElseGet(() -> pullRequests.mergePullRequest(pr.repo(), pr.number(), pr.id(), queue ? "queue" : "rebase", started.headSha()));
             if (result.merged()) {
-                store.save(started.ended(AutoMerge.Outcome.MERGED, "Merged"));
+                finished = started.ended(AutoMerge.Outcome.MERGED, "Merged");
             }
             // A branch that gained a queue since it was checked turns the rebase into a queue entry too.
             else if (result.queued()) {
-                store.save(started.ended(AutoMerge.Outcome.QUEUED, Optional.ofNullable(result.message()).orElse("In the merge queue")));
+                finished = started.ended(AutoMerge.Outcome.QUEUED, Optional.ofNullable(result.message()).orElse("In the merge queue"));
             }
             else {
-                store.save(started.ended(AutoMerge.Outcome.FAILED, Optional.ofNullable(result.message()).orElse("The pull request was not merged")));
+                finished = started.ended(AutoMerge.Outcome.FAILED, Optional.ofNullable(result.message()).orElse("The pull request was not merged"));
             }
         }
         catch (RuntimeException failure) {
             log.warn("Auto-merge of {}#{} failed", pr.repo(), pr.number(), failure);
-            store.save(started.ended(AutoMerge.Outcome.FAILED, "The merge failed; check the pull request before merging it: "
-                    + Optional.ofNullable(failure.getMessage()).orElse(failure.getClass().getSimpleName())));
+            finished = started.ended(AutoMerge.Outcome.UNKNOWN, "The merge outcome is unknown; check the pull request before merging it: "
+                    + Optional.ofNullable(failure.getMessage()).orElse(failure.getClass().getSimpleName()));
         }
+        store.save(finished);
+        store.save(new AutoMerge(operation, finished.headSha(), finished.readySince(), finished.startedAt(), finished.outcome(), finished.message(), finished.actionKey()));
+        return finished;
     }
 
     private Duration delay()
@@ -328,7 +442,7 @@ public class AutoMergeService
     }
 
     /**
-     * @param state WAITING, READY, MERGING, MERGED, QUEUED, FAILED or CANCELLED
+     * @param state WAITING, READY, MERGING, MERGED, QUEUED, FAILED, UNKNOWN or CANCELLED
      * @param mergeAt when a ready pull request merges
      */
     public record AutoMergeSummary(String state, Optional<Instant> mergeAt, Optional<String> message) {}

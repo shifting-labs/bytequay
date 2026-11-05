@@ -88,6 +88,7 @@ export function automationSteps({ level, generated, delivered, failure, pullRequ
     case 'MERGING': set('MERGE', 'running', 'merging'); break;
     case 'QUEUED': set('MERGE', 'running', 'in the merge queue'); break;
     case 'MERGED': set('MERGE', 'done', 'merged'); break;
+    case 'UNKNOWN': set('MERGE', 'attention', autoMerge.message ?? 'merge outcome unknown; check the pull request'); break;
     case 'FAILED': set('MERGE', 'attention', autoMerge.message ?? 'the merge failed'); break;
     case 'CANCELLED': set('MERGE', 'pending', 'stopped'); break;
   }

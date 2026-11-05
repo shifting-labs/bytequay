@@ -51,6 +51,18 @@ public class SqliteRuleRunStore
     }
 
     @Override
+    public List<RuleRun> recent()
+    {
+        return runs.findTop1000ByOrderByOccurredAtDesc().stream().map(RuleRunEntity::toDomain).collect(toImmutableList());
+    }
+
+    @Override
+    public List<RuleRun> pendingAutomatic()
+    {
+        return runs.findByNeedsReconciliationTrueOrderByOccurredAtAsc().stream().map(RuleRunEntity::toDomain).collect(toImmutableList());
+    }
+
+    @Override
     @Transactional
     public void deleteBefore(Instant cutoff)
     {

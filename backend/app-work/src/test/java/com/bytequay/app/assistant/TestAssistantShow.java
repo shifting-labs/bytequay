@@ -339,7 +339,7 @@ class TestAssistantShow
     private JsonNode show(AssistantItem message, Map<String, ServedRef> served, String arguments)
             throws Exception
     {
-        AssistantContext context = new AssistantContext(mock(AssistantReader.class), DAY, message.visible(), message.onScreen(), served, mapper);
+        AssistantContext context = new AssistantContext(mock(AssistantReader.class), DAY, message.visible(), message.onScreen(), served, mapper, _ -> {});
         return mapper.readTree(show.tool(message, context, shown::add).call().apply(arguments));
     }
 

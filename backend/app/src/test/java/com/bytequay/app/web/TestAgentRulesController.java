@@ -59,6 +59,24 @@ class TestAgentRulesController
             .build();
 
     @Test
+    void activatesOnlyTheExplicitlyReviewedVersion()
+            throws Exception
+    {
+        String id = service.add(RULE).getFirst().id();
+        mvc.perform(post("/api/settings/agent-rules/" + id + "/activate").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/settings/agent-rules/" + id + "/activate").contentType(MediaType.APPLICATION_JSON).content("{\"version\":0}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].mode").value("AUTO"))
+                .andExpect(jsonPath("$[0].version").value(1));
+        mvc.perform(post("/api/settings/agent-rules/" + id + "/activate").contentType(MediaType.APPLICATION_JSON).content("{\"version\":0}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("rule changed")));
+        mvc.perform(put("/api/settings/agent-rules/" + id).contentType(MediaType.APPLICATION_JSON).content(body(RULE.replace("then nits", "then style"))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].mode").value("OBSERVE"));
+    }
+
+    @Test
     void checksSavesPausesEditsAndRemovesARule()
             throws Exception
     {
@@ -85,7 +103,7 @@ class TestAgentRulesController
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].subject").value("acme/warehouse#7"))
                 .andExpect(jsonPath("$[0].verdict").value("AGREED"));
-        mvc.perform(get("/api/settings/agent-rules/missing/runs")).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/settings/agent-rules/missing/runs")).andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(0));
 
         mvc.perform(put("/api/settings/agent-rules/" + id + "/paused").contentType(MediaType.APPLICATION_JSON).content("{\"paused\":true}"))
                 .andExpect(status().isOk())

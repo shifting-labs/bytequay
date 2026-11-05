@@ -13,21 +13,22 @@
  */
 package com.bytequay.core.domain;
 
+import com.google.common.collect.ImmutableList;
+
+import java.util.List;
+import java.util.Optional;
+
+import static com.bytequay.core.domain.Checks.checkOptionalText;
 import static com.bytequay.core.domain.Checks.checkText;
 import static java.util.Objects.requireNonNull;
 
-/**
- * What a task that a conversation started or sent words to raised since, written back into that conversation once: a decision it waits
- * on, a result to use, or why it could not finish.
- *
- * @param noticeId the task's notice it reports, which the panel draws as that notice's own card while the notice lasts
- * @param target the task, which the report opens once its notice is gone
- */
-public record AssistantReport(State state, String noticeId, AgendaTarget target)
+/** App-owned card facts with an optional read-only interpretation. Interpretation never changes the card's state or authority. */
+public record AssistantReport(State state, String noticeId, AgendaTarget target, Optional<String> sourceTurnId, Optional<String> assessment,
+        List<String> evidence, List<AssistantRuleAction> ruleActions, Optional<String> outcome)
 {
     public enum State
     {
-        DECISION, READY, FAILED
+        APPROVAL_REQUIRED, ANSWER_REQUIRED, PROPOSAL, RESULT_READY, COMPLETED, ATTENTION, PROGRESS
     }
 
     public AssistantReport
@@ -35,5 +36,20 @@ public record AssistantReport(State state, String noticeId, AgendaTarget target)
         requireNonNull(state, "state is null");
         checkText(noticeId, "noticeId");
         requireNonNull(target, "target is null");
+        checkOptionalText(sourceTurnId, "sourceTurnId");
+        checkOptionalText(assessment, "assessment", 4000);
+        checkOptionalText(outcome, "outcome");
+        evidence = ImmutableList.copyOf(evidence);
+        ruleActions = ImmutableList.copyOf(ruleActions);
+    }
+
+    public AssistantReport(State state, String noticeId, AgendaTarget target)
+    {
+        this(state, noticeId, target, Optional.empty(), Optional.empty(), ImmutableList.of(), ImmutableList.of(), Optional.empty());
+    }
+
+    public AssistantReport assessed(String text)
+    {
+        return new AssistantReport(state, noticeId, target, sourceTurnId, Optional.of(text), evidence, ruleActions, outcome);
     }
 }

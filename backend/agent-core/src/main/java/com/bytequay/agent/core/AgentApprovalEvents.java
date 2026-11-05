@@ -15,6 +15,7 @@ package com.bytequay.agent.core;
 
 import com.bytequay.agent.spi.ProviderAgentEventSource;
 import com.bytequay.agent.spi.ProviderApprovalRequest;
+import com.google.common.collect.ImmutableList;
 
 import java.util.List;
 import java.util.Optional;
@@ -28,6 +29,11 @@ public final class AgentApprovalEvents
 
     public static AgentEventPayload.ApprovalRequested requested(String approvalId, ProviderApprovalRequest request)
     {
+        return requested(approvalId, request, true);
+    }
+
+    public static AgentEventPayload.ApprovalRequested requested(String approvalId, ProviderApprovalRequest request, boolean actionable)
+    {
         return new AgentEventPayload.ApprovalRequested(
                 approvalId,
                 approvalKind(request.kind()),
@@ -35,8 +41,8 @@ public final class AgentApprovalEvents
                 request.detail(),
                 request.requestedPermissions(),
                 request.sandboxed(),
-                true,
-                availableDecisions(request));
+                actionable,
+                actionable ? availableDecisions(request) : ImmutableList.of());
     }
 
     public static AgentEventSource source(ProviderApprovalRequest request)

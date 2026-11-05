@@ -69,7 +69,7 @@
                 src="assets/app-assistant.jpg"
                 width="1340"
                 height="1380"
-                alt="The Assistant with on-screen context, an answer, action receipts, an approval card, and finished tasks."
+                alt="The Assistant with on-screen context, an answer, action receipts, an approval card, and task results."
               />
             </a>
           </figure>
@@ -87,7 +87,7 @@
               </li>
               <li>
                 Browse <strong>Decision</strong>, <strong>Running</strong>,
-                <strong>Finished</strong>, and <strong>Today</strong> cards.
+                <strong>Results</strong>, and <strong>Today</strong> cards.
                 Answer approvals and questions right on them.
               </li>
               <li>
@@ -107,6 +107,31 @@
                 going.
               </li>
             </ol>
+            <p>
+              Keep chatting while tasks and result reviews run in the background.
+              Messages in the same conversation wait in order.
+              <strong>Stop this reply</strong> stops only the current reply;
+              <strong>Stop work…</strong> on a task asks before stopping its
+              current turn. Its saved changes stay.
+            </p>
+            <p>The card’s label tells you what happens next:</p>
+            <ul>
+              <li><strong>Approval required</strong> — allow or deny a specific action with the task’s buttons.</li>
+              <li><strong>Answer needed</strong> — answer a question before the work can continue.</li>
+              <li><strong>Proposal</strong> — review a suggestion before adopting it or creating anything.</li>
+              <li><strong>Result ready</strong> — inspect the work; a finished turn still needs your review.</li>
+              <li><strong>Completed</strong> — the work’s completion condition has been verified.</li>
+              <li><strong>Needs attention</strong> — inspect a blocker, failure, or uncertain outcome.</li>
+              <li><strong>Progress</strong> — work is continuing; open it for details or stop its current turn.</li>
+            </ul>
+            <p>
+              Reports keep their findings and evidence after a notice is cleared.
+              An <strong>Allowed</strong> receipt does not mean the work is
+              completed. Expand <strong>Evidence</strong> or a rule receipt to
+              inspect its supporting records. Type <strong>@rules</strong> on
+              its own, or choose <strong>Rules</strong> in the composer, to
+              <a href="guide-agents.html#rules">inspect and activate your rules</a>.
+            </p>
             <p>
               <strong>⇧⌘J</strong> opens the task that has waited longest. Task
               alerts also show as macOS notifications.
@@ -131,9 +156,17 @@
               to be merged: the backport waits for the merge, then opens its PR.
             </p>
             <p>
-              Every action leaves a receipt with <strong>Open</strong>;
-              <strong>Stop</strong> cancels the first turn of a task it started.
-              The Assistant never edits files or runs code itself.
+              Every action leaves a receipt with <strong>Open</strong>.
+              <strong>Stop work…</strong> asks, then cancels the current turn it
+              identifies. The Assistant delegates file edits and commands to
+              the task’s agent.
+            </p>
+            <p>
+              A task it starts or sends your words to reports back into the same
+              conversation, with buttons for unresolved approvals and questions.
+              The Assistant can review results in the background; these reviews
+              use your model allowance. <strong>Reply to the task</strong> under
+              its latest report sends your words straight to that task.
             </p>
           </section>
           <section id="dictation">

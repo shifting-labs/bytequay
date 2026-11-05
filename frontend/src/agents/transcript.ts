@@ -12,7 +12,7 @@
  * limitations under the License.
  */
 import type { AgentEventEnvelope } from './events';
-import type { AgentTurnDto } from '../types';
+import type { AgentTurnDto, RuleAuthorization } from '../types';
 
 /**
  * The transcript as the screen draws it: turns, each with the user's message, the agent's
@@ -108,6 +108,7 @@ export type ApprovalBlock = {
   actionable: boolean;
   outcome: string | null;
   forTask: boolean;
+  authorization?: RuleAuthorization | null;
   at: string;
 };
 
@@ -410,6 +411,7 @@ class TurnBuilder {
         if (block !== undefined) {
           block.outcome = event.payload.outcome;
           block.forTask = event.payload.forTask;
+          block.authorization = event.payload.authorization;
           block.actionable = false;
           block.at = event.occurredAt;
         }

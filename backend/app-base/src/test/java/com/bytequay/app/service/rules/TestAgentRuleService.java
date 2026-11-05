@@ -13,6 +13,7 @@
  */
 package com.bytequay.app.service.rules;
 
+import com.bytequay.agent.spi.ProviderApprovalScope;
 import com.bytequay.app.service.InMemoryAppSettingsStore;
 import com.bytequay.core.domain.RuleRun;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,6 +25,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Optional;
 
+import static com.bytequay.app.service.rules.TestRuleText.NETWORK_PERMISSION;
 import static com.bytequay.app.service.rules.TestRuleText.STORAGE_REVIEW;
 import static com.bytequay.core.domain.RuleRun.Verdict.AGREED;
 import static com.bytequay.core.domain.RuleRun.Verdict.DISAGREED;
@@ -38,6 +40,53 @@ class TestAgentRuleService
     private final InMemoryAppSettingsStore store = new InMemoryAppSettingsStore();
     private final InMemoryRuleRunStore runs = new InMemoryRuleRunStore();
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+
+    @Test
+    void activationBindsTheReviewedRevisionAndEveryEditWithdrawsItsAuthority()
+    {
+        AgentRuleService rules = service(SAVED);
+        AgentRuleView draft = rules.add(NETWORK_PERMISSION).getFirst();
+        assertThat(rules.authorization(draft.id(), draft.version())).isEmpty();
+        AgentRuleView active = rules.activate(draft.id(), draft.version()).getFirst();
+        assertThat(active.mode()).isEqualTo(AgentRule.Mode.AUTO);
+        assertThat(active.version()).isEqualTo(draft.version() + 1);
+        assertThat(service(EDITED).authorization(active.id(), active.version())).hasValueSatisfying(authorization -> {
+            assertThat(authorization.ruleId()).isEqualTo(active.id());
+            assertThat(authorization.ruleName()).isEqualTo(active.rule().name());
+            assertThat(authorization.ruleVersion()).isEqualTo(active.version());
+        });
+        assertThatThrownBy(() -> rules.activate(draft.id(), draft.version())).hasMessageContaining("rule changed");
+        rules.pause(active.id(), true);
+        assertThat(rules.authorization(active.id(), active.version())).isEmpty();
+        AgentRuleView resumed = rules.pause(active.id(), false).getFirst();
+        assertThat(rules.authorization(active.id(), resumed.version())).isPresent();
+        AgentRuleView edited = rules.update(active.id(), NETWORK_PERMISSION.replace("selected repository", "current repository")).getFirst();
+        assertThat(edited.mode()).isEqualTo(AgentRule.Mode.OBSERVE);
+        assertThat(rules.authorization(edited.id(), edited.version())).isEmpty();
+        assertThat(edited.recordSince()).isEqualTo(SAVED);
+    }
+
+    @Test
+    void permissionRulesRequireExactHostsOperationsAndRepositoryAndDoNotLearnAuthority()
+    {
+        AgentRuleService rules = service(SAVED);
+        AgentRuleView draft = rules.add(NETWORK_PERMISSION).getFirst();
+        ProviderApprovalScope network = new ProviderApprovalScope(ProviderApprovalScope.Operation.NETWORK_ACCESS, ImmutableList.of("api.github.com"), Optional.empty());
+        assertThat(rules.authorizePermission(network, "acme/warehouse")).isEmpty();
+        answer(draft.id(), 0, 12, AGREED);
+        assertThat(rules.authorizePermission(network, "acme/warehouse")).isEmpty();
+        AgentRuleView active = rules.activate(draft.id(), draft.version()).getFirst();
+        assertThat(rules.authorizePermission(network, "acme/warehouse")).isPresent();
+        assertThat(rules.authorizePermission(network, "acme/other")).isEmpty();
+        assertThat(rules.authorizePermission(new ProviderApprovalScope(ProviderApprovalScope.Operation.NETWORK_ACCESS,
+                ImmutableList.of("api.github.com", "other.example"), Optional.empty()), "acme/warehouse")).isEmpty();
+        assertThat(rules.authorizePermission(new ProviderApprovalScope(ProviderApprovalScope.Operation.NETWORK_ACCESS,
+                ImmutableList.of("api.github.com.attacker.example"), Optional.empty()), "acme/warehouse")).isEmpty();
+        assertThat(rules.authorizePermission(new ProviderApprovalScope(ProviderApprovalScope.Operation.GITHUB_READ,
+                ImmutableList.of("api.github.com"), Optional.of("acme/warehouse")), "acme/warehouse")).isEmpty();
+        rules.pause(active.id(), true);
+        assertThat(rules.authorizePermission(network, "acme/warehouse")).isEmpty();
+    }
 
     @Test
     void aSavedRuleStartsInObserveWithAnEmptyRecordAndSurvivesARestart()
@@ -55,7 +104,7 @@ class TestAgentRuleService
     void aNewNameOrNewInstructionsKeepTheRecordAndAChangedHeaderStartsANewOneInObserve()
             throws Exception
     {
-        store.put("agent.rules", mapper.writeValueAsString(ImmutableList.of(new AgentRule("rule-1", STORAGE_REVIEW, AgentRule.Mode.SUGGEST, true, SAVED, Optional.empty()))));
+        store.put("agent.rules", mapper.writeValueAsString(ImmutableList.of(new AgentRule("rule-1", STORAGE_REVIEW, AgentRule.Mode.SUGGEST, true, SAVED, Optional.empty(), 0))));
         AgentRuleService later = service(EDITED);
 
         AgentRuleView renamed = later.update("rule-1", STORAGE_REVIEW.replace("touch storage", "change storage").replace("post nothing", "never post")).getFirst();
@@ -78,7 +127,7 @@ class TestAgentRuleService
         assertThat(rules.pause(id, true).getFirst().paused()).isTrue();
         assertThat(rules.pause(id, false).getFirst().paused()).isFalse();
         assertThatThrownBy(() -> rules.add(STORAGE_REVIEW.replace("does: review", "does: merge")))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("\"does: merge\"");
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("not merge");
         assertThatThrownBy(() -> rules.update(id, "not a rule")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> rules.pause("missing", true)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Unknown rule");
         assertThat(rules.remove(id)).isEmpty();
@@ -102,8 +151,10 @@ class TestAgentRuleService
         assertThat(view.runs()).isEqualTo(3);
         assertThat(view.agreed()).isEqualTo(1);
         assertThat(view.disagreed()).isEqualTo(1);
-        assertThat(rules.record(id)).containsExactly(pending, disagreed, agreed);
-        assertThatThrownBy(() -> rules.record("missing")).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Unknown rule");
+        assertThat(rules.record(id)).containsExactly(pending, disagreed, agreed, before);
+        assertThat(rules.record("missing")).isEmpty();
+        rules.remove(id);
+        assertThat(rules.record(id)).containsExactly(pending, disagreed, agreed, before);
     }
 
     @Test

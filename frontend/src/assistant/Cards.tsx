@@ -13,8 +13,8 @@
  */
 import { useEffect, useState, type ReactNode } from 'react';
 import {
-  CircleArrowUp, CircleCheck, CircleX, Clock, ExternalLink, Eye, GitPullRequest, Hand, Hourglass, ListTodo, LoaderCircle, MessageCircleQuestion, Terminal, TimerOff,
-  TriangleAlert, X, type LucideIcon,
+  CircleArrowUp, CircleCheck, CircleX, Clock, ExternalLink, Eye, GitPullRequest, Hand, Hourglass, ListTodo, LoaderCircle, MessageCircleQuestion, TimerOff,
+  ShieldCheck, ShieldX, TriangleAlert, X, type LucideIcon,
 } from 'lucide-react';
 import { latestStep, PendingApprovalCard, type ApprovalDecider, type TaskStep } from '../agents/AgentConversation';
 import type { RunningTask } from '../agents/runningTaskModel';
@@ -26,7 +26,7 @@ import { APPROVAL_NOTICE, NOTICE_ACTIONS, RULE_NOTICE, RULE_RESULT_NOTICE, notic
 import { errorMessage } from '../errorMessage';
 import { laneLabel } from '../settings/model';
 import type { AgentEventEnvelope } from '../agents/events';
-import type { AgendaTargetDto, AgentPendingApprovalDto } from '../types';
+import type { AgendaTargetDto, AgentPendingApprovalDto, AssistantReportDto, AssistantReportState, AssistantRuleActionDto } from '../types';
 import { useAsyncAction } from '../useAsyncAction';
 import { useNow, useTimeLeft } from '../useNow';
 
@@ -39,8 +39,9 @@ const where = (notice: AppNotice): string => `${notice.repository} · ${laneLabe
  * One card of the Assistant: an icon, the title over where it lives, then its state, words or buttons on the right; a decision's
  * command, question and buttons go in a body under it. Buttons that only matter under the pointer replace the right side there.
  */
-function CardRow({ icon, tone, tip, title, meta, below, right, hover, body, urgent = false, focused = false, id }: {
+function CardRow({ icon, state, tone, tip, title, meta, below, right, hover, body, wrapTitle = false, urgent = false, focused = false, id }: {
   icon: LucideIcon;
+  state: AssistantReportState;
   tone?: 'accent' | 'warn' | 'danger';
   tip?: string;
   title: string;
@@ -49,6 +50,7 @@ function CardRow({ icon, tone, tip, title, meta, below, right, hover, body, urge
   right?: ReactNode;
   hover?: ReactNode;
   body?: ReactNode;
+  wrapTitle?: boolean;
   urgent?: boolean;
   /** Opened from its alert: outlined for a moment so the eye finds it. */
   focused?: boolean;
@@ -56,10 +58,11 @@ function CardRow({ icon, tone, tip, title, meta, below, right, hover, body, urge
 }) {
   const Icon = icon;
   return (
-    <div className={`assistant-card${urgent ? ' is-urgent' : ''}${focused ? ' is-opened' : ''}${hover === undefined ? '' : ' has-hover'}`} data-card={id}
+    <div className={`assistant-card${wrapTitle ? ' has-wrapped-title' : ''}${urgent ? ' is-urgent' : ''}${focused ? ' is-opened' : ''}${hover === undefined ? '' : ' has-hover'}`} data-card={id} data-state={state}
       tabIndex={id === undefined ? undefined : -1}>
-      <span className={`assistant-card__icon${tone === undefined ? '' : ` is-${tone}`}`} title={tip}><Icon size={16} aria-hidden="true" /></span>
+      <span className={`assistant-card__icon${state === 'PROGRESS' ? ' is-spinning' : ''}${tone === undefined ? '' : ` is-${tone}`}`} title={tip}><Icon size={16} aria-hidden="true" /></span>
       <div className="assistant-card__main">
+        <CardState state={state} />
         <div className="assistant-card__title" title={title}>{title}</div>
         <div className="assistant-card__meta" title={meta}>{meta}</div>
         {below}
@@ -73,13 +76,98 @@ function CardRow({ icon, tone, tip, title, meta, below, right, hover, body, urge
   );
 }
 
+const CARD_STATES: Record<AssistantReportState, { label: string; icon: LucideIcon }> = {
+  APPROVAL_REQUIRED: { label: 'Approval required', icon: Hand },
+  ANSWER_REQUIRED: { label: 'Answer needed', icon: MessageCircleQuestion },
+  PROPOSAL: { label: 'Proposal', icon: CircleArrowUp },
+  RESULT_READY: { label: 'Result ready', icon: Eye },
+  COMPLETED: { label: 'Completed', icon: CircleCheck },
+  ATTENTION: { label: 'Needs attention', icon: TriangleAlert },
+  PROGRESS: { label: 'Progress', icon: LoaderCircle },
+};
+
+export function CardState({ state }: { state: AssistantReportState }) {
+  return <span className="assistant-card__state" data-state={state}>{CARD_STATES[state].label}</span>;
+}
+
+/** Facts kept with the report, including the app's individual authorization receipts. */
+export function ReportEvidence({ report }: { report: Pick<AssistantReportDto, 'evidence' | 'ruleActions'> }) {
+  const rules = new Map<string, AssistantRuleActionDto[]>();
+  for (const action of report.ruleActions) {
+    const key = JSON.stringify([action.ruleId, action.ruleVersion, action.outcome]);
+    rules.set(key, [...rules.get(key) ?? [], action]);
+  }
+  return <>
+    {[...rules].map(([id, actions]) => {
+      const allowed = actions.every(action => action.outcome === 'ALLOWED');
+      return <details className="assistant-rule-receipt" key={id}>
+        <summary><ShieldCheck size={13} aria-hidden="true" />
+          {allowed ? `Allowed ${actions.length} ${actions.length === 1 ? 'request' : 'requests'}` : `${actions.length} rule ${actions.length === 1 ? 'action' : 'actions'}`} under {actions[0].ruleName}
+        </summary>
+        <ul>{actions.map((action, index) => <li key={index}><strong>{action.outcome.toLowerCase().replaceAll('_', ' ')}</strong> · {action.detail} <span className="assistant-dim">(rule revision {action.ruleVersion})</span></li>)}</ul>
+      </details>;
+    })}
+    {report.evidence.length > 0 && <details className="assistant-report-evidence">
+      <summary>Evidence · {report.evidence.length}</summary>
+      <ul>{report.evidence.map((entry, index) => <li key={index}>{entry}</li>)}</ul>
+    </details>}
+  </>;
+}
+
+/** Durable result presentation stays intact after its transient notice is seen or cleared. */
+export function DurableReportCard({ report, text, onOpen }: { report: AssistantReportDto; text: string; onOpen: () => void }) {
+  const outcomes: Record<string, string> = { ANSWERED: 'Answered', ALLOWED: 'Allowed', DENIED: 'Denied', EXPIRED: 'Expired', CANCELLED: 'Cancelled' };
+  const ReceiptIcon = report.outcome === 'DENIED' || report.outcome === 'EXPIRED' || report.outcome === 'CANCELLED' ? ShieldX : ShieldCheck;
+  if (report.outcome !== null) return <div className="assistant-report-resolved">
+    <div className="assistant-receipt">
+      <ReceiptIcon className="assistant-receipt__icon" size={14} aria-hidden="true" />
+      <span className="assistant-receipt__text"><strong>{outcomes[report.outcome] ?? report.outcome}</strong> · {text}</span>
+      <button type="button" className="assistant-button" onClick={onOpen}>Open work</button>
+    </div>
+    <ReportEvidence report={report} />
+  </div>;
+  const unavailable = report.state === 'APPROVAL_REQUIRED' || report.state === 'ANSWER_REQUIRED';
+  const state = unavailable ? 'ATTENTION' : report.state;
+  return <CardRow wrapTitle state={state} icon={CARD_STATES[state].icon} title={text} meta={report.target.repo ?? ''}
+    right={<button type="button" className="assistant-button" onClick={onOpen}>{state === 'RESULT_READY' ? 'Review result' : 'Open work'}</button>}
+    body={<>
+      {unavailable && <div className="assistant-card__why">This request is no longer available here. Open the work to see its latest state.</div>}
+      {report.assessment !== null && <div className="assistant-card__assessment">{report.assessment}</div>}
+      <ReportEvidence report={report} />
+    </>} />;
+}
+
+function RuleActionResult({ notice, onShow, onOpen, onClear }: {
+  notice: AppNotice; onShow: (target: AgendaTargetDto) => void; onOpen: () => void; onClear: () => void;
+}) {
+  const run = notice.ruleRun;
+  if (run == null) return null;
+  const state: AssistantReportState = run.outcome === 'MERGED' ? 'COMPLETED' : run.outcome === 'QUEUED' ? 'PROGRESS'
+    : run.outcome === 'RESULT_READY' ? 'RESULT_READY' : 'ATTENTION';
+  const pull = pullOf(notice);
+  const open = () => {
+    if (pull === null || notice.reviewId !== null) onOpen();
+    else onShow({ kind: 'PULL', repo: pull.repo, number: pull.number, workspaceId: notice.workspaceId, id: null, connectionId: null, cloudId: null });
+  };
+  return <CardRow state={state} icon={CARD_STATES[state].icon} title={heading(notice)} meta={where(notice)}
+    right={<button type="button" className="assistant-button" onClick={open}>{notice.reviewId !== null ? 'Review result' : pull === null ? 'Open' : 'Open pull request'}</button>}
+    body={<>
+      <div className="assistant-card__assessment">{notice.message}</div>
+      {run.authorization !== null && <ReportEvidence report={{ evidence: [], ruleActions: [{ ruleId: run.authorization.ruleId,
+        ruleName: run.authorization.ruleName, ruleVersion: run.authorization.ruleVersion, outcome: run.outcome ?? 'UNKNOWN', detail: `${run.subject} · ${run.title}` }] }} />}
+      <div className="assistant-card__buttons"><span className="assistant-spacer" />
+        <button type="button" className="assistant-link" onClick={onClear}>Clear result</button>
+      </div>
+    </>} />;
+}
+
 function StatePill({ text, expiresAt, urgent }: { text: string; expiresAt?: string; urgent?: boolean }) {
   const left = useTimeLeft(expiresAt);
   return <span className={`assistant-state${urgent === true || left?.urgent === true ? ' is-warn' : ''}`}>{text}{left !== null && ` · ${left.text} left`}</span>;
 }
 
 /** Stop, asked first, since it ends the turn's work. */
-export function StopButton({ turnId, label = 'Stop…' }: { turnId: string; label?: string }) {
+export function StopButton({ turnId, label = 'Stop work…' }: { turnId: string; label?: string }) {
   const [asking, setAsking] = useState(false);
   const [state, setState] = useState<'idle' | 'stopping' | 'stopped'>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -93,15 +181,15 @@ export function StopButton({ turnId, label = 'Stop…' }: { turnId: string; labe
   return <>
     <button type="button" className="assistant-button" disabled={state === 'stopping'} title={error ?? undefined} onClick={() => setAsking(true)}>{label}</button>
     {asking && (
-      <ConfirmDialog title="Stop this turn?" confirmLabel="Stop turn" destructive busy={state === 'stopping'} onConfirm={stop} onCancel={() => setAsking(false)}>
-        The agent stops where it is. Its changes so far stay in the task.
+      <ConfirmDialog title="Stop this work?" confirmLabel="Stop work" destructive busy={state === 'stopping'} onConfirm={stop} onCancel={() => setAsking(false)}>
+        The current turn in this task stops. Its saved changes stay, and other work continues.
       </ConfirmDialog>
     )}
   </>;
 }
 
 /** A decision, answered in place: an approval or a question with the task's own buttons, read fresh, never from the notice's text. */
-export function ApprovalCard({ notice, focused, conversation, onAnswered, onOpen, onClear }: {
+export function ApprovalCard({ notice, focused, conversation, onAnswered, onOpen }: {
   notice: AppNotice;
   focused: boolean;
   conversation: string;
@@ -124,12 +212,16 @@ export function ApprovalCard({ notice, focused, conversation, onAnswered, onOpen
     }
     const read = reviewId === null ? window.bridge.readAgentPendingApprovals(taskId, turnId) : window.bridge.readAgentReviewApprovals(reviewId, taskId, turnId);
     void read.then(pending => { if (live) setApproval(pending.find(item => item.approvalId === approvalId) ?? null); })
-      .catch(() => { if (live) setApproval(null); });
+      .catch(() => { if (live) { setError('Unable to check this request'); setApproval(null); } });
     return () => { live = false; };
   }, [approvalId, reviewId, taskId, turnId]);
 
-  // Answered elsewhere, or no longer readable: the task itself shows what happened.
-  if (approval === null) return <NoticeCard notice={notice} focused={focused} onOpen={onOpen} onClear={onClear} />;
+  // A stale notice must never offer permission again after a rule or another surface answered it.
+  if (approval === null) return <div className="assistant-receipt" data-card={notice.id}>
+    <ShieldCheck className="assistant-receipt__icon" size={14} aria-hidden="true" />
+    <span className="assistant-receipt__text">{error ?? 'Request no longer pending'} · {heading(notice)}</span>
+    <button type="button" className="assistant-button" onClick={onOpen}>Open work</button>
+  </div>;
   const decide: ApprovalDecider = (id, decision, answers) => {
     setError(null);
     const resolved = reviewId === null
@@ -142,10 +234,10 @@ export function ApprovalCard({ notice, focused, conversation, onAnswered, onOpen
   const question = notice.kind === 'QUESTION';
   const outside = approval !== undefined && !approval.sandboxed;
   return (
-    <CardRow id={notice.id} focused={focused} icon={question ? MessageCircleQuestion : outside ? Hand : Terminal}
+    <CardRow state={question ? 'ANSWER_REQUIRED' : 'APPROVAL_REQUIRED'} id={notice.id} focused={focused} icon={question ? MessageCircleQuestion : Hand}
       tip={outside ? approval?.title : undefined} title={heading(notice)} meta={where(notice)}
       urgent={left?.urgent === true}
-      right={<StatePill text={question ? 'Answer question' : outside ? 'Allow outside sandbox' : 'Allow command'} expiresAt={expiresAt} />}
+      right={<StatePill text={question ? 'Waiting for you' : outside ? 'Outside sandbox' : 'Permission requested'} expiresAt={expiresAt} />}
       body={<>
         {approval === undefined ? <div className="assistant-dim">Loading…</div> : <PendingApprovalCard approval={approval} onDecide={decide} />}
         {error !== null && <p className="assistant-error" role="alert">{error}</p>}
@@ -170,7 +262,7 @@ function RuleCard({ notice, focused, onClear }: NoticeCardProps) {
   const rule = notice.taskId.slice(RULE_NOTICE.length);
   const answer = (choose: (id: string) => Promise<unknown>) => void run(async () => { await choose(rule); onClear(); });
   return (
-    <CardRow id={notice.id} focused={focused} icon={CircleArrowUp} tone="accent" title={notice.title} meta="Rule"
+    <CardRow state="PROPOSAL" id={notice.id} focused={focused} icon={CircleArrowUp} tone="accent" title={notice.title} meta="Rule"
       right={<StatePill text={noticeLabel(notice)} />}
       body={<>
         <div className="assistant-card__why">{notice.message}</div>
@@ -192,7 +284,7 @@ function RuleResultCard({ notice, focused, onOpen, onClear }: NoticeCardProps) {
   const key = rest.slice(rest.indexOf(':') + 1);
   const review = notice.reviewId !== null;
   return (
-    <CardRow id={notice.id} focused={focused} icon={review ? Eye : CircleCheck} tone="accent" title={review ? `Review · ${heading(notice)}` : heading(notice)}
+    <CardRow state="RESULT_READY" id={notice.id} focused={focused} icon={Eye} tone="accent" title={review ? `Review · ${heading(notice)}` : heading(notice)}
       meta={where(notice)} right={<StatePill text={noticeLabel(notice)} />}
       body={<>
         <div className="assistant-card__why">{notice.message}</div>
@@ -214,14 +306,14 @@ function TaskNoticeCard({ notice, focused, onOpen, onClear }: NoticeCardProps) {
   const left = useTimeLeft(notice.expiresAt);
   const warn = notice.kind === 'RECOVERY' || notice.kind === 'STUCK';
   return (
-    <CardRow id={notice.id} focused={focused} icon={NOTICE_ICONS[notice.kind] ?? TriangleAlert} tone={warn ? 'warn' : undefined}
+    <CardRow state={notice.kind === 'QUESTION' ? 'ANSWER_REQUIRED' : 'ATTENTION'} id={notice.id} focused={focused} icon={NOTICE_ICONS[notice.kind] ?? TriangleAlert} tone={warn ? 'warn' : undefined}
       title={heading(notice)} meta={where(notice)} urgent={left?.urgent === true}
       right={<StatePill text={noticeLabel(notice)} expiresAt={notice.expiresAt} urgent={warn} />}
       body={<>
         {notice.message !== '' && <div className="assistant-card__why">{notice.message}</div>}
         <div className="assistant-card__buttons">
           <button type="button" className="assistant-button" onClick={onOpen}>{NOTICE_ACTIONS[notice.kind]}</button>
-          {notice.kind === 'STUCK' && notice.turnId !== null && <StopButton turnId={notice.turnId} label="Stop turn…" />}
+          {notice.kind === 'STUCK' && notice.turnId !== null && <StopButton turnId={notice.turnId} label="Stop work…" />}
           <span className="assistant-spacer" />
           <IconButton label={`Clear “${heading(notice)}”`} title="Clear" onClick={onClear}><X size={13} aria-hidden="true" /></IconButton>
         </div>
@@ -244,12 +336,13 @@ export function ResultCard({ notice, onShow, onOpen, onClear }: {
   onOpen: () => void;
   onClear: () => void;
 }) {
+  if (notice.ruleRun != null) return <RuleActionResult notice={notice} onShow={onShow} onOpen={onOpen} onClear={onClear} />;
   const failed = notice.kind === 'FAILURE';
   const review = notice.reviewId !== null;
   const pull = pullOf(notice);
   const { changes } = notice;
   // A development result's pull request is where it is reviewed; the rest are read in their task. Opened either way, it has been seen,
-  // so it leaves Finished, as opening it in its task does.
+  // so it leaves Results, as opening it in its task does.
   const next = failed ? 'Open' : review ? 'Read' : pull !== null ? 'Review' : notice.kind === 'NEXT_WORK' ? NOTICE_ACTIONS.NEXT_WORK : 'Open';
   const act = () => {
     if (pull === null || failed || review) {
@@ -269,7 +362,7 @@ export function ResultCard({ notice, onShow, onOpen, onClear }: {
     ),
   ].filter(Boolean);
   return (
-    <CardRow icon={failed ? CircleX : review ? Eye : pull !== null ? GitPullRequest : notice.kind === 'NEXT_WORK' ? ListTodo : CircleCheck}
+    <CardRow state={failed ? 'ATTENTION' : 'RESULT_READY'} icon={failed ? CircleX : review ? Eye : pull !== null ? GitPullRequest : notice.kind === 'NEXT_WORK' ? ListTodo : Eye}
       tone={failed ? 'danger' : undefined} title={review ? `Review · ${heading(notice)}` : heading(notice)} meta={where(notice)}
       below={failed ? <div className="assistant-card__fail">Failed · {notice.message}</div>
         : evidence.length > 0 ? <div className="assistant-card__evidence">{evidence}</div>
@@ -303,7 +396,7 @@ export function RunningCard({ task, onOpen }: { task: RunningTask; onOpen: () =>
   const now = useNow(step !== null && step.endedAt === null);
   const took = step === null ? null : (step.endedAt ?? now) - step.startedAt;
   return (
-    <CardRow icon={LoaderCircle} tone="accent" title={task.title}
+    <CardRow state="PROGRESS" icon={LoaderCircle} tone="accent" title={task.title}
       meta={[task.repository, task.pullRequestNumber === null ? null : `#${task.pullRequestNumber}`].filter(Boolean).join(' · ')}
       right={step === null ? 'Working' : took !== null && took >= 1000 ? `${step.text} · ${formatDuration(took)}` : step.text}
       hover={<>

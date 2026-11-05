@@ -13,15 +13,21 @@
  */
 package com.bytequay.persistence.sqlite.store;
 
+import com.bytequay.core.domain.AgendaTarget;
 import com.bytequay.core.domain.AssistantAction;
 import com.bytequay.core.domain.AssistantConversation;
+import com.bytequay.core.domain.AssistantFollow;
 import com.bytequay.core.domain.AssistantItem;
+import com.bytequay.core.domain.AssistantReceipt;
 import com.bytequay.core.store.AssistantStore;
 import com.bytequay.persistence.sqlite.entity.AssistantActionEntity;
 import com.bytequay.persistence.sqlite.entity.AssistantConversationEntity;
+import com.bytequay.persistence.sqlite.entity.AssistantFollowEntity;
 import com.bytequay.persistence.sqlite.entity.AssistantItemEntity;
 import com.bytequay.persistence.sqlite.repository.AssistantActionJpaRepository;
+import com.bytequay.persistence.sqlite.repository.AssistantAssessmentJpaRepository;
 import com.bytequay.persistence.sqlite.repository.AssistantConversationJpaRepository;
+import com.bytequay.persistence.sqlite.repository.AssistantFollowJpaRepository;
 import com.bytequay.persistence.sqlite.repository.AssistantItemJpaRepository;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Repository;
@@ -43,12 +49,17 @@ public class SqliteAssistantStore
     private final AssistantConversationJpaRepository conversations;
     private final AssistantItemJpaRepository items;
     private final AssistantActionJpaRepository actions;
+    private final AssistantFollowJpaRepository follows;
+    private final AssistantAssessmentJpaRepository assessments;
 
-    public SqliteAssistantStore(AssistantConversationJpaRepository conversations, AssistantItemJpaRepository items, AssistantActionJpaRepository actions)
+    public SqliteAssistantStore(AssistantConversationJpaRepository conversations, AssistantItemJpaRepository items, AssistantActionJpaRepository actions,
+            AssistantFollowJpaRepository follows, AssistantAssessmentJpaRepository assessments)
     {
         this.conversations = requireNonNull(conversations, "conversations is null");
         this.items = requireNonNull(items, "items is null");
         this.actions = requireNonNull(actions, "actions is null");
+        this.follows = requireNonNull(follows, "follows is null");
+        this.assessments = requireNonNull(assessments, "assessments is null");
     }
 
     @Override
@@ -85,8 +96,21 @@ public class SqliteAssistantStore
     @Transactional
     public void add(AssistantItem item)
     {
-        // ponytail: the next ordinal is the conversation's count; the assistant writes one item at a time, and the unique ordinal refuses a second writer.
+        // Append and the follow relationship commit together. Publication retries keep the original ordinal.
+        if (items.existsById(item.id())) {
+            return;
+        }
         items.save(new AssistantItemEntity(item, items.countByConversationId(item.conversationId())));
+        item.receipt().filter(receipt -> receipt.outcome() == AssistantReceipt.Outcome.DONE
+                        && (receipt.operation() == AssistantReceipt.Operation.START_TASK || receipt.operation() == AssistantReceipt.Operation.REPLY_TO_TASK))
+                .flatMap(AssistantReceipt::target).filter(target -> target.kind() == AgendaTarget.Kind.TASK).flatMap(AgendaTarget::id)
+                .ifPresent(task -> {
+                    AssistantFollow follow = new AssistantFollow(item.conversationId(), task, item.at(), 0, item.receipt().flatMap(AssistantReceipt::words).orElse(item.text()));
+                    AssistantFollowEntity saved = follows.findById(follow.id()).orElseGet(() -> new AssistantFollowEntity(follow));
+                    AssistantFollow previous = saved.toDomain();
+                    saved.update(new AssistantFollow(previous.conversationId(), previous.taskId(), previous.since(), previous.afterSequence(), follow.context()));
+                    follows.save(saved);
+                });
     }
 
     @Override
@@ -107,8 +131,11 @@ public class SqliteAssistantStore
     @Transactional
     public void deleteBefore(Instant updatedBefore, LocalDate actionsBefore)
     {
-        List<AssistantConversationEntity> old = conversations.findByUpdatedAtBefore(updatedBefore);
+        List<String> retained = follows.findAll().stream().map(entity -> entity.toDomain().conversationId()).collect(toImmutableList());
+        List<AssistantConversationEntity> old = conversations.findByUpdatedAtBefore(updatedBefore).stream()
+                .filter(conversation -> !retained.contains(conversation.getId())).collect(toImmutableList());
         items.deleteByConversationIdIn(old.stream().map(AssistantConversationEntity::getId).collect(toImmutableList()));
+        assessments.deleteByConversationIdIn(old.stream().map(AssistantConversationEntity::getId).collect(toImmutableList()));
         conversations.deleteAll(old);
         actions.deleteByDayLessThan(actionsBefore.toString());
     }

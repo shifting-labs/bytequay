@@ -21,9 +21,9 @@ import { useTimeLeft } from '../useNow';
 import type { AgendaDto } from '../types';
 import { PILLS, soonestDeadline, waitingCards, type Pill, type WaitingCard } from './model';
 
-const LABELS: Record<Pill, string> = { all: 'All', decision: 'Decision', running: 'Running', finished: 'Finished', today: 'Today', mywork: 'My work' };
+const LABELS: Record<Pill, string> = { all: 'All', decision: 'Decision', running: 'Running', finished: 'Results', today: 'Today', mywork: 'My work' };
 const TITLES: Record<Pill, string> = {
-  all: 'Decision, Running and Finished in one view', decision: 'Waiting for your answer, soonest first', running: 'Agent tasks at work',
+  all: 'Decision, Running and Results in one view', decision: 'Waiting for your answer, soonest first', running: 'Agent tasks at work',
   finished: 'Results you have not seen', today: 'Today’s plan', mywork: 'My work',
 };
 

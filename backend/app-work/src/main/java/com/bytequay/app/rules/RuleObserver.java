@@ -15,18 +15,24 @@ package com.bytequay.app.rules;
 
 import com.bytequay.app.jira.JiraService;
 import com.bytequay.app.service.credentials.CredentialService;
+import com.bytequay.app.service.pr.PullRequestDetailRefreshed;
+import com.bytequay.app.service.pr.PullRequestService;
+import com.bytequay.app.service.pr.PullRequestsRefreshed;
 import com.bytequay.app.service.rules.AgentRule;
 import com.bytequay.app.service.rules.AgentRuleService;
 import com.bytequay.app.service.rules.AgentRuleView;
 import com.bytequay.app.service.rules.RuleDefinition;
+import com.bytequay.app.workspace.WorkspaceHostingService;
 import com.bytequay.core.backport.BackportChainStore;
 import com.bytequay.core.domain.DiffFile;
 import com.bytequay.core.domain.HandledAction;
 import com.bytequay.core.domain.PullRequest;
+import com.bytequay.core.domain.PullRequestDetail;
 import com.bytequay.core.domain.RuleRun;
 import com.bytequay.core.domain.Workspace;
 import com.bytequay.core.store.IssueDevelopmentStore;
 import com.bytequay.core.store.JiraIssueTaskStore;
+import com.bytequay.core.store.PrDetailStore;
 import com.bytequay.core.store.PrDiffStore;
 import com.bytequay.core.store.PullRequestStore;
 import com.bytequay.core.store.RepositoryIssueStore;
@@ -35,8 +41,10 @@ import com.bytequay.core.store.WorkspaceStore;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -57,6 +65,9 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 
@@ -101,6 +112,12 @@ public class RuleObserver
     private final BackportChainStore backports;
     private final CredentialService credentials;
     private final Clock clock;
+    private final PrDetailStore details;
+    private final PullRequestService reads;
+    private final RuleLineOwnership lineOwnership;
+    private final WorkspaceHostingService hosting;
+    private final ExecutorService executor = Executors.newSingleThreadExecutor(Thread.ofVirtual().name("rule-observer-", 0).factory());
+    private final AtomicBoolean checking = new AtomicBoolean();
     private final Set<String> misses = ConcurrentHashMap.newKeySet();
     // ponytail: nothing stores when a pull request fell behind or an issue was assigned, so those count only when seen starting: each
     // check keeps what was so, and the first check after a start only learns it. One that starts while ByteQuay is closed is missed.
@@ -108,7 +125,7 @@ public class RuleObserver
 
     public RuleObserver(AgentRuleService rules, RuleRunStore runs, RuleWork work, PullRequestStore pullRequests, PrDiffStore diffs, WorkspaceStore workspaces,
             RepositoryIssueStore issues, IssueDevelopmentStore issueTasks, JiraService jira, JiraIssueTaskStore jiraTasks, BackportChainStore backports,
-            CredentialService credentials, Clock clock)
+            CredentialService credentials, Clock clock, PrDetailStore details, PullRequestService reads, RuleLineOwnership lineOwnership, WorkspaceHostingService hosting)
     {
         this.rules = requireNonNull(rules, "rules is null");
         this.runs = requireNonNull(runs, "runs is null");
@@ -123,6 +140,10 @@ public class RuleObserver
         this.backports = requireNonNull(backports, "backports is null");
         this.credentials = requireNonNull(credentials, "credentials is null");
         this.clock = requireNonNull(clock, "clock is null");
+        this.details = requireNonNull(details, "details is null");
+        this.reads = requireNonNull(reads, "reads is null");
+        this.lineOwnership = requireNonNull(lineOwnership, "lineOwnership is null");
+        this.hosting = requireNonNull(hosting, "hosting is null");
     }
 
     /**
@@ -133,59 +154,103 @@ public class RuleObserver
             Optional<String> author, OptionalLong pullRequestId) {}
 
     @Scheduled(initialDelayString = "PT1M", fixedDelayString = "PT1M", scheduler = "workflowScheduler")
-    public synchronized void check()
+    public void check()
     {
-        try {
-            observe();
+        if (!checking.compareAndSet(false, true)) {
+            return;
         }
-        catch (RuntimeException failure) {
-            log.warn("Rules could not be checked", failure);
-        }
+        executor.execute(() -> {
+            try {
+                observe();
+            }
+            catch (RuntimeException failure) {
+                log.warn("Rules could not be checked", failure);
+            }
+            finally {
+                checking.set(false);
+            }
+        });
+    }
+
+    @EventListener({PullRequestDetailRefreshed.class, PullRequestsRefreshed.class})
+    public void refreshed()
+    {
+        check();
+    }
+
+    @PreDestroy
+    public void close()
+    {
+        executor.shutdownNow();
     }
 
     void observe()
     {
         Instant now = clock.instant();
         runs.deleteBefore(now.minus(KEPT));
+        List<AgentRuleView> saved = rules.list();
+        reconcilePending(saved);
         Supplier<List<PullRequest>> candidates = Suppliers.memoize(pullRequests::findAttentionCandidates);
         Map<RuleDefinition.Event, List<Happened>> happened = new EnumMap<>(RuleDefinition.Event.class);
-        List<AgentRuleView> saved = rules.list();
         Map<String, List<RuleRun>> records = saved.stream().collect(toImmutableMap(AgentRuleView::id, rule -> rules.record(rule.id())));
         // The work suggestions started today, the local day the user lives in, for the daily limits.
         LocalDate today = LocalDate.ofInstant(now, ZoneId.systemDefault());
         Map<String, Integer> started = new HashMap<>();
         records.forEach((id, record) -> started.put(id, (int) record.stream()
-                .filter(run -> run.suggestion() && run.skipped().isEmpty() && LocalDate.ofInstant(run.occurredAt(), ZoneId.systemDefault()).equals(today)).count()));
+                .filter(run -> run.suggestion() && run.skipped().isEmpty() && !run.key().contains(":ready:")
+                        && LocalDate.ofInstant(run.occurredAt(), ZoneId.systemDefault()).equals(today)).count()));
         for (AgentRuleView rule : saved) {
             // Read for a paused rule too, so what a state was at the last check stays current while the rule waits.
             List<Happened> events = happened.computeIfAbsent(rule.rule().event(), type -> happened(type, candidates, now));
+            List<RuleRun> record = records.get(rule.id());
             if (rule.paused()) {
                 continue;
             }
             Duration within = Duration.ofDays(rule.rule().withinDays());
-            List<RuleRun> record = records.get(rule.id());
             Set<String> known = record.stream().map(RuleRun::key).collect(toImmutableSet());
+            boolean automatic = rule.mode() == AgentRule.Mode.AUTO;
             boolean suggests = rule.mode() == AgentRule.Mode.SUGGEST && rule.rule().suggests();
             for (Happened event : events) {
+                String key = automatic ? automaticKey(event.key(), rule.version()) : event.key();
                 // An event first read after its time passed, as after a week away, would judge the rule by what nobody saw in time.
-                if (known.contains(event.key()) || event.at().isBefore(rule.recordSince()) || !event.at().isAfter(now.minus(within)) || !matches(rule, event)) {
+                if (known.contains(key) || event.at().isBefore(rule.recordSince()) || !event.at().isAfter(now.minus(within)) || !matches(rule, event)) {
                     continue;
                 }
-                if (!suggests) {
+                if (!suggests && !automatic) {
                     runs.save(RuleRun.observed(rule.id(), event.key(), event.subject(), event.title(), event.at()));
                     continue;
                 }
-                RuleRun run = RuleRun.suggested(rule.id(), event.key(), event.subject(), event.title(), event.at());
+                RuleRun run;
+                if (automatic) {
+                    var authorization = rules.authorization(rule.id(), rule.version());
+                    if (authorization.isEmpty()) {
+                        continue;
+                    }
+                    run = RuleRun.automatic(authorization.orElseThrow(), key, event.subject(), event.title(), event.at());
+                }
+                else {
+                    run = RuleRun.suggested(rule.id(), event.key(), event.subject(), event.title(), event.at());
+                }
                 Optional<String> cannot = work.cannotStart(rule, run);
-                if (cannot.isPresent() || started.get(rule.id()) >= DAILY_PER_RULE || started.values().stream().mapToInt(Integer::intValue).sum() >= DAILY) {
+                boolean limited = rule.rule().action() != RuleDefinition.Action.MERGE
+                        && (started.get(rule.id()) >= DAILY_PER_RULE || started.values().stream().mapToInt(Integer::intValue).sum() >= DAILY);
+                if (cannot.isPresent() || limited) {
                     runs.save(run.skip(cannot.orElse("Daily limit")));
                     continue;
                 }
                 runs.save(run);
-                started.merge(rule.id(), 1, Integer::sum);
+                if (rule.rule().action() != RuleDefinition.Action.MERGE) {
+                    started.merge(rule.id(), 1, Integer::sum);
+                }
                 work.start(rule, run);
             }
             for (RuleRun run : record) {
+                if (run.authorization().isPresent()) {
+                    if (!run.key().contains(":ready:") && !run.needsReconciliation() && run.starting() && !work.starting(run)) {
+                        work.start(rule, run);
+                    }
+                    continue;
+                }
                 if (run.verdict() != PENDING || run.suggestion() && run.skipped().isPresent()) {
                     continue;
                 }
@@ -204,6 +269,36 @@ public class RuleObserver
                 }
             }
         }
+    }
+
+    private void reconcilePending(List<AgentRuleView> saved)
+    {
+        for (RuleRun run : runs.pendingAutomatic()) {
+            if (work.starting(run)) {
+                continue;
+            }
+            if (!run.key().contains(":ready:")) {
+                if (run.outcome().filter("STARTING"::equals).isPresent()) {
+                    work.reconcileInterruptedReview(run);
+                }
+                continue;
+            }
+            Optional<AgentRuleView> current = run.outcome().filter("WAITING"::equals).flatMap(ignored -> saved.stream()
+                    .filter(rule -> rule.id().equals(run.ruleId()) && rule.rule().action() == RuleDefinition.Action.MERGE)
+                    .filter(rule -> rules.authorization(rule.id(), run.authorization().orElseThrow().ruleVersion()).isPresent()).findFirst());
+            if (current.isPresent()) {
+                work.start(current.orElseThrow(), run);
+            }
+            else {
+                work.reconcileMerge(run);
+            }
+        }
+    }
+
+    private static String automaticKey(String event, long version)
+    {
+        String[] parts = event.split(":", 3);
+        return parts[0] + ":" + parts[1] + ":rule:" + version + ":" + parts[2];
     }
 
     private List<Happened> happened(RuleDefinition.Event event, Supplier<List<PullRequest>> candidates, Instant now)
@@ -228,6 +323,11 @@ public class RuleObserver
             case PULL_REQUEST_MERGED -> candidates.get().stream().filter(pr -> pr.mergedAt() != null && pr.mine(viewer))
                     .map(pr -> pullRequest(pr, "merged", pr.mergedAt())).collect(toImmutableList());
             case ISSUE_ASSIGNED -> started(event, viewer, () -> Stream.concat(assignedIssues(viewer.orElseThrow(), now), assignedTickets(now)));
+            case PULL_REQUEST_READY -> open.get().filter(pr -> pr.mine(viewer(pr)) && !pr.draft() && pr.ciStatus() == PullRequestDetail.CiStatus.PASSING)
+                    .flatMap(pr -> details.find(pr.id()).stream().filter(detail -> detail.raw().headSha() != null)
+                            .map(detail -> pullRequest(pr, "ready:" + detail.raw().headSha(), now))).collect(toImmutableList());
+            // Provider approvals enter through the same rule registry at their request boundary, rather than polling here.
+            case PERMISSION_REQUESTED -> ImmutableList.of();
         };
     }
 
@@ -280,8 +380,22 @@ public class RuleObserver
         RuleDefinition definition = rule.rule();
         return anyOf(definition.repositories(), event.repository())
                 && (definition.labels().isEmpty() || event.labels().stream().anyMatch(label -> anyOf(definition.labels(), Optional.of(label))))
-                && anyOf(definition.authors(), event.author())
-                && (definition.paths().isEmpty() || touches(rule, event));
+                && (definition.authors().contains("@me") && event.author().filter(author -> viewer(event).filter(author::equalsIgnoreCase).isPresent()).isPresent()
+                        || anyOf(definition.authors(), event.author()))
+                && (definition.paths().isEmpty() && !definition.ownedLines() || touches(rule, event));
+    }
+
+    private Optional<String> viewer(Happened event)
+    {
+        return event.pullRequestId().isPresent()
+                ? pullRequests.findById(event.pullRequestId().getAsLong()).flatMap(this::viewer)
+                : credentials.cachedLogin();
+    }
+
+    private Optional<String> viewer(PullRequest pr)
+    {
+        return workspaces.findAll().stream().filter(workspace -> RuleWork.watchedWorkspace(pr, workspace)).findFirst()
+                .flatMap(workspace -> hosting.viewerLogin(workspace.id()));
     }
 
     private static boolean anyOf(List<String> wanted, Optional<String> value)
@@ -296,6 +410,9 @@ public class RuleObserver
         String miss = rule.id() + " " + rule.recordSince() + " " + event.key();
         if (misses.contains(miss)) {
             return false;
+        }
+        if (rule.mode() == AgentRule.Mode.AUTO || rule.rule().ownedLines()) {
+            return touchesCurrent(rule, event, miss);
         }
         Optional<List<String>> files = diffs.find(event.pullRequestId().orElseThrow(), null, null)
                 .map(diff -> diff.files().stream().map(DiffFile::filename).collect(toImmutableList()));
@@ -313,6 +430,36 @@ public class RuleObserver
         return touched;
     }
 
+    private boolean touchesCurrent(AgentRuleView rule, Happened event, String miss)
+    {
+        try {
+            PullRequest pr = pullRequests.findById(event.pullRequestId().orElseThrow()).orElseThrow();
+            Optional<Workspace> workspace = workspaces.findAll().stream().filter(each -> RuleWork.watchedWorkspace(pr, each)).findFirst();
+            if (workspace.isEmpty()) {
+                return false;
+            }
+            var route = reads.prepareRead(workspace.orElseThrow().id(), pr.repo(), pr.number());
+            PullRequestDetail detail = reads.refreshForAction(route);
+            List<DiffFile> files = reads.getValidatedPullRequestDiffFiles(route, detail.headSha());
+            List<PathMatcher> globs = rule.rule().paths().stream().map(glob -> FileSystems.getDefault().getPathMatcher("glob:" + glob)).collect(toImmutableList());
+            List<DiffFile> matching = files.stream().filter(file -> globs.isEmpty() || globs.stream().anyMatch(glob -> glob.matches(Path.of(file.filename()))))
+                    .collect(toImmutableList());
+            boolean touched = !matching.isEmpty() && (!rule.rule().ownedLines()
+                    || lineOwnership.touches(workspace.orElseThrow(), route, detail.headSha(), detail.baseRef(), matching));
+            if (!touched) {
+                if (misses.size() >= MISSES) {
+                    misses.clear();
+                }
+                misses.add(miss);
+            }
+            return touched;
+        }
+        catch (RuntimeException unavailable) {
+            log.debug("Rule {} could not establish matching changed lines: {}", rule.id(), unavailable.toString());
+            return false;
+        }
+    }
+
     private boolean agreed(RuleDefinition.Agreement agreement, RuleRun run)
     {
         String[] key = run.key().split(":", 3);
@@ -324,6 +471,8 @@ public class RuleObserver
             case STARTED_TASK -> key[0].equals("jira")
                     ? jiraTasks.findBySource(key[1], key[2]).isPresent()
                     : issueTasks.findTask(key[2], Long.parseLong(key[1])).isPresent();
+            case MERGED -> pullRequest(key).filter(pr -> after(pr.mergedAt(), run)).isPresent();
+            case ALLOWED -> false;
         };
     }
 

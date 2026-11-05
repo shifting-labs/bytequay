@@ -32,7 +32,7 @@ import static java.util.Objects.requireNonNull;
  * @param skipped why a suggestion has no work to judge, such as the daily limit
  */
 public record RuleRun(String ruleId, String key, String subject, String title, Instant occurredAt, Verdict verdict, boolean suggestion, Optional<String> work,
-        Optional<String> skipped)
+        Optional<String> skipped, Optional<RuleAuthorization> authorization, Optional<String> outcome)
 {
     public RuleRun
     {
@@ -44,9 +44,23 @@ public record RuleRun(String ruleId, String key, String subject, String title, I
         requireNonNull(verdict, "verdict is null");
         requireNonNull(work, "work is null");
         requireNonNull(skipped, "skipped is null");
+        requireNonNull(authorization, "authorization is null");
+        requireNonNull(outcome, "outcome is null");
         checkArgument(suggestion || work.isEmpty() && skipped.isEmpty(), "only a suggestion has work or a reason it was skipped");
         checkArgument(work.isEmpty() || skipped.isEmpty(), "a suggestion either has work or was skipped");
         checkArgument(verdict != Verdict.EDITED || suggestion, "only a suggestion can be edited");
+    }
+
+    public RuleRun(String ruleId, String key, String subject, String title, Instant occurredAt, Verdict verdict, boolean suggestion, Optional<String> work,
+            Optional<String> skipped)
+    {
+        this(ruleId, key, subject, title, occurredAt, verdict, suggestion, work, skipped, Optional.empty(), Optional.empty());
+    }
+
+    public static RuleRun automatic(RuleAuthorization authorization, String key, String subject, String title, Instant occurredAt)
+    {
+        return new RuleRun(authorization.ruleId(), key, subject, title, occurredAt, Verdict.PENDING, true, Optional.empty(), Optional.empty(),
+                Optional.of(authorization), Optional.empty());
     }
 
     /** A run that only records what the rule would have done. */
@@ -63,23 +77,37 @@ public record RuleRun(String ruleId, String key, String subject, String title, I
 
     public RuleRun decide(Verdict decided)
     {
-        return new RuleRun(ruleId, key, subject, title, occurredAt, decided, suggestion, work, skipped);
+        return new RuleRun(ruleId, key, subject, title, occurredAt, decided, suggestion, work, skipped, authorization, outcome);
     }
 
     public RuleRun started(String startedWork)
     {
-        return new RuleRun(ruleId, key, subject, title, occurredAt, verdict, suggestion, Optional.of(startedWork), Optional.empty());
+        return new RuleRun(ruleId, key, subject, title, occurredAt, verdict, suggestion, Optional.of(startedWork), Optional.empty(), authorization, outcome);
     }
 
     public RuleRun skip(String reason)
     {
-        return new RuleRun(ruleId, key, subject, title, occurredAt, verdict, suggestion, Optional.empty(), Optional.of(reason));
+        return new RuleRun(ruleId, key, subject, title, occurredAt, verdict, suggestion, Optional.empty(), Optional.of(reason), authorization, outcome);
+    }
+
+    public RuleRun finished(String result)
+    {
+        checkText(result, "result");
+        return new RuleRun(ruleId, key, subject, title, occurredAt, verdict, suggestion, work, skipped, authorization, Optional.of(result));
     }
 
     /** A suggestion still starting: neither its work nor a reason it was skipped is known yet. */
     public boolean starting()
     {
         return suggestion && work.isEmpty() && skipped.isEmpty();
+    }
+
+    /** Pending action state is queried directly; bounded display history never determines whether execution is unfinished. */
+    public boolean needsReconciliation()
+    {
+        return authorization.isPresent() && (outcome.filter(value -> value.equals("STARTING") || value.equals("UNKNOWN")).isPresent()
+                || key.contains(":ready:") && (starting() && outcome.isEmpty()
+                        || outcome.filter(value -> value.equals("WAITING") || value.equals("QUEUED") || value.equals("UNKNOWN")).isPresent()));
     }
 
     public enum Verdict

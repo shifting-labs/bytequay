@@ -22,6 +22,7 @@ import com.bytequay.agent.spi.ProviderAgentEvent.MessageKind;
 import com.bytequay.agent.spi.ProviderAgentEvent.MessagePhase;
 import com.bytequay.agent.spi.ProviderAgentEvent.PlanItem;
 import com.bytequay.agent.spi.ProviderUsageSample;
+import com.bytequay.core.domain.RuleAuthorization;
 import com.google.common.collect.ImmutableList;
 
 import java.math.BigDecimal;
@@ -191,14 +192,21 @@ public sealed interface AgentEventPayload
         }
     }
 
-    record ApprovalResolved(String approvalId, ApprovalOutcome outcome, boolean forTask)
+    record ApprovalResolved(String approvalId, ApprovalOutcome outcome, boolean forTask, Optional<RuleAuthorization> authorization)
             implements AgentEventPayload
     {
         public ApprovalResolved
         {
             checkText(approvalId, "approvalId");
             requireNonNull(outcome, "outcome is null");
+            requireNonNull(authorization, "authorization is null");
+            checkArgument(authorization.isEmpty() || outcome == ApprovalOutcome.ALLOWED && !forTask, "a rule authorizes only this request");
             checkArgument(!forTask || outcome == ApprovalOutcome.ALLOWED, "only an allowed approval can cover the task");
+        }
+
+        public ApprovalResolved(String approvalId, ApprovalOutcome outcome, boolean forTask)
+        {
+            this(approvalId, outcome, forTask, Optional.empty());
         }
     }
 

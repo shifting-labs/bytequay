@@ -15,6 +15,7 @@ package com.bytequay.agent.cli.mcp;
 
 import com.bytequay.agent.cli.development.DevelopmentResultTool;
 import com.bytequay.agent.cli.process.AgentPermissionManager;
+import com.bytequay.agent.cli.process.ApprovalScopes;
 import com.bytequay.agent.cli.process.BuildCacheRoots;
 import com.bytequay.agent.cli.process.CherryPickCommands;
 import com.bytequay.agent.cli.process.GitWorktreeWriteRoots;
@@ -38,6 +39,7 @@ import com.bytequay.agent.spi.LocalReviewBridge;
 import com.bytequay.agent.spi.MemoryBridge;
 import com.bytequay.agent.spi.ProviderApprovalDecision;
 import com.bytequay.agent.spi.ProviderApprovalRequest;
+import com.bytequay.agent.spi.ProviderApprovalScope;
 import com.bytequay.agent.spi.PullRequestCiBridge;
 import com.bytequay.agent.spi.PullRequestContextBridge;
 import com.bytequay.agent.spi.RelatedWorkspaceBridge;
@@ -979,9 +981,11 @@ public final class PermissionBroker
                 ImmutableList.of(arguments.toolName()),
                 ImmutableList.of(ALLOW_ONCE, DENY),
                 // Claude's sandbox covers only its shell, and that sandbox fails closed rather than running unsandboxed.
+                Optional.empty(),
                 arguments.toolName().equalsIgnoreCase("Bash") && !unsandboxed,
                 root(),
-                Instant.now());
+                Instant.now(),
+                approvalScope(arguments));
         ProviderApprovalDecision decision = awaitApproval(approval, context);
 
         PermissionResult result = decision.decision() == ProviderApprovalDecision.Decision.ALLOW
@@ -989,6 +993,17 @@ public final class PermissionBroker
                 : new PermissionResult("deny", Optional.empty(), Optional.of(decision.timedOut() ? "Approval timed out" : "Denied by user"));
         String text = objectMapper.writeValueAsString(result);
         return response(id, new ToolResult(ImmutableList.of(new TextContent("text", text)), false));
+    }
+
+    private static Optional<ProviderApprovalScope> approvalScope(PermissionArguments arguments)
+    {
+        if (arguments.toolName().equals("Bash")) {
+            return Optional.ofNullable(arguments.input().get("command")).filter(JsonNode::isTextual).map(JsonNode::asText).flatMap(ApprovalScopes::githubRead);
+        }
+        if (arguments.toolName().equals("WebFetch")) {
+            return Optional.ofNullable(arguments.input().get("url")).filter(JsonNode::isTextual).map(JsonNode::asText).flatMap(ApprovalScopes::webFetch);
+        }
+        return Optional.empty();
     }
 
     private static ProviderApprovalDecision awaitApproval(ProviderApprovalRequest approval, PermissionContext context)

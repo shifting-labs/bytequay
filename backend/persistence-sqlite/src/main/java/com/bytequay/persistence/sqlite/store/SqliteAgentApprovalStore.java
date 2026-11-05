@@ -79,6 +79,7 @@ public class SqliteAgentApprovalStore
                     decision.forTask(),
                     decision.resolvedAt(),
                     decision.timedOut(),
+                    AgentApprovalEntity.authorizationJson(decision),
                     outcome) == 1;
         }
         catch (DataAccessException e) {

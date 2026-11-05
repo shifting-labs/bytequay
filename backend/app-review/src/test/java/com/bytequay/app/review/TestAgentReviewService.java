@@ -704,6 +704,30 @@ class TestAgentReviewService
     }
 
     @Test
+    void aRuleStartsOnlyWhileAuthorizedAndCannotClaimAnExistingReview()
+    {
+        assertThat(fixture.service.startIfAbsent(WORKSPACE, REPO, NUMBER, "Check correctness", () -> false)).isEmpty();
+        verify(fixture.tasks, never()).create(any(CreateAgentTaskCommand.class));
+        AgentReviewProjection started = fixture.service.startIfAbsent(WORKSPACE, REPO, NUMBER, "Check correctness", () -> true).orElseThrow();
+        assertThat(started.runs()).hasSize(1);
+        assertThat(fixture.service.startIfAbsent(WORKSPACE, "Owner/Repo", NUMBER, "Different focus", () -> true)).isEmpty();
+        verify(fixture.tasks, times(1)).create(any(CreateAgentTaskCommand.class));
+        verify(fixture.turns, times(1)).start(any(StartAgentTurnCommand.class));
+    }
+
+    @Test
+    void automaticReviewUpdatesCannotResumeAPausedReviewOrWithdrawnRule()
+    {
+        AgentReviewProjection started = fixture.service.start(WORKSPACE, REPO, NUMBER);
+        clearInvocations(fixture.pullRequests, fixture.refresh, fixture.turns);
+        assertThat(fixture.service.updateIfUnpaused(started.review().id(), () -> false)).isEmpty();
+        fixture.store.updateReview(started.review().withFollowUpPaused(true, NOW));
+        assertThat(fixture.service.updateIfUnpaused(started.review().id(), () -> true)).isEmpty();
+        assertThat(fixture.store.findReview(started.review().id()).orElseThrow().followUpPaused()).isTrue();
+        verifyNoInteractions(fixture.pullRequests, fixture.refresh, fixture.turns);
+    }
+
+    @Test
     void explorationPreparesOnceWithoutAProviderAndLaterReviewReusesItsTask()
     {
         when(fixture.tasks.prepare(any(CreateAgentTaskCommand.class))).thenReturn(idleTask());

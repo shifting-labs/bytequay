@@ -17,6 +17,8 @@ import com.bytequay.agent.core.AgentApproval;
 import com.bytequay.agent.core.AgentEventPayload;
 import com.bytequay.agent.core.ApprovalDecision;
 import com.bytequay.agent.core.ApprovalRequest;
+import com.bytequay.core.domain.RuleAuthorization;
+import com.google.common.collect.ImmutableMap;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -60,6 +62,9 @@ public class AgentApprovalEntity
 
     private Boolean timedOut;
 
+    @Column(columnDefinition = "TEXT")
+    private String authorizationJson;
+
     @Enumerated(EnumType.STRING)
     private AgentEventPayload.ApprovalOutcome outcome;
 
@@ -80,16 +85,24 @@ public class AgentApprovalEntity
             entity.forTask = value.forTask();
             entity.resolvedAt = value.resolvedAt();
             entity.timedOut = value.timedOut();
+            entity.authorizationJson = authorizationJson(value);
         });
         entity.outcome = approval.outcome().orElse(null);
         return entity;
+    }
+
+    public static String authorizationJson(ApprovalDecision decision)
+    {
+        return decision.authorization().map(authorization -> AGENT.write(authorization, "rule authorization")).orElse(null);
     }
 
     public AgentApproval toDomain()
     {
         ApprovalRequest request = AGENT.read(requestJson, ApprovalRequest.class, "approval request");
         Optional<ApprovalDecision> approvalDecision = Optional.ofNullable(decision)
-                .map(value -> new ApprovalDecision(request.id(), value, Optional.ofNullable(scopedPermission), Boolean.TRUE.equals(forTask), resolvedAt, timedOut));
+                .map(value -> new ApprovalDecision(request.id(), value, Optional.ofNullable(scopedPermission), Boolean.TRUE.equals(forTask),
+                        ImmutableMap.of(), resolvedAt, timedOut,
+                        Optional.ofNullable(authorizationJson).map(json -> AGENT.read(json, RuleAuthorization.class, "rule authorization"))));
         return new AgentApproval(request, approvalDecision, Optional.ofNullable(outcome));
     }
 

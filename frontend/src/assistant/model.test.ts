@@ -18,7 +18,7 @@ import type { AgendaTargetDto, AssistantItemDto, AssistantReceiptDto, AssistantR
 import { workspaceAgentTaskRoute, workspaceIssueRoute, workspacePullRequestRoute, workspaceReviewTaskRoute, workspaceRoute } from '../workspaces/model';
 import { settingsRoute } from '../settings/routes';
 import {
-  arrivedOpen, createdDrafts, dayLabel, decisionOrder, endedTurns, inAnswerOrder, linkRefs, localDay, pageRoute, refFromHref, refLabel, rowState, rowTitle, screenRef,
+  arrivedOpen, createdDrafts, dayLabel, decisionOrder, endedTurns, inAnswerOrder, isRulesCommand, linkRefs, localDay, pageRoute, refFromHref, refLabel, rowState, rowTitle, screenRef,
   soonestDeadline, takesSuggestion, timelineDays, waitingCards,
 } from './model';
 
@@ -88,6 +88,12 @@ describe('waitingCards', () => {
     expect(cards.map(card => [card.key, card.group])).toEqual([['failed', 'finished'], ['running:t1', 'running'], ['approval:a', 'decision'], ['done', 'finished']]);
   });
 
+  it('keeps independent pending approvals and questions for the same task', () => {
+    const cards = waitingCards([notice('approval:a', 'APPROVAL', 20, { taskId: 't1' }), notice('approval:b', 'QUESTION', 21, { taskId: 't1' })],
+      [task('t1', 'RUNNING', 22)]);
+    expect(cards.map(card => card.key)).toEqual(['approval:b', 'approval:a']);
+  });
+
   it('keeps only the newest card for a task or a reviewed pull request, but never hides another task’s question', () => {
     const cards = waitingCards([
       notice('finished:old', 'TURN_FINISHED', 10, { taskId: 't1' }),
@@ -97,6 +103,12 @@ describe('waitingCards', () => {
     ], [task('t1', 'RUNNING', 15)]);
     expect(cards.map(card => card.key)).toEqual(['review:new', 'approval:q', 'running:t1']);
   });
+});
+
+it('recognizes only the exact rules command', () => {
+  expect(isRulesCommand('  @rules  ')).toBe(true);
+  expect(isRulesCommand('Tell me about @rules')).toBe(false);
+  expect(isRulesCommand('@rules review')).toBe(false);
 });
 
 describe('takesSuggestion', () => {
@@ -217,7 +229,7 @@ describe('the conversation as it reads', () => {
   const started = (id: string, taskId: string, turnId: string | null) => item(id, 'RECEIPT', {
     receipt: { operation: 'START_TASK', outcome: 'DONE', detail: null, target: task(taskId), page: null, turnId, fix: null, words: null },
   });
-  const reported = (id: string, taskId: string, noticeId: string) => item(id, 'REPORT', { report: { state: 'DECISION', noticeId, target: task(taskId) } });
+  const reported = (id: string, taskId: string, noticeId: string) => item(id, 'REPORT', { report: { state: 'APPROVAL_REQUIRED', sourceTurnId: null, assessment: null, outcome: null, evidence: [], ruleActions: [], noticeId, target: task(taskId) } });
   const ids = (items: AssistantItemDto[]) => items.map(each => each.id);
 
   it('shows a message sent during a reply right above its own answer, and one still waiting at the end', () => {

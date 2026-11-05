@@ -36,8 +36,10 @@ import com.bytequay.agent.spi.AgentLaneId;
 import com.bytequay.agent.spi.AgentPermissionPolicy;
 import com.bytequay.agent.spi.ProviderAgentEventSource;
 import com.bytequay.agent.spi.ProviderApprovalRequest;
+import com.bytequay.core.domain.RuleAuthorization;
 import com.bytequay.persistence.sqlite.repository.AgentApprovalJpaRepository;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -102,6 +104,24 @@ class TestSqliteAgentApprovalStore
         assertThat(approvals.resolve(pending.request().id(), decision, AgentEventPayload.ApprovalOutcome.ALLOWED)).isTrue();
         assertThat(approvals.find(pending.request().id()))
                 .contains(pending.resolve(decision, AgentEventPayload.ApprovalOutcome.ALLOWED));
+    }
+
+    @Test
+    void retainsTheExactRuleRevisionOnInsertedAndResolvedAllowances()
+    {
+        for (boolean alreadyResolved : ImmutableList.of(false, true)) {
+            AgentApproval pending = approval(TurnId.random(), NOW, ApprovalId.random());
+            RuleAuthorization rule = new RuleAuthorization("rule-1", "Allow GitHub network access", 4);
+            ApprovalDecision allowed = new ApprovalDecision(pending.request().id(), ApprovalDecision.Decision.ALLOW, Optional.empty(), false,
+                    ImmutableMap.of(), NOW.plusSeconds(1), false, Optional.of(rule));
+            AgentApproval resolved = pending.resolve(allowed, AgentEventPayload.ApprovalOutcome.ALLOWED);
+            approvals.insert(alreadyResolved ? resolved : pending);
+            if (!alreadyResolved) {
+                assertThat(approvals.resolve(pending.request().id(), allowed, AgentEventPayload.ApprovalOutcome.ALLOWED)).isTrue();
+            }
+            assertThat(approvals.find(pending.request().id())).contains(resolved);
+            assertThat(approvals.listPending(pending.request().turnId())).isEmpty();
+        }
     }
 
     @Test

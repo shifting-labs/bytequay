@@ -13,6 +13,8 @@
  */
 package com.bytequay.app.service.rules;
 
+import com.bytequay.agent.spi.ProviderApprovalScope;
+import com.bytequay.core.domain.RuleAuthorization;
 import com.bytequay.core.domain.RuleRun;
 import com.bytequay.core.store.AppSettingsStore;
 import com.bytequay.core.store.RuleRunStore;
@@ -29,6 +31,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.UnaryOperator;
 
+import static com.bytequay.core.domain.Checks.checkText;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.util.Objects.requireNonNull;
@@ -63,10 +66,21 @@ public class AgentRuleService
         return views(saved());
     }
 
-    /** The rule's runs since its record began, newest first; runs from before a header change judged a different rule. */
+    /** Durable history survives edits, pauses and deletion; learning uses only the current observation record below. */
     public synchronized List<RuleRun> record(String id)
     {
-        return record(rule(id));
+        checkText(id, "id");
+        return runs.findByRule(id);
+    }
+
+    public List<RuleRun> recentRuns()
+    {
+        return runs.recent();
+    }
+
+    public List<RuleRun> pendingRuns()
+    {
+        return runs.pendingAutomatic();
     }
 
     /** The rules whose record lets them move up to Suggest now, which the Assistant asks about. */
@@ -79,19 +93,52 @@ public class AgentRuleService
     public synchronized List<AgentRuleView> moveUp(String id)
     {
         checkArgument(movable(rule(id)), "That rule's record does not let it move up yet");
-        return replace(id, rule -> new AgentRule(id, rule.text(), AgentRule.Mode.SUGGEST, rule.paused(), rule.recordSince(), rule.keptObserving()));
+        return replace(id, rule -> new AgentRule(id, rule.text(), AgentRule.Mode.SUGGEST, rule.paused(), rule.recordSince(), rule.keptObserving(), rule.version() + 1));
+    }
+
+    /** A direct user action authorizes the displayed revision without relying on observation history. */
+    public synchronized List<AgentRuleView> activate(String id, long expectedVersion)
+    {
+        AgentRule current = rule(id);
+        checkArgument(current.version() == expectedVersion, "The rule changed; review its current scope before activating it");
+        RuleDefinition definition = RuleText.parse(current.text());
+        checkArgument(definition.action() == RuleDefinition.Action.ALLOW || definition.action() == RuleDefinition.Action.MERGE
+                || definition.action() == RuleDefinition.Action.REVIEW, "This rule's action cannot be activated yet");
+        return replace(id, rule -> new AgentRule(id, rule.text(), AgentRule.Mode.AUTO, false, rule.recordSince(), rule.keptObserving(), rule.version() + 1));
+    }
+
+    /** The current authorization, checked immediately before an action accepts the rule's scope. */
+    public synchronized Optional<RuleAuthorization> authorization(String id, long expectedVersion)
+    {
+        return saved().stream().filter(rule -> rule.id().equals(id) && rule.version() == expectedVersion && rule.mode() == AgentRule.Mode.AUTO && !rule.paused())
+                .map(rule -> new RuleAuthorization(rule.id(), RuleText.parse(rule.text()).name(), rule.version())).findFirst();
+    }
+
+    /** Only typed provider facts participate; a command's text and model-written explanations cannot grant access. */
+    public synchronized Optional<RuleAuthorization> authorizePermission(ProviderApprovalScope scope, String taskRepository)
+    {
+        String repository = scope.repository().orElse(taskRepository);
+        return saved().stream()
+                .filter(rule -> rule.mode() == AgentRule.Mode.AUTO && !rule.paused())
+                .filter(rule -> {
+                    RuleDefinition definition = RuleText.parse(rule.text());
+                    return definition.event() == RuleDefinition.Event.PERMISSION_REQUESTED && definition.action() == RuleDefinition.Action.ALLOW
+                            && definition.operations().contains(scope.operation().key()) && definition.hosts().containsAll(scope.hosts())
+                            && (definition.repositories().isEmpty() || definition.repositories().contains(repository));
+                })
+                .map(rule -> new RuleAuthorization(rule.id(), RuleText.parse(rule.text()).name(), rule.version())).findFirst();
     }
 
     /** Moves a rule back to Observe; it is offered a move up again only once more of its runs are answered. */
     public synchronized List<AgentRuleView> moveDown(String id)
     {
-        return replace(id, rule -> new AgentRule(id, rule.text(), AgentRule.Mode.OBSERVE, rule.paused(), rule.recordSince(), Optional.of(clock.instant())));
+        return replace(id, rule -> new AgentRule(id, rule.text(), AgentRule.Mode.OBSERVE, rule.paused(), rule.recordSince(), Optional.of(clock.instant()), rule.version() + 1));
     }
 
     /** Keeps a rule observing for now; the Assistant asks again once more of its runs are answered. */
     public synchronized List<AgentRuleView> keepObserving(String id)
     {
-        return replace(id, rule -> new AgentRule(id, rule.text(), rule.mode(), rule.paused(), rule.recordSince(), Optional.of(clock.instant())));
+        return replace(id, rule -> new AgentRule(id, rule.text(), rule.mode(), rule.paused(), rule.recordSince(), Optional.of(clock.instant()), rule.version() + 1));
     }
 
     /** The user dismissed the work a suggestion did, so its run disagrees. */
@@ -122,22 +169,23 @@ public class AgentRuleService
         checkArgument(current.size() < MAXIMUM_RULES, "At most %s rules can be saved", MAXIMUM_RULES);
         return save(ImmutableList.<AgentRule>builder()
                 .addAll(current)
-                .add(new AgentRule(UUID.randomUUID().toString(), text, AgentRule.Mode.OBSERVE, false, clock.instant(), Optional.empty()))
+                .add(new AgentRule(UUID.randomUUID().toString(), text, AgentRule.Mode.OBSERVE, false, clock.instant(), Optional.empty(), 0))
                 .build());
     }
 
-    /** A changed header is a different rule, so it starts a new record in Observe; a new name or new instructions keep the record. */
+    /** A changed header starts a new observation record; editing an active rule always withdraws its authorization. */
     public synchronized List<AgentRuleView> update(String id, String text)
     {
         RuleDefinition changed = RuleText.parse(text);
         return replace(id, rule -> RuleText.parse(rule.text()).sameTrigger(changed)
-                ? new AgentRule(id, text, rule.mode(), rule.paused(), rule.recordSince(), rule.keptObserving())
-                : new AgentRule(id, text, AgentRule.Mode.OBSERVE, rule.paused(), clock.instant(), Optional.empty()));
+                ? new AgentRule(id, text, rule.mode() == AgentRule.Mode.AUTO ? AgentRule.Mode.OBSERVE : rule.mode(),
+                        rule.paused(), rule.recordSince(), rule.keptObserving(), rule.version() + 1)
+                : new AgentRule(id, text, AgentRule.Mode.OBSERVE, rule.paused(), clock.instant(), Optional.empty(), rule.version() + 1));
     }
 
     public synchronized List<AgentRuleView> pause(String id, boolean paused)
     {
-        return replace(id, rule -> new AgentRule(id, rule.text(), rule.mode(), paused, rule.recordSince(), rule.keptObserving()));
+        return replace(id, rule -> new AgentRule(id, rule.text(), rule.mode(), paused, rule.recordSince(), rule.keptObserving(), rule.version() + 1));
     }
 
     public synchronized List<AgentRuleView> remove(String id)
@@ -162,7 +210,7 @@ public class AgentRuleService
         List<RuleRun> record = record(rule);
         AgentRuleView view = AgentRuleView.of(rule, record);
         long answeredSince = rule.keptObserving()
-                .map(at -> record.stream().filter(run -> run.verdict() != RuleRun.Verdict.PENDING && run.occurredAt().isAfter(at)).count())
+                .map(at -> record.stream().filter(run -> run.authorization().isEmpty() && run.verdict() != RuleRun.Verdict.PENDING && run.occurredAt().isAfter(at)).count())
                 .orElse((long) view.answered());
         return rule.mode() == AgentRule.Mode.OBSERVE && !rule.paused() && view.rule().suggests() && answeredSince >= MOVE_UP_RUNS
                 && view.answered() >= MOVE_UP_RUNS && view.agreed() * 100 >= MOVE_UP_PERCENT * view.answered();

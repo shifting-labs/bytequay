@@ -314,6 +314,7 @@ const bridge: Bridge = {
   pauseAgentRule: invoke('settings:agent-rules:pause'),
   removeAgentRule: invoke('settings:agent-rules:remove'),
   getAgentRuleRuns: invoke('settings:agent-rules:runs'),
+  activateAgentRule: invoke('settings:agent-rules:activate'),
   moveAgentRuleUp: invoke('settings:agent-rules:move-up'),
   moveAgentRuleDown: invoke('settings:agent-rules:move-down'),
   keepAgentRuleObserving: invoke('settings:agent-rules:keep-observing'),

@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static com.bytequay.core.domain.Checks.checkText;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.util.Objects.requireNonNull;
 
 /**
@@ -29,7 +30,7 @@ import static java.util.Objects.requireNonNull;
  * @param edited suggestions the user kept only after changing them
  */
 public record AgentRuleView(String id, String text, AgentRule.Mode mode, boolean paused, Instant recordSince, Optional<Instant> keptObserving, RuleDefinition rule,
-        int runs, int agreed, int edited, int disagreed)
+        int runs, int agreed, int edited, int disagreed, long version)
 {
     public AgentRuleView
     {
@@ -43,8 +44,10 @@ public record AgentRuleView(String id, String text, AgentRule.Mode mode, boolean
 
     static AgentRuleView of(AgentRule saved, List<RuleRun> record)
     {
-        return new AgentRuleView(saved.id(), saved.text(), saved.mode(), saved.paused(), saved.recordSince(), saved.keptObserving(), RuleText.parse(saved.text()), record.size(),
-                count(record, RuleRun.Verdict.AGREED), count(record, RuleRun.Verdict.EDITED), count(record, RuleRun.Verdict.DISAGREED));
+        List<RuleRun> observations = record.stream().filter(run -> run.authorization().isEmpty()).collect(toImmutableList());
+        return new AgentRuleView(saved.id(), saved.text(), saved.mode(), saved.paused(), saved.recordSince(), saved.keptObserving(),
+                RuleText.parse(saved.text()), observations.size(),
+                count(observations, RuleRun.Verdict.AGREED), count(observations, RuleRun.Verdict.EDITED), count(observations, RuleRun.Verdict.DISAGREED), saved.version());
     }
 
     /** The runs the user answered, one way or another. */

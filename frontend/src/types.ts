@@ -734,7 +734,7 @@ export type ReviewFixSummaryDto = {
 };
 
 export type AutoMergeSummaryDto = {
-  state: 'WAITING' | 'READY' | 'MERGING' | 'MERGED' | 'QUEUED' | 'FAILED' | 'CANCELLED';
+  state: 'WAITING' | 'READY' | 'MERGING' | 'MERGED' | 'QUEUED' | 'FAILED' | 'UNKNOWN' | 'CANCELLED';
   /** When a ready pull request merges. */
   mergeAt: string | null;
   /** Why it waits, or what the merge did. */
@@ -1370,9 +1370,9 @@ export type AgentSkillDto = AgentSkillInput & {
   id: string;
 };
 
-export type AgentRuleEvent = 'REVIEW_REQUESTED' | 'PULL_REQUEST_UPDATED' | 'ISSUE_ASSIGNED' | 'PULL_REQUEST_BEHIND' | 'PULL_REQUEST_MERGED';
-export type AgentRuleAction = 'REVIEW' | 'TASK' | 'REBASE' | 'BACKPORT';
-export type AgentRuleAgreement = 'REVIEWED' | 'STARTED_TASK' | 'UPDATED_BRANCH' | 'OPENED_BACKPORT';
+export type AgentRuleEvent = 'REVIEW_REQUESTED' | 'PULL_REQUEST_UPDATED' | 'ISSUE_ASSIGNED' | 'PULL_REQUEST_BEHIND' | 'PULL_REQUEST_MERGED' | 'PERMISSION_REQUESTED' | 'PULL_REQUEST_READY';
+export type AgentRuleAction = 'REVIEW' | 'TASK' | 'REBASE' | 'BACKPORT' | 'ALLOW' | 'MERGE';
+export type AgentRuleAgreement = 'REVIEWED' | 'STARTED_TASK' | 'UPDATED_BRANCH' | 'OPENED_BACKPORT' | 'ALLOWED' | 'MERGED';
 export type AgentRuleMode = 'OBSERVE' | 'SUGGEST' | 'AUTO';
 
 /** What a rule file says, as the backend reads it. */
@@ -1383,15 +1383,19 @@ export type AgentRuleDefinitionDto = {
   paths: string[];
   labels: string[];
   authors: string[];
+  hosts: string[];
+  operations: string[];
+  ownedLines: boolean;
   action: AgentRuleAction;
   agreement: AgentRuleAgreement;
   withinDays: number;
   body: string;
 };
 
-/** A saved rule: the file text the user wrote, the mode its record has earned, what the text says, and how its record counts so far. */
+/** A saved rule and its current revision. Only explicit activation authorizes automatic actions. */
 export type AgentRuleDto = {
   id: string;
+  version: number;
   text: string;
   mode: AgentRuleMode;
   paused: boolean;
@@ -1410,6 +1414,8 @@ export type AgentRuleVerdict = 'PENDING' | 'AGREED' | 'EDITED' | 'DISAGREED';
  * One time a rule's event happened, and whether the user then did what the rule would have done; for a suggestion, what they did with
  * the work the rule did.
  */
+export type RuleAuthorization = { ruleId: string; ruleName: string; ruleVersion: number };
+
 export type AgentRuleRunDto = {
   subject: string;
   title: string;
@@ -1418,6 +1424,8 @@ export type AgentRuleRunDto = {
   suggestion: boolean;
   /** Why a suggestion has no work to judge, such as the daily limit. */
   skipped: string | null;
+  authorization: RuleAuthorization | null;
+  outcome: string | null;
 };
 
 
@@ -1636,7 +1644,18 @@ export type AssistantItemDto = {
 };
 
 /** The task notice a report tells, drawn as that notice's own card while it lasts; then the line opens the task. */
-export type AssistantReportDto = { state: 'DECISION' | 'READY' | 'FAILED'; noticeId: string; target: AgendaTargetDto };
+export type AssistantReportState = 'APPROVAL_REQUIRED' | 'ANSWER_REQUIRED' | 'PROPOSAL' | 'RESULT_READY' | 'COMPLETED' | 'ATTENTION' | 'PROGRESS';
+export type AssistantRuleActionDto = { ruleId: string; ruleName: string; ruleVersion: number; outcome: string; detail: string };
+export type AssistantReportDto = {
+  state: AssistantReportState;
+  noticeId: string;
+  target: AgendaTargetDto;
+  sourceTurnId: string | null;
+  assessment: string | null;
+  outcome: string | null;
+  evidence: string[];
+  ruleActions: AssistantRuleActionDto[];
+};
 
 /** A Needs attention mark as the backend keeps it; home/attention.ts turns it into the list's own entry. */
 export type AttentionMarkDto = {
@@ -1716,6 +1735,7 @@ export type AssistantReceiptDto = {
 export type AssistantPermissionsDto = { startTasks: boolean; answerTasks: boolean; changeWork: boolean; markAttention: boolean };
 
 export type AssistantViewDto = {
+  assessing: number;
   id: string;
   model: string | null;
   /** Whether a reply in this conversation is being written. */
@@ -2107,6 +2127,7 @@ export type Bridge = LabBridge & WorkItemBridge & JiraBridge & GoogleBridge & Ar
   /** The rule's runs since its record began, newest first. */
   getAgentRuleRuns: (id: string) => Promise<AgentRuleRunDto[]>;
   /** Moves a rule up to Suggest, which its record must allow, as the Assistant's card offers. */
+  activateAgentRule: (id: string, version: number) => Promise<AgentRuleDto[]>;
   moveAgentRuleUp: (id: string) => Promise<AgentRuleDto[]>;
   moveAgentRuleDown: (id: string) => Promise<AgentRuleDto[]>;
   keepAgentRuleObserving: (id: string) => Promise<AgentRuleDto[]>;
@@ -2200,7 +2221,7 @@ export type Bridge = LabBridge & WorkItemBridge & JiraBridge & GoogleBridge & Ar
   getAssistantConversation: (conversationId: string) => Promise<AssistantViewDto>;
   /** The reply runs in the background; the same key twice adds the message once. A conversation id the panel made up begins a new one. */
   sendAssistantMessage: (conversationId: string, text: string, visible: string[], onScreen: string | null, key: string) => Promise<{ itemId: string }>;
-  stopAssistant: () => Promise<void>;
+  stopAssistant: (conversationId: string) => Promise<void>;
   /** Runs the conversation's last message again after a failed reply. */
   retryAssistant: (conversationId: string) => Promise<{ itemId: string }>;
   /** Keeps a receipt for a card answered with its own button in the panel, in the conversation on screen. */

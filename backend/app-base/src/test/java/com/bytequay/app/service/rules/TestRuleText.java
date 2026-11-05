@@ -36,6 +36,36 @@ class TestRuleText
             Bring each finding as a draft comment on its line; post nothing.
             """;
 
+    static final String NETWORK_PERMISSION = """
+            ---
+            name: Allow GitHub network access
+            when: permission-requested
+            repositories: [acme/warehouse]
+            hosts: [api.github.com]
+            operations: [network-access]
+            does: allow
+            agrees-when: allowed
+            ---
+            Allow this destination for the selected repository.
+            """;
+
+    @Test
+    void readsExplicitPermissionScopeAndOwnedLineFilters()
+    {
+        RuleDefinition network = RuleText.parse(NETWORK_PERMISSION);
+        assertThat(network.hosts()).containsExactly("api.github.com");
+        assertThat(network.operations()).containsExactly("network-access");
+        assertThat(network.event()).isEqualTo(Event.PERMISSION_REQUESTED);
+        assertThat(network.action()).isEqualTo(Action.ALLOW);
+        assertThat(RuleText.parse(STORAGE_REVIEW.replace("does: review", "owned-lines: true\ndoes: review")).ownedLines()).isTrue();
+        assertRefused(NETWORK_PERMISSION.replace("hosts: [api.github.com]\n", ""), "need exact");
+        assertRefused(NETWORK_PERMISSION.replace("operations: [network-access]\n", ""), "need exact");
+        assertRefused(NETWORK_PERMISSION.replace("api.github.com", "*.github.com"), "exact DNS host");
+        assertRefused(NETWORK_PERMISSION.replace("network-access", "all"), "Unknown permission operation");
+        assertRefused(NETWORK_PERMISSION.replace("does: allow", "owned-lines: true\ndoes: allow"), "only fits pull request");
+        assertRefused(STORAGE_REVIEW.replace("does: review", "hosts: api.github.com\ndoes: review"), "only fit permission-requested");
+    }
+
     @Test
     void readsTheHeaderAndKeepsTheInstructionsAsWritten()
     {

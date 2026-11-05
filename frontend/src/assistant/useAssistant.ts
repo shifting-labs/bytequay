@@ -29,7 +29,7 @@ export type Assistant = {
   /** Why the last thing the user asked for failed; background reads stay quiet. */
   error: string | null;
   sending: boolean;
-  /** A reply is being written, in this conversation or another; the one reply slot takes no new message until it ends. */
+  /** A foreground reply is being written in the selected conversation. */
   busy: boolean;
   /** Resolves whether the message was taken, so the composer keeps a draft that was not. */
   send: (text: string, visible: string[], onScreen: string | null) => Promise<boolean>;
@@ -75,7 +75,7 @@ export function useAssistant(open: boolean, conversation: string): Assistant {
   }, [load, open]);
 
   // A reply in another conversation still moves the history's spinner.
-  const running = view?.running === true || conversations.some(each => each.running);
+  const running = view?.running === true || (view?.assessing ?? 0) > 0 || conversations.some(each => each.running);
   useEffect(() => open ? pollVisible(load, running ? RUNNING_POLL_MS : OPEN_POLL_MS) : undefined, [load, open, running]);
 
   const act = useCallback(async (action: () => Promise<unknown>): Promise<boolean> => {
@@ -104,13 +104,13 @@ export function useAssistant(open: boolean, conversation: string): Assistant {
     return sent;
   }, [act, conversation]);
 
-  const stop = useCallback(() => { void act(() => window.bridge.stopAssistant()); }, [act]);
+  const stop = useCallback(() => { void act(() => window.bridge.stopAssistant(conversation)); }, [act, conversation]);
   const retry = useCallback(() => { void act(() => window.bridge.retryAssistant(conversation)); }, [act, conversation]);
   const refresh = useCallback(() => { void load(); }, [load]);
 
   // What was read for the conversation before a switch stays off screen until the new one arrives.
   return {
-    view: view?.id === conversation ? view : null, conversations, error: error?.conversation === conversation ? error.message : null, sending, busy: running, send, stop,
+    view: view?.id === conversation ? view : null, conversations, error: error?.conversation === conversation ? error.message : null, sending, busy: view?.id === conversation && view.running, send, stop,
     retry, refresh,
   };
 }

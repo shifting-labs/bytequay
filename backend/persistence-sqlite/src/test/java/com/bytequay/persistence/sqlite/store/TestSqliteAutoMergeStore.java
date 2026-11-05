@@ -33,7 +33,7 @@ class TestSqliteAutoMergeStore
     void keepsOneStatePerTaskThroughTheWholeMerge()
     {
         assertThat(store.find("task-1")).isEmpty();
-        AutoMerge waiting = AutoMerge.waiting("task-1", "c".repeat(40), "Waiting for CI fix");
+        AutoMerge waiting = AutoMerge.waiting("task-1", "c".repeat(40), "Waiting for CI fix").authorizedBy("rule:1:head");
         store.save(waiting);
         assertThat(store.find("task-1")).contains(waiting);
 

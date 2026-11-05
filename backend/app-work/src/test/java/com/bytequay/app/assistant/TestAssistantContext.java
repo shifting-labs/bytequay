@@ -92,11 +92,13 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.IntStream;
 
 import static com.bytequay.agent.core.AgentTaskFixtures.created;
@@ -329,6 +331,19 @@ class TestAssistantContext
     }
 
     @Test
+    void resultReadsScheduleAnIndependentAssessmentAndStillReturnStoredFacts()
+            throws Exception
+    {
+        List<String> assessments = new ArrayList<>();
+        AssistantContext context = new AssistantContext(reader, TODAY, ImmutableList.of(), Optional.empty(), ImmutableMap.of(), mapper, assessments::add);
+        JsonNode result = named(context.tool(), "result", "task:" + FINISHED.id());
+        assertThat(result.path("entries").size()).isEqualTo(1);
+        assertThat(assessments).containsExactly("task:" + FINISHED.id());
+        assertThat(named(context.tool(), "result", "task:" + UUID.randomUUID()).path("entries").size()).isZero();
+        assertThat(assessments).hasSize(1);
+    }
+
+    @Test
     void looksUpAnyItemByRefAndReadsWhatATaskSaidLast()
             throws Exception
     {
@@ -455,7 +470,7 @@ class TestAssistantContext
     private AssistantContext context(Optional<String> onScreen, Map<String, ServedRef> served)
     {
         List<String> visible = ImmutableList.of("approval:" + COMMAND, "approval:" + QUESTION, "question:turn-9", "approval:0b1d5f8e-5d7a-4f0e-9a52-6a4f1c2b3d09");
-        return new AssistantContext(reader, TODAY, visible, onScreen, served, mapper);
+        return new AssistantContext(reader, TODAY, visible, onScreen, served, mapper, _ -> {});
     }
 
     private JsonNode read(ReviewTool tool, String kind)

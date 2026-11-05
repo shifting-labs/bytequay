@@ -76,6 +76,8 @@ it('marks each step done, running, waiting or needing you from what the task rep
   expect(mergeLabel(ready, 2 * hour)).toBe('Merging');
   expect(automationSteps({ ...base, autoMerge: { state: 'FAILED', mergeAt: null, message: 'Head branch was modified' } }).MERGE)
     .toEqual({ state: 'attention', note: 'Head branch was modified' });
+  expect(automationSteps({ ...base, autoMerge: { state: 'UNKNOWN', mergeAt: null, message: 'Check the pull request' } }).MERGE)
+    .toEqual({ state: 'attention', note: 'Check the pull request' });
   expect(automationSteps({ ...base, autoMerge: { state: 'MERGED', mergeAt: null, message: 'Merged' } }).MERGE?.state).toBe('done');
   expect(automationSteps({ ...base, autoMerge: { state: 'WAITING', mergeAt: null, message: 'Waiting for open review threads' } }).MERGE)
     .toEqual({ state: 'pending', note: 'Waiting for open review threads' });

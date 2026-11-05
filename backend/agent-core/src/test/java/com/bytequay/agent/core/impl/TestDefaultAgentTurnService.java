@@ -4382,7 +4382,7 @@ class TestDefaultAgentTurnService
 
     private DefaultAgentApprovalService durableApprovals(AgentRuntimeRegistry runtimeRegistry)
     {
-        return new DefaultAgentApprovalService(stores, stores, stores, stores, events, scheduler, CLOCK, runtimeRegistry);
+        return new DefaultAgentApprovalService(stores, stores, stores, stores, events, scheduler, CLOCK, runtimeRegistry, request -> Optional.empty());
     }
 
     @Test

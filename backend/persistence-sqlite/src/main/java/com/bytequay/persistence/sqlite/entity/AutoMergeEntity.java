@@ -49,6 +49,9 @@ public class AutoMergeEntity
     @Column(columnDefinition = "TEXT")
     private String message;
 
+    @Column(name = "action_key", columnDefinition = "TEXT")
+    private String actionKey;
+
     protected AutoMergeEntity() {}
 
     public AutoMergeEntity(String taskId)
@@ -63,11 +66,12 @@ public class AutoMergeEntity
         startedAt = value.startedAt().orElse(null);
         outcome = value.outcome().map(Enum::name).orElse(null);
         message = value.message().orElse(null);
+        actionKey = value.actionKey().orElse(null);
     }
 
     public AutoMerge toDomain()
     {
         return new AutoMerge(id, headSha, Optional.ofNullable(readySince), Optional.ofNullable(startedAt),
-                Optional.ofNullable(outcome).map(AutoMerge.Outcome::valueOf), Optional.ofNullable(message));
+                Optional.ofNullable(outcome).map(AutoMerge.Outcome::valueOf), Optional.ofNullable(message), Optional.ofNullable(actionKey));
     }
 }

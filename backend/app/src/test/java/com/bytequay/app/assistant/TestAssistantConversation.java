@@ -34,10 +34,9 @@ import com.bytequay.agent.spi.RunningTurn;
 import com.bytequay.agent.spi.SessionAccess;
 import com.bytequay.app.agenda.AgendaFixtures;
 import com.bytequay.app.agent.runtime.AgentProperties;
-import com.bytequay.app.notices.AppNotice;
-import com.bytequay.app.notices.AppNoticeService;
 import com.bytequay.app.service.InMemoryAppSettingsStore;
 import com.bytequay.app.service.credentials.CredentialService;
+import com.bytequay.app.service.rules.AgentRuleService;
 import com.bytequay.app.service.settings.AgentModelSetting;
 import com.bytequay.app.service.settings.AgentModelType;
 import com.bytequay.app.service.settings.AppSettingsService;
@@ -95,7 +94,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
@@ -132,7 +130,8 @@ class TestAssistantConversation
     private final AssistantShow show = mock(AssistantShow.class);
     private final AssistantRows rows = mock(AssistantRows.class);
     private final AssistantWork work = mock(AssistantWork.class);
-    private final AppNoticeService notices = mock(AppNoticeService.class);
+    private final AssistantFollowing following = mock(AssistantFollowing.class);
+    private final AgentRuleService rules = mock(AgentRuleService.class);
     private final ModelSettingsService models = mock(ModelSettingsService.class);
     private final AgentDriverRegistry drivers = mock(AgentDriverRegistry.class);
     private final AgentDriver driver = mock(AgentDriver.class);
@@ -207,7 +206,7 @@ class TestAssistantConversation
         InMemoryAppSettingsStore settings = new InMemoryAppSettingsStore();
         settings.put(CredentialService.GITHUB_ACCOUNT_SETTING, "7");
         setup = new SetupSettingsService(settings, mock(AppSettingsService.class), models, drivers, AgendaFixtures.mapper());
-        assistant = new AssistantService(store, reader, actions, show, rows, work, notices, setup, drivers, resources,
+        assistant = new AssistantService(store, reader, actions, show, rows, work, following, rules, setup, drivers, resources,
                 new AgentProperties(runtime, Duration.ZERO, "", "codex", "0.159.3", temporaryDirectory.resolve("codex-home"), "claude", temporaryDirectory.resolve("claude-home")),
                 AgendaFixtures.mapper(), clock, executor);
     }
@@ -331,9 +330,9 @@ class TestAssistantConversation
                 .andExpect(status().isBadRequest());
         assertThat(assistant.conversation(C1).running()).isTrue();
         assertThat(assistant.conversation(C1).waiting()).containsExactly(third);
-        assertThat(assistant.conversation(C2).running()).isFalse();
-        assertThat(assistant.conversation(C2).waiting()).containsExactly(second);
-        assertThat(prompts).hasSize(1);
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> assertThat(store.items(C2)).extracting(AssistantItem::kind).containsExactly(USER, REPLY));
+        assertThat(assistant.conversation(C2).waiting()).isEmpty();
+        assertThat(prompts).hasSize(2);
 
         slow.complete(completed("Nothing waits on you."));
         waitForReply();
@@ -567,7 +566,7 @@ class TestAssistantConversation
                 .untilAsserted(() -> assertThat(prompts).isNotEmpty());
         assistant.send(C1, "and the reviews?", ImmutableList.of(), Optional.empty(), "key-2");
 
-        assistant.stop();
+        assistant.stop(C1);
         waitForReply();
 
         verify(turn, atLeastOnce()).cancel();
@@ -604,85 +603,31 @@ class TestAssistantConversation
     }
 
     @Test
-    void aTaskTheConversationStartedReportsEachDecisionOnceThenItsResultWithNoModel()
+    void aReportArrivingDuringAReplyIsIncludedInTheNextRequest()
     {
-        assistant.report();
-        verify(notices, never()).current(anyCollection());
+        CompletableFuture<AgentTurnResult> slow = new CompletableFuture<>();
+        results.add(slow);
+        assistant.send(C1, "first", ImmutableList.of(), Optional.empty(), "key-1");
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> assertThat(prompts).hasSize(1));
+        store.add(AssistantItem.report(C1, now.get(), "New result during inference",
+                new AssistantReport(AssistantReport.State.RESULT_READY, "finished:t1", STARTED)));
+        slow.complete(completed("First reply"));
+        waitForReply();
 
-        Instant asked = now.get();
-        startTask(C1, asked);
-        int opens = opened.size();
-        // What the task raised before it was asked is old news.
-        when(notices.current(anyCollection())).thenReturn(ImmutableList.of(notice("finished:t0", AppNotice.Kind.TURN_FINISHED, "", asked.minusSeconds(60))));
-        assistant.report();
-        assertThat(reports(C1)).isEmpty();
-
-        now.set(asked.plusSeconds(60));
-        when(notices.current(anyCollection())).thenReturn(ImmutableList.of(notice("approval:a1", AppNotice.Kind.APPROVAL, "Run mvn test", asked.plusSeconds(30))));
-        assistant.report();
-        assistant.report();
-        now.set(asked.plusSeconds(300));
-        when(notices.current(anyCollection())).thenReturn(ImmutableList.of(notice("finished:t1", AppNotice.Kind.TURN_FINISHED, "", asked.plusSeconds(290))));
-        assistant.report();
-        // The result ends the following, so nothing later is read for it.
-        when(notices.current(anyCollection())).thenReturn(ImmutableList.of(notice("failed:t2", AppNotice.Kind.FAILURE, "Boom", asked.plusSeconds(400))));
-        assistant.report();
-
-        assertThat(reports(C1)).extracting(AssistantItem::text)
-                .containsExactly("“Fix the flaky test” asked for your approval: Run mvn test", "“Fix the flaky test” is ready");
-        assertThat(reports(C1)).extracting(item -> item.report().orElseThrow()).containsExactly(
-                new AssistantReport(AssistantReport.State.DECISION, "approval:a1", STARTED), new AssistantReport(AssistantReport.State.READY, "finished:t1", STARTED));
-        verify(notices, times(4)).current(ImmutableList.of(new TaskId(UUID.fromString(STARTED_ID))));
-        assertThat(opened).hasSize(opens);
-
-        // A session that holds the conversation hears what was reported after its last reply.
         assistant.send(C1, "what now?", ImmutableList.of(), Optional.empty(), "key-2");
         waitForReply();
-        assertThat(opened.getLast().sessionReference()).isPresent();
-        assertThat(prompts.getLast()).contains("Since your last reply:\n[task ", "] “Fix the flaky test” asked for your approval: Run mvn test\n",
-                "] “Fix the flaky test” is ready\n").doesNotContain("Earlier in this conversation");
+        assertThat(prompts.getLast()).contains("Since your last reply:", "New result during inference");
+        assistant.send(C1, "anything else?", ImmutableList.of(), Optional.empty(), "key-3");
+        waitForReply();
+        assertThat(prompts.getLast()).doesNotContain("New result during inference");
     }
 
     @Test
-    void aResultWithAPullRequestReportsWhereItStandsRatherThanReady()
+    void reportingDelegatesWithoutTakingTheForegroundSlot()
     {
-        Instant asked = now.get();
-        startTask(C1, asked);
-        now.set(asked.plusSeconds(300));
-        when(notices.current(anyCollection())).thenReturn(ImmutableList.of(new AppNotice("finished:t1", AppNotice.Kind.TURN_FINISHED, STARTED_ID, "ws1",
-                Optional.of("turn-1"), Optional.empty(), "Fix the flaky test", Optional.of("owner/repository#58"), Optional.empty(), Optional.empty(), Optional.empty(),
-                "Draft PR #58 · checks running", "owner/repository", "claude", Optional.empty(), asked.plusSeconds(290), Optional.empty())));
         assistant.report();
-
-        assertThat(reports(C1)).extracting(AssistantItem::text).containsExactly("“Fix the flaky test”: Draft PR #58 · checks running");
-    }
-
-    @Test
-    void afterAStartAFollowedTaskReportsOnlyWhatItDidNotTellYet()
-    {
-        Instant asked = now.get();
-        store.save(AssistantConversation.start(C1, "fix the flaky test", asked));
-        store.add(AssistantItem.user(C1, asked, "fix the flaky test", ImmutableList.of(), Optional.empty(), "key-1"));
-        store.add(started(C1, asked));
-        store.add(AssistantItem.report(C1, asked.plusSeconds(30), "“Fix the flaky test” asked for your approval: Run mvn test",
-                new AssistantReport(AssistantReport.State.DECISION, "approval:a1", STARTED)));
-        // A task asked for more than a day ago is not followed any more.
-        Instant earlier = asked.minus(Duration.ofDays(2));
-        store.save(AssistantConversation.start(C2, "start the old one", earlier));
-        store.add(AssistantItem.receipt(C2, earlier, "Started “Old one”", AssistantReceipt.done(AssistantReceipt.Operation.START_TASK,
-                Optional.of(AgendaTarget.of(AgendaTarget.Kind.TASK, "ws1", "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918")))));
-
-        now.set(asked.plusSeconds(60));
-        when(notices.current(anyCollection())).thenReturn(ImmutableList.of(notice("approval:a1", AppNotice.Kind.APPROVAL, "Run mvn test", asked.plusSeconds(30))));
-        assistant.report();
-        when(notices.current(anyCollection())).thenReturn(ImmutableList.of(notice("failed:t1", AppNotice.Kind.FAILURE, "The turn stopped before it finished.",
-                asked.plusSeconds(50))));
-        assistant.report();
-
-        verify(notices, times(2)).current(ImmutableList.of(new TaskId(UUID.fromString(STARTED_ID))));
-        assertThat(reports(C1)).extracting(AssistantItem::text)
-                .containsExactly("“Fix the flaky test” asked for your approval: Run mvn test", "“Fix the flaky test” failed: The turn stopped before it finished.");
-        assertThat(reports(C2)).isEmpty();
+        verify(following).poll(any());
+        assertThat(opened).isEmpty();
     }
 
     @Test
@@ -693,7 +638,7 @@ class TestAssistantConversation
         store.save(AssistantConversation.start(C1, "fix the flaky test", asked));
         store.add(AssistantItem.user(C1, asked, "fix the flaky test", ImmutableList.of(), Optional.empty(), "key-1"));
         AssistantItem ready = AssistantItem.report(C1, asked.plusSeconds(300), "“Fix the flaky test” is ready",
-                new AssistantReport(AssistantReport.State.READY, "finished:t1", STARTED));
+                new AssistantReport(AssistantReport.State.RESULT_READY, "finished:t1", STARTED));
         store.add(ready);
         now.set(asked.plusSeconds(400));
         when(actions.reply(C1, new TaskId(UUID.fromString(STARTED_ID)), "also update the README", "reply-1")).thenAnswer(call -> AssistantItem.receipt(C1, now.get(),
@@ -714,46 +659,11 @@ class TestAssistantConversation
         verify(actions, times(1)).reply(any(), any(), any(), any());
         assertThat(store.items(C1)).extracting(AssistantItem::kind).containsExactly(USER, REPORT, RECEIPT);
         assertThat(opened).isEmpty();
-
-        when(notices.current(anyCollection())).thenReturn(ImmutableList.of(notice("finished:t2", AppNotice.Kind.TURN_FINISHED, "", asked.plusSeconds(500))));
-        now.set(asked.plusSeconds(600));
-        assistant.report();
-        assertThat(reports(C1)).extracting(item -> item.report().orElseThrow().noticeId()).containsExactly("finished:t1", "finished:t2");
     }
 
     private static String reply(String itemId, String text, String key)
     {
         return "{\"conversationId\": \"" + C1 + "\", \"itemId\": \"" + itemId + "\", \"text\": \"" + text + "\", \"key\": \"" + key + "\"}";
-    }
-
-    /** The user's message starts the task: the act tool keeps the receipt while the reply is written. */
-    private void startTask(String conversationId, Instant at)
-    {
-        AtomicReference<Consumer<AssistantItem>> keep = new AtomicReference<>();
-        when(actions.tool(any(), any(), any())).thenAnswer(call -> {
-            keep.set(call.getArgument(2));
-            return new ReviewTool("assistant_act", "Act", ImmutableMap.of("type", "object"), arguments -> "{}", false);
-        });
-        assistant.send(conversationId, "fix the flaky test", ImmutableList.of(), Optional.empty(), "key-1");
-        waitForReply();
-        keep.get().accept(started(conversationId, at));
-    }
-
-    private static AssistantItem started(String conversationId, Instant at)
-    {
-        return AssistantItem.receipt(conversationId, at, "Started “Fix the flaky test”", new AssistantReceipt(AssistantReceipt.Operation.START_TASK,
-                AssistantReceipt.Outcome.DONE, Optional.empty(), Optional.of(STARTED), Optional.empty(), Optional.of("turn-1"), Optional.empty(), Optional.empty()));
-    }
-
-    private static AppNotice notice(String id, AppNotice.Kind kind, String message, Instant at)
-    {
-        return new AppNotice(id, kind, STARTED_ID, "ws1", Optional.of("turn-1"), Optional.empty(), "Fix the flaky test", Optional.empty(), Optional.empty(),
-                Optional.empty(), Optional.empty(), message, "owner/repository", "claude", Optional.empty(), at, Optional.empty());
-    }
-
-    private List<AssistantItem> reports(String conversationId)
-    {
-        return store.items(conversationId).stream().filter(item -> item.kind() == REPORT).collect(toImmutableList());
     }
 
     private void waitForReply()
@@ -765,7 +675,7 @@ class TestAssistantConversation
     private AssistantConversation conversation(String id, String lane, String session)
     {
         return new AssistantConversation(id, "earlier", Optional.of(lane), Optional.of("Sonnet"), Optional.of(new DiscussionSession(1, session)), ImmutableMap.of(),
-                now.get(), now.get());
+                now.get(), now.get(), 0);
     }
 
     private static String message(String conversationId, String text, String key)

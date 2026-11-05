@@ -221,12 +221,11 @@
               <strong>Backport</strong> carries a PR down the line, one
               cherry-pick per repository. To ask before a PR merges, type
               <strong>@backport</strong> and its number or link in the
-              destination's task composer. Each step waits for its PR to merge;
-              ByteQuay never merges one itself.
+              destination's task composer. Each step waits for its PR to merge.
             </p>
           </section>
           <section id="rules">
-            <h2>Let rules watch your work</h2>
+            <h2>Let rules watch and act on your work</h2>
             <p>
               A rule names something that happens, such as a review requested
               from you, and the work ByteQuay could do then. A new rule only
@@ -235,8 +234,10 @@
             </p>
             <ol>
               <li>
-                In <strong>Settings → Rules</strong>, choose <strong>Paste a
-                rule</strong>.
+                Type <strong>@rules</strong> on its own in the Assistant,
+                choose its <strong>Rules</strong> button, or open
+                <strong>Settings → Agents → Rules</strong>. Choose
+                <strong>Paste a rule</strong>.
               </li>
               <li>
                 Between two <code>---</code> lines, name the event
@@ -270,8 +271,53 @@
               waits in the Assistant’s <strong>Decision</strong> view:
               <strong>Open</strong> it to publish, push, or continue it, or
               <strong>Dismiss</strong> it. A finding published as written agrees;
-              changing the work first counts as edited. A rule starts at most 3
-              suggestions a day, and all rules together 10.
+              changing the work first counts as edited. Suggestions and automatic
+              private reviews share a limit of 3 starts per rule and
+              10 total per local day. Merges and permission resolutions are outside
+              that budget. Skips and their reasons appear in the rule’s history.
+            </p>
+            <h3>Activate a rule</h3>
+            <p>
+              <strong>Active rules</strong> are separate from
+              <strong>Learning and suggestions</strong>. A good observational
+              record never grants permission on its own.
+            </p>
+            <ol>
+              <li>Save and check a rule, then choose <strong>Activate…</strong> beside it.</li>
+              <li>
+                Review its event, repositories and other scope, instructions,
+                and the action it authorizes. For merge and permission rules,
+                prose notes add no enforced conditions. Choose
+                <strong>Activate rule</strong> to authorize that saved revision.
+              </li>
+              <li>
+                Matching actions run without another approval card. Their
+                results name the rule; expand its receipt to inspect each
+                action. <strong>Allowed 3 requests under Build access</strong>
+                records permission, not whether the work succeeded.
+              </li>
+              <li>
+                Pause a rule with its switch. Editing an active rule returns it
+                to <strong>Observe</strong>; review and activate the saved revision again.
+              </li>
+            </ol>
+            <p>
+              Active review rules prepare findings without posting them. A
+              <code>pull-request-ready</code> rule with <code>does: merge</code>
+              can merge your own approved PR once its checks pass; ByteQuay
+              rechecks the current head before acting. A
+              <code>permission-requested</code> rule with <code>does: allow</code>
+              needs exact <code>hosts</code> and explicit <code>operations</code>
+              (<code>network-access</code> or <code>github-read</code>). Requests
+              outside that scope still ask you. An uncertain remote outcome
+              shows <strong>Needs attention</strong>, so you can inspect it
+              before taking another action.
+            </p>
+            <p>
+              With <code>owned-lines: true</code>, a rule checks the last author
+              at the fetched merge base, using your configured Git email or
+              GitHub noreply identity. Only deleted or replaced existing lines
+              establish ownership; additions-only files and renames do not.
             </p>
           </section>
           <div class="doc-next">

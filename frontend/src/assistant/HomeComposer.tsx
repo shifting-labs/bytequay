@@ -12,11 +12,12 @@
  * limitations under the License.
  */
 import { useState } from 'react';
-import { History, SquarePen } from 'lucide-react';
+import { History, SlidersHorizontal, SquarePen } from 'lucide-react';
 import Composer from '../Composer';
+import { settingsRoute } from '../settings/routes';
 import { IconButton } from '../cards/Card';
 import type { WorkItem } from '../home/work';
-import { SUGGESTION, openAssistant, takesSuggestion } from './model';
+import { SUGGESTION, isRulesCommand, openAssistant, takesSuggestion } from './model';
 import { useNotices } from '../notices/useNotices';
 import AssistantPills, { useWaiting } from './Pills';
 import '../css/assistant.css';
@@ -31,6 +32,11 @@ export default function HomeComposer({ work }: { work: WorkItem[] }) {
   const submit = () => {
     const text = draft.trim();
     if (text === '') return;
+    if (isRulesCommand(text)) {
+      setDraft('');
+      window.location.hash = settingsRoute('rules');
+      return;
+    }
     // The Assistant keeps a message it could not send in its own composer, so nothing typed here is lost.
     openAssistant({ message: text });
     setDraft('');
@@ -46,6 +52,7 @@ export default function HomeComposer({ work }: { work: WorkItem[] }) {
         }}
         submitLabel="Send to the Assistant" submitTitle="Send (Enter)">
         <span className="assistant-spacer" />
+        <IconButton label="Rules" title="Rules" onClick={() => { window.location.hash = settingsRoute('rules'); }}><SlidersHorizontal size={15} aria-hidden="true" /></IconButton>
         <IconButton label="New conversation" title="New conversation" onClick={() => openAssistant({ fresh: true })}><SquarePen size={15} aria-hidden="true" /></IconButton>
         <IconButton label="Conversations" title="History" onClick={() => openAssistant({ history: true })}><History size={15} aria-hidden="true" /></IconButton>
       </Composer>

@@ -282,12 +282,12 @@
 }
 
 .assistant-card__icon.is-accent { color: var(--fg-link); }
-.assistant-card__icon.is-accent svg { animation: bq-spin 1.6s linear infinite; }
+.assistant-card__icon.is-spinning svg { animation: bq-spin 1.6s linear infinite; }
 .assistant-card__icon.is-warn { color: var(--fg-warning); }
 .assistant-card__icon.is-danger { color: var(--fg-danger); }
 
 @media (prefers-reduced-motion: reduce) {
-  .assistant-card__icon.is-accent svg { animation: none; }
+  .assistant-card__icon.is-spinning svg { animation: none; }
 }
 
 .assistant-card__main { min-width: 0; }
@@ -1111,3 +1111,42 @@
   font-size: 12.5px;
   font-weight: 400;
 }
+
+
+.assistant-card__state {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 15px;
+  letter-spacing: 0.01em;
+}
+
+.assistant-card__state[data-state="APPROVAL_REQUIRED"],
+.assistant-card__state[data-state="ANSWER_REQUIRED"],
+.assistant-card__state[data-state="ATTENTION"] { color: var(--fg-warning); }
+.assistant-card__state[data-state="RESULT_READY"],
+.assistant-card__state[data-state="PROPOSAL"] { color: var(--fg-link); }
+.assistant-card__state[data-state="COMPLETED"] { color: var(--fg-success); }
+.assistant-card[data-state="APPROVAL_REQUIRED"],
+.assistant-card[data-state="ANSWER_REQUIRED"] { border-color: var(--assistant-gold); }
+.assistant-card[data-state="COMPLETED"] .assistant-card__icon { color: var(--fg-success); }
+.assistant-card[data-state="ATTENTION"] .assistant-card__icon { color: var(--fg-warning); }
+.assistant-card[data-state="RESULT_READY"] .assistant-card__icon { color: var(--fg-link); }
+.assistant-card.has-wrapped-title .assistant-card__title { white-space: normal; overflow-wrap: anywhere; }
+.assistant-card__assessment { font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.assistant-report-details { display: flex; flex-direction: column; gap: 7px; padding: 7px 12px 2px 42px; }
+.assistant-report-details:empty { display: none; }
+.assistant-report-resolved { display: flex; flex-direction: column; gap: 6px; }
+.assistant-rule-receipt,
+.assistant-report-evidence { color: var(--fg-muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.assistant-rule-receipt summary,
+.assistant-report-evidence summary { cursor: pointer; }
+.assistant-rule-receipt summary svg { display: inline; vertical-align: -2px; margin-right: 5px; }
+.assistant-rule-receipt summary:focus-visible,
+.assistant-report-evidence summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+.assistant-rule-receipt ul,
+.assistant-report-evidence ul { margin: 6px 0 0; padding-left: 20px; }
+.assistant-rule-receipt strong { font-weight: 500; color: var(--fg-default); }
+.assistant-draft > .assistant-card__state { padding: 10px 12px 0; margin-bottom: -3px; }

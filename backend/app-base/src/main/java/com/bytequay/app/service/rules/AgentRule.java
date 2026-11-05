@@ -17,16 +17,17 @@ import java.time.Instant;
 import java.util.Optional;
 
 import static com.bytequay.core.domain.Checks.checkText;
+import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 /**
- * A saved rule: the file text the user wrote, which {@link RuleText} reads, the mode its record has earned, whether it is paused, and
- * when its record began. The mode lives here rather than in the text, so only the record can raise it.
+ * A saved rule: the file text the user wrote, which {@link RuleText} reads, its selected mode, whether it is paused, and
+ * when its record began. Only a direct activation grants Auto; observation history can offer Suggest.
  *
  * @param keptObserving when the user last chose to keep it observing, or moved it down; it is not offered a move up again until ten
  *         more of its runs are answered after that
  */
-public record AgentRule(String id, String text, Mode mode, boolean paused, Instant recordSince, Optional<Instant> keptObserving)
+public record AgentRule(String id, String text, Mode mode, boolean paused, Instant recordSince, Optional<Instant> keptObserving, long version)
 {
     public AgentRule
     {
@@ -35,6 +36,7 @@ public record AgentRule(String id, String text, Mode mode, boolean paused, Insta
         requireNonNull(mode, "mode is null");
         requireNonNull(recordSince, "recordSince is null");
         requireNonNull(keptObserving, "keptObserving is null");
+        checkArgument(version >= 0, "version is negative");
     }
 
     /** Observe only records what the rule would have done; Suggest does the work for the user to accept; Auto acts on it. */

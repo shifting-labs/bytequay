@@ -17,6 +17,7 @@ import com.bytequay.app.service.rules.AgentRuleService;
 import com.bytequay.app.service.rules.AgentRuleView;
 import com.bytequay.app.service.rules.RuleDefinition;
 import com.bytequay.core.domain.RuleRun;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -29,6 +30,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 import static com.bytequay.core.domain.Checks.checkText;
+import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 @RestController
@@ -46,6 +48,12 @@ public class AgentRulesController
     public List<AgentRuleView> list()
     {
         return rules.list();
+    }
+
+    @GetMapping("/runs")
+    public List<RuleRun> recentRuns()
+    {
+        return rules.recentRuns();
     }
 
     @GetMapping("/{id}/runs")
@@ -84,6 +92,12 @@ public class AgentRulesController
         return rules.remove(id);
     }
 
+    @PostMapping("/{id}/activate")
+    public List<AgentRuleView> activate(@PathVariable String id, @RequestBody ActivateRequest request)
+    {
+        return rules.activate(id, request.version());
+    }
+
     @PostMapping("/{id}/move-up")
     public List<AgentRuleView> moveUp(@PathVariable String id)
     {
@@ -118,6 +132,14 @@ public class AgentRulesController
     }
 
     public record PauseRequest(boolean paused) {}
+
+    public record ActivateRequest(@JsonProperty(required = true) long version)
+    {
+        public ActivateRequest
+        {
+            checkArgument(version >= 0, "Rule version must not be negative");
+        }
+    }
 
     public record DismissRequest(String key)
     {

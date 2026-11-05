@@ -16,16 +16,23 @@ package com.bytequay.persistence.sqlite.store;
 import com.bytequay.core.discussion.DiscussionSession;
 import com.bytequay.core.domain.AgendaTarget;
 import com.bytequay.core.domain.AssistantAction;
+import com.bytequay.core.domain.AssistantAssessment;
 import com.bytequay.core.domain.AssistantConversation;
 import com.bytequay.core.domain.AssistantDraft;
+import com.bytequay.core.domain.AssistantFollow;
 import com.bytequay.core.domain.AssistantItem;
 import com.bytequay.core.domain.AssistantList;
 import com.bytequay.core.domain.AssistantReceipt;
+import com.bytequay.core.domain.AssistantReport;
 import com.bytequay.core.domain.ServedRef;
+import com.bytequay.persistence.sqlite.converter.JsonColumns;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.Duration;
@@ -48,7 +55,39 @@ class TestSqliteAssistantStore
     private SqliteAssistantStore store;
 
     @Autowired
+    private SqliteAssistantFollowStore follows;
+
+    @Autowired
     private EntityManager entities;
+
+    @ParameterizedTest
+    @ValueSource(strings = {"READY", "DECISION", "FAILED"})
+    void retainedReportsRemainReadableAfterTheCardContractChanges(String oldState)
+            throws Exception
+    {
+        AssistantItem before = AssistantItem.user(CONVERSATION, AT, "Keep this history", ImmutableList.of(), Optional.empty(), "earlier-message");
+        AssistantItem report = AssistantItem.report(CONVERSATION, AT, "The original recorded result",
+                new AssistantReport(AssistantReport.State.RESULT_READY, "finished:turn-1", AgendaTarget.of(AgendaTarget.Kind.TASK, "workspace", "task-1")));
+        store.add(before);
+        store.add(report);
+        entities.flush();
+        ObjectNode value = (ObjectNode) JsonColumns.mapper().valueToTree(report);
+        ObjectNode card = (ObjectNode) value.get("report");
+        card.put("state", oldState);
+        card.remove(ImmutableList.of("sourceTurnId", "assessment", "evidence", "ruleActions", "outcome"));
+        entities.createNativeQuery("update assistant_conversation_item set value = ? where id = ?")
+                .setParameter(1, value.toString()).setParameter(2, report.id()).executeUpdate();
+        entities.clear();
+
+        assertThat(store.items(CONVERSATION)).hasSize(2).first().isEqualTo(before);
+        AssistantItem restored = store.items(CONVERSATION).getLast();
+        assertThat(restored.text()).isEqualTo(report.text());
+        AssistantReport restoredCard = restored.report().orElseThrow();
+        assertThat(restoredCard.state()).isEqualTo(oldState.equals("READY") ? AssistantReport.State.RESULT_READY : AssistantReport.State.ATTENTION);
+        assertThat(restoredCard.evidence()).isEmpty();
+        assertThat(restoredCard.ruleActions()).isEmpty();
+        assertThat(restoredCard.assessment()).isEmpty();
+    }
 
     @Test
     void keepsAConversationWithItsSessionAndServedRefs()
@@ -57,7 +96,7 @@ class TestSqliteAssistantStore
         AssistantConversation replied = new AssistantConversation(CONVERSATION, "what's waiting on me?", Optional.of("claude"), Optional.of("Sonnet"),
                 Optional.of(new DiscussionSession(1, "session-1")), ImmutableMap.of(
                         "pr:owner/repository#31402", new ServedRef("mine", Optional.of(AgendaTarget.pull(1, "owner/repository", 31402, Optional.of("ws1")))),
-                        "ws:ws1", new ServedRef("start_options", Optional.empty())), AT, AT.plusSeconds(20));
+                        "ws:ws1", new ServedRef("start_options", Optional.empty())), AT, AT.plusSeconds(20), 3);
         store.save(replied);
         entities.flush();
         entities.clear();
@@ -166,5 +205,49 @@ class TestSqliteAssistantStore
         assertThat(store.items(CONVERSATION)).isEmpty();
         assertThat(store.find(OTHER)).isPresent();
         assertThat(store.items(THIRD)).hasSize(1);
+    }
+
+    @Test
+    void aTaskReceiptAtomicallyKeepsItsFollowAndProtectsItsConversationFromRetention()
+    {
+        store.save(AssistantConversation.start(CONVERSATION, "Follow this work", AT));
+        AssistantItem receipt = AssistantItem.receipt(CONVERSATION, AT, "Started work",
+                AssistantReceipt.done(AssistantReceipt.Operation.START_TASK, Optional.of(AgendaTarget.of(AgendaTarget.Kind.TASK, "workspace", "task-1"))));
+        store.add(receipt);
+        store.add(receipt);
+        entities.flush();
+        entities.clear();
+
+        assertThat(store.items(CONVERSATION)).containsExactly(receipt);
+        assertThat(follows.follow(CONVERSATION, "task-1")).contains(new AssistantFollow(CONVERSATION, "task-1", AT, 0, "Started work"));
+        store.deleteBefore(AT.plus(Duration.ofDays(40)), LocalDate.ofInstant(AT, ZoneId.of("UTC")).plusDays(40));
+        assertThat(store.find(CONVERSATION)).isPresent();
+        assertThat(store.items(CONVERSATION)).containsExactly(receipt);
+    }
+
+    @Test
+    void keepsQueuedAssessmentAndEventCursorWhenThePersistenceContextReloads()
+    {
+        AssistantFollow follow = new AssistantFollow(CONVERSATION, "task-1", AT, 321, "Explain the retained result");
+        follows.save(follow);
+        AssistantItem item = AssistantItem.report(CONVERSATION, AT, "Result ready",
+                new AssistantReport(AssistantReport.State.RESULT_READY, "finished:turn-1", AgendaTarget.of(AgendaTarget.Kind.TASK, "workspace", "task-1")));
+        AssistantAssessment job = new AssistantAssessment(item.id(), CONVERSATION, "task-1", "source-version", item, "Explain the result", true, false,
+                AssistantAssessment.State.QUEUED);
+        follows.save(job);
+        entities.flush();
+        entities.clear();
+
+        assertThat(follows.follows()).containsExactly(follow);
+        assertThat(follows.followsTask("task-1")).isTrue();
+        assertThat(follows.followsTask("other-task")).isFalse();
+        assertThat(follows.result("task-1", "finished:turn-1", "Result ready")).contains(job);
+        assertThat(follows.result("task-1", "finished:turn-1", "Changed source")).isEmpty();
+        assertThat(follows.queued()).containsExactly(job);
+        follows.save(job.ended(AssistantAssessment.State.PUBLISHED));
+        entities.flush();
+        entities.clear();
+        assertThat(follows.queued()).isEmpty();
+        assertThat(follows.assessment(job.id())).contains(job.ended(AssistantAssessment.State.PUBLISHED));
     }
 }

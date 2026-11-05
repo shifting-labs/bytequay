@@ -34,6 +34,9 @@ public record RuleDefinition(
         List<String> paths,
         List<String> labels,
         List<String> authors,
+        List<String> hosts,
+        List<String> operations,
+        boolean ownedLines,
         Action action,
         Agreement agreement,
         int withinDays,
@@ -47,6 +50,8 @@ public record RuleDefinition(
         paths = ImmutableList.copyOf(paths);
         labels = ImmutableList.copyOf(labels);
         authors = ImmutableList.copyOf(authors);
+        hosts = ImmutableList.copyOf(hosts);
+        operations = ImmutableList.copyOf(operations);
         requireNonNull(action, "action is null");
         requireNonNull(agreement, "agreement is null");
         checkArgument(withinDays > 0, "withinDays must be positive");
@@ -57,7 +62,8 @@ public record RuleDefinition(
     public boolean sameTrigger(RuleDefinition other)
     {
         return event == other.event && repositories.equals(other.repositories) && paths.equals(other.paths) && labels.equals(other.labels)
-                && authors.equals(other.authors) && action == other.action && agreement == other.agreement && withinDays == other.withinDays;
+                && authors.equals(other.authors) && hosts.equals(other.hosts) && operations.equals(other.operations) && ownedLines == other.ownedLines
+                && action == other.action && agreement == other.agreement && withinDays == other.withinDays;
     }
 
     /**
@@ -76,7 +82,9 @@ public record RuleDefinition(
         PULL_REQUEST_UPDATED("pull-request-updated", true, ImmutableSet.of(Action.REVIEW, Action.TASK), ImmutableSet.of(Agreement.REVIEWED)),
         ISSUE_ASSIGNED("issue-assigned", false, ImmutableSet.of(Action.TASK), ImmutableSet.of(Agreement.STARTED_TASK)),
         PULL_REQUEST_BEHIND("pull-request-behind", true, ImmutableSet.of(Action.REBASE, Action.TASK), ImmutableSet.of(Agreement.UPDATED_BRANCH)),
-        PULL_REQUEST_MERGED("pull-request-merged", true, ImmutableSet.of(Action.BACKPORT, Action.TASK), ImmutableSet.of(Agreement.OPENED_BACKPORT));
+        PULL_REQUEST_MERGED("pull-request-merged", true, ImmutableSet.of(Action.BACKPORT, Action.TASK), ImmutableSet.of(Agreement.OPENED_BACKPORT)),
+        PULL_REQUEST_READY("pull-request-ready", true, ImmutableSet.of(Action.MERGE), ImmutableSet.of(Agreement.MERGED)),
+        PERMISSION_REQUESTED("permission-requested", false, ImmutableSet.of(Action.ALLOW), ImmutableSet.of(Agreement.ALLOWED));
 
         private final String key;
         private final boolean pullRequest;
@@ -119,7 +127,9 @@ public record RuleDefinition(
         REVIEW("review"),
         TASK("task"),
         REBASE("rebase"),
-        BACKPORT("backport");
+        BACKPORT("backport"),
+        MERGE("merge"),
+        ALLOW("allow");
 
         private final String key;
 
@@ -140,7 +150,9 @@ public record RuleDefinition(
         REVIEWED("reviewed"),
         STARTED_TASK("started-task"),
         UPDATED_BRANCH("updated-branch"),
-        OPENED_BACKPORT("opened-backport");
+        OPENED_BACKPORT("opened-backport"),
+        MERGED("merged"),
+        ALLOWED("allowed");
 
         private final String key;
 

@@ -39,10 +39,11 @@ import static java.util.Objects.requireNonNull;
  * @param updatedAt when the user last wrote in it or a reply last ended, which orders the history
  */
 public record AssistantConversation(String id, String title, Optional<String> laneId, Optional<String> model, Optional<DiscussionSession> session, Map<String, ServedRef> served,
-        Instant createdAt, Instant updatedAt)
+        Instant createdAt, Instant updatedAt, long reportCursor)
 {
     public AssistantConversation
     {
+        checkArgument(reportCursor >= 0, "reportCursor is negative");
         checkArgument(isId(id), "id is not a conversation id");
         checkText(title, "title");
         checkOptionalText(laneId, "laneId");
@@ -55,7 +56,7 @@ public record AssistantConversation(String id, String title, Optional<String> la
 
     public static AssistantConversation start(String id, String title, Instant at)
     {
-        return new AssistantConversation(id, title, Optional.empty(), Optional.empty(), Optional.empty(), ImmutableMap.of(), at, at);
+        return new AssistantConversation(id, title, Optional.empty(), Optional.empty(), Optional.empty(), ImmutableMap.of(), at, at, 0);
     }
 
     /** Whether the text is a conversation id: a UUID in its own spelling, so it is safe as a folder name. */

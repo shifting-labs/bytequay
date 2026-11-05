@@ -27,7 +27,11 @@ public interface RuleRunJpaRepository
 {
     List<RuleRunEntity> findByRuleIdOrderByOccurredAtDesc(String ruleId);
 
+    List<RuleRunEntity> findTop1000ByOrderByOccurredAtDesc();
+
+    List<RuleRunEntity> findByNeedsReconciliationTrueOrderByOccurredAtAsc();
+
     @Modifying
-    @Query("DELETE FROM RuleRunEntity e WHERE e.occurredAt < :cutoff")
+    @Query("DELETE FROM RuleRunEntity e WHERE e.occurredAt < :cutoff AND (e.needsReconciliation = false OR e.needsReconciliation IS NULL)")
     void deleteBefore(@Param("cutoff") Instant cutoff);
 }

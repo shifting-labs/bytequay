@@ -108,6 +108,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
+import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 
 import static com.bytequay.agent.spi.AgentProviderStatus.Readiness.TEMPORARILY_UNAVAILABLE;
@@ -314,6 +315,18 @@ public class AgentReviewService
         return prepare(workspaceId, repo, number, true, ImmutableList.of(), Optional.of(focus));
     }
 
+    /** A rule may create a review, but cannot claim or resume one the user opened concurrently. */
+    public Optional<AgentReviewProjection> startIfAbsent(String workspaceId, String repo, int number, String focus, BooleanSupplier authorized)
+    {
+        String repository = normalize(repo);
+        return withLock(startLocks.get(workspaceId + "/" + repository + "#" + number), () -> {
+            if (store.findOpenReview(workspaceId, repository, number).isPresent() || !authorized.getAsBoolean()) {
+                return Optional.empty();
+            }
+            return Optional.of(prepare(workspaceId, repository, number, true, ImmutableList.of(), Optional.of(focus)));
+        });
+    }
+
     /** Prepares the PR working copy for exploration without starting an agent review. */
     public AgentReviewProjection prepare(String workspaceId, String repo, int number)
     {
@@ -516,6 +529,17 @@ public class AgentReviewService
             }
             store.updateReview(current.withObservedHead(head, Instant.now(clock)));
             return resume(reviewId);
+        });
+    }
+
+    /** Accepts automatic follow-up while holding the same lock as a user's pause. */
+    public Optional<AgentReviewProjection> updateIfUnpaused(String reviewId, BooleanSupplier authorized)
+    {
+        return withLock(locks.lock(reviewId), () -> {
+            if (requireOpen(reviewId).followUpPaused() || !authorized.getAsBoolean()) {
+                return Optional.empty();
+            }
+            return Optional.of(update(reviewId));
         });
     }
 

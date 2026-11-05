@@ -35,6 +35,7 @@ public interface AgentApprovalJpaRepository
                 approval.forTask = :forTask,
                 approval.resolvedAt = :resolvedAt,
                 approval.timedOut = :timedOut,
+                approval.authorizationJson = :authorizationJson,
                 approval.outcome = :outcome
             WHERE approval.id = :id
                 AND approval.decision IS NULL
@@ -46,6 +47,7 @@ public interface AgentApprovalJpaRepository
             boolean forTask,
             Instant resolvedAt,
             boolean timedOut,
+            String authorizationJson,
             AgentEventPayload.ApprovalOutcome outcome);
 
     List<AgentApprovalEntity> findByTurnIdAndDecisionIsNullOrderByRequestedAtAscIdAsc(String turnId);

@@ -54,12 +54,17 @@ import com.bytequay.app.workspace.TaskPullRequestOwnership;
 import com.bytequay.core.ci.CiAutofixRun;
 import com.bytequay.core.ci.CiAutofixRunId;
 import com.bytequay.core.ci.CiAutofixStore;
+import com.bytequay.core.domain.AgendaTarget;
 import com.bytequay.core.domain.Artifact;
+import com.bytequay.core.domain.AssistantAssessment;
+import com.bytequay.core.domain.AssistantItem;
+import com.bytequay.core.domain.AssistantReport;
 import com.bytequay.core.domain.DiffFile;
 import com.bytequay.core.domain.PullRequest;
 import com.bytequay.core.domain.PullRequestDetail;
 import com.bytequay.core.domain.PullRequestRef;
 import com.bytequay.core.domain.RepoRef;
+import com.bytequay.core.domain.RuleAuthorization;
 import com.bytequay.core.domain.RuleRun;
 import com.bytequay.core.domain.Workspace;
 import com.bytequay.core.hosting.HostingServer;
@@ -70,6 +75,7 @@ import com.bytequay.core.review.ReviewRun;
 import com.bytequay.core.review.ReviewRunOverview;
 import com.bytequay.core.review.ReviewStep;
 import com.bytequay.core.store.ArtifactStore;
+import com.bytequay.core.store.AssistantFollowStore;
 import com.bytequay.core.store.PullRequestStore;
 import com.bytequay.core.store.WorkspaceStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -77,6 +83,8 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.file.Path;
 import java.time.Clock;
@@ -91,10 +99,12 @@ import static java.util.Comparator.comparing;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anySet;
+import static org.mockito.MockMakers.INLINE;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.withSettings;
 
 class TestAppNoticeService
 {
@@ -117,9 +127,10 @@ class TestAppNoticeService
     private final InMemoryAppSettingsStore settings = new InMemoryAppSettingsStore();
     private final InMemoryRuleRunStore ruleRuns = new InMemoryRuleRunStore();
     private final AgentRuleService rules = new AgentRuleService(settings, ruleRuns, new ObjectMapper().findAndRegisterModules(), Clock.fixed(NOW, ZoneOffset.UTC));
+    private final AssistantFollowStore follows = mock(AssistantFollowStore.class);
     private final RuleWork ruleWork = mock(RuleWork.class);
     private final AppNoticeService service = new AppNoticeService(tasks, turns, approvals, queues, reviews, pullRequests, ownership, ciRuns, next, artifacts, workspaces,
-            watchdog, rules, ruleWork, new ObjectMapper());
+            watchdog, rules, ruleWork, new ObjectMapper(), follows);
     private final AgentTask task = created(TaskId.random(), Optional.of("workspace"), true, "Fix recovery", new AgentLaneId("codex"),
             new RepositoryIdentity("owner", "repo"), Path.of("/tmp/notice-worktree"), AgentTaskDefaults.forPermission(AgentPermissionPolicy.AUTO), NOW);
 
@@ -163,7 +174,7 @@ class TestAppNoticeService
                 agrees-when: started-task
                 ---
                 Draft a plan.
-                """, AgentRule.Mode.SUGGEST, false, NOW.minusSeconds(60), Optional.empty()))));
+                """, AgentRule.Mode.SUGGEST, false, NOW.minusSeconds(60), Optional.empty(), 0))));
         RuleRun run = RuleRun.suggested("rule-1", "issue:900:github.com", "acme/warehouse#12", "Fix the importer", NOW).started("task:" + task.id());
         ruleRuns.save(run);
         when(ruleWork.resultTask(run)).thenReturn(Optional.of(task.id().toString()));
@@ -175,6 +186,176 @@ class TestAppNoticeService
             assertThat(notice.message()).isEqualTo("Start work on assigned issues · committed on this Mac; nothing is pushed until you do");
         });
         assertThat(service.current()).singleElement().extracting(AppNotice::kind).isEqualTo(AppNotice.Kind.TURN_FINISHED);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"MERGED", "QUEUED", "UNKNOWN"})
+    void automaticMergeOutcomesOpenTheRealPullRequestWithoutInventingATask(String outcome)
+    {
+        Workspace workspace = mock(Workspace.class, withSettings().mockMaker(INLINE));
+        when(workspace.id()).thenReturn("workspace");
+        when(workspace.server()).thenReturn(HostingServer.GITHUB_COM);
+        when(workspace.monitoredRepository()).thenReturn(RepoRef.of("owner", "repo"));
+        when(workspaces.findAll()).thenReturn(ImmutableList.of(workspace));
+        when(pullRequests.findById(58L)).thenReturn(Optional.of(linked(false, PullRequestDetail.CiStatus.PASSING, "open")));
+        RuleRun run = RuleRun.automatic(new RuleAuthorization("rule-merge", "Merge approved green PRs", 4), "pr:58:ready:head", "owner/repo#58", "Fix recovery", NOW)
+                .finished(outcome);
+        ruleRuns.save(run);
+
+        assertThat(service.alerts()).singleElement().satisfies(notice -> {
+            assertThat(notice.id()).contains("rule-action:rule-merge:").endsWith(outcome);
+            assertThat(notice.taskId()).isEqualTo("rule:rule-merge");
+            assertThat(notice.workspaceId()).isEqualTo("workspace");
+            assertThat(notice.pullRequest()).contains("owner/repo#58");
+            assertThat(notice.ruleRun()).contains(run);
+            assertThat(notice.kind()).isEqualTo(outcome.equals("UNKNOWN") ? AppNotice.Kind.FAILURE : AppNotice.Kind.TURN_FINISHED);
+            if (outcome.equals("QUEUED")) {
+                assertThat(notice.message()).isEqualTo("Waiting in the merge queue");
+            }
+        });
+        verify(tasks, never()).find(any());
+    }
+
+    @Test
+    void anUnknownPrivateReviewWithoutATaskStillLeavesAnActionableReceipt()
+    {
+        Workspace workspace = mock(Workspace.class, withSettings().mockMaker(INLINE));
+        when(workspace.id()).thenReturn("workspace");
+        when(workspace.server()).thenReturn(HostingServer.GITHUB_COM);
+        when(workspace.monitoredRepository()).thenReturn(RepoRef.of("owner", "repo"));
+        when(workspaces.findAll()).thenReturn(ImmutableList.of(workspace));
+        when(pullRequests.findById(58L)).thenReturn(Optional.of(linked(false, PullRequestDetail.CiStatus.PASSING, "open")));
+        RuleRun run = RuleRun.automatic(new RuleAuthorization("rule-review", "Review changes to my lines", 2), "pr:58:head:abc", "owner/repo#58", "Fix recovery", NOW)
+                .skip("Stopped before the review could be linked; inspect existing work before retrying").finished("UNKNOWN");
+        ruleRuns.save(run);
+
+        assertThat(service.alerts()).singleElement().satisfies(notice -> {
+            assertThat(notice.kind()).isEqualTo(AppNotice.Kind.FAILURE);
+            assertThat(notice.message()).contains("inspect existing work before retrying");
+            assertThat(notice.ruleRun()).contains(run);
+            assertThat(notice.pullRequest()).contains("owner/repo#58");
+        });
+        verify(tasks, never()).find(any());
+    }
+
+    @Test
+    void anOldPendingRuleFailureStillAlertsWhenItHasLeftTheRecentHistoryWindow()
+    {
+        Workspace workspace = mock(Workspace.class, withSettings().mockMaker(INLINE));
+        when(workspace.id()).thenReturn("workspace");
+        when(workspace.server()).thenReturn(HostingServer.GITHUB_COM);
+        when(workspace.monitoredRepository()).thenReturn(RepoRef.of("owner", "repo"));
+        when(workspaces.findAll()).thenReturn(ImmutableList.of(workspace));
+        when(pullRequests.findById(58L)).thenReturn(Optional.of(linked(false, PullRequestDetail.CiStatus.PASSING, "open")));
+        RuleRun pending = RuleRun.automatic(new RuleAuthorization("rule-review", "Review changes to my lines", 2), "pr:58:head:old", "owner/repo#58", "Fix recovery",
+                NOW.minus(Duration.ofDays(90))).skip("Inspect the interrupted review before retrying").finished("UNKNOWN");
+        AgentRuleService retainedRules = mock(AgentRuleService.class);
+        when(retainedRules.recentRuns()).thenReturn(ImmutableList.of());
+        when(retainedRules.pendingRuns()).thenReturn(ImmutableList.of(pending));
+        AppNoticeService retained = new AppNoticeService(tasks, turns, approvals, queues, reviews, pullRequests, ownership, ciRuns, next, artifacts, workspaces,
+                watchdog, retainedRules, ruleWork, new ObjectMapper(), follows);
+
+        assertThat(retained.alerts()).singleElement().satisfies(notice -> {
+            assertThat(notice.kind()).isEqualTo(AppNotice.Kind.FAILURE);
+            assertThat(notice.ruleRun()).contains(pending);
+            assertThat(notice.message()).contains("Inspect the interrupted review");
+        });
+        show(task, turn().finish(TurnState.COMPLETED, AgentMetrics.empty(), Optional.empty(), NOW.plusSeconds(10)));
+        RuleRun linked = pending.started("review:review-1");
+        when(retainedRules.pendingRuns()).thenReturn(ImmutableList.of(linked));
+        when(ruleWork.resultTask(linked)).thenReturn(Optional.of(task.id().toString()));
+        assertThat(retained.alerts()).singleElement().satisfies(notice -> {
+            assertThat(notice.kind()).isEqualTo(AppNotice.Kind.RECOVERY);
+            assertThat(notice.ruleRun()).contains(linked);
+            assertThat(notice.ruleRun().orElseThrow().outcome()).contains("UNKNOWN");
+            assertThat(notice.message()).contains("not been confirmed");
+        });
+    }
+
+    @Test
+    void followedTasksRetainTheRuleThatStartedTheirWork()
+    {
+        AgentTurn turn = turn();
+        show(task, turn.finish(TurnState.COMPLETED, AgentMetrics.empty(), Optional.empty(), NOW.plusSeconds(10)));
+        when(tasks.find(task.id())).thenReturn(Optional.of(task));
+        RuleRun run = RuleRun.automatic(new RuleAuthorization("rule-1", "Review changes to my lines", 3), "pr:58:head:abc", "owner/repo#58", "Fix recovery", NOW)
+                .started("review:review-1");
+        ruleRuns.save(run);
+        when(ruleWork.resultTask(run)).thenReturn(Optional.of(task.id().toString()));
+
+        assertThat(service.current(ImmutableList.of(task.id()))).singleElement()
+                .satisfies(notice -> assertThat(notice.ruleRun()).contains(run.finished("RESULT_READY")));
+        assertThat(service.alerts()).singleElement().satisfies(notice -> assertThat(notice.ruleRun()).contains(run.finished("RESULT_READY")));
+
+        show(task, turn.finish(TurnState.FAILED, AgentMetrics.empty(), Optional.of("Provider failed"), NOW.plusSeconds(10)));
+        assertThat(service.current(ImmutableList.of(task.id()))).singleElement().satisfies(notice -> assertThat(notice.ruleRun()).contains(run.finished("FAILED")));
+        assertThat(service.alerts()).singleElement().satisfies(notice -> assertThat(notice.ruleRun()).contains(run.finished("FAILED")));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"UNKNOWN", "STARTING"})
+    void anUnconfirmedRuleUpdateCannotPresentTheLinkedTasksOldResultAsSuccess(String outcome)
+    {
+        show(task, turn().finish(TurnState.COMPLETED, AgentMetrics.empty(), Optional.empty(), NOW.plusSeconds(10)));
+        when(tasks.find(task.id())).thenReturn(Optional.of(task));
+        RuleRun run = RuleRun.automatic(new RuleAuthorization("rule-1", "Review changes to my lines", 3), "pr:58:head:new", "owner/repo#58", "Fix recovery", NOW.plusSeconds(20))
+                .started("review:review-1").finished(outcome);
+        ruleRuns.save(run);
+        when(ruleWork.resultTask(run)).thenReturn(Optional.of(task.id().toString()));
+        assertThat(service.current(ImmutableList.of(task.id()))).singleElement().satisfies(notice -> {
+            assertThat(notice.kind()).isEqualTo(AppNotice.Kind.RECOVERY);
+            assertThat(notice.ruleRun()).contains(run);
+            assertThat(notice.message()).contains("not been confirmed");
+        });
+        assertThat(service.alerts()).singleElement().satisfies(notice -> {
+            assertThat(notice.kind()).isEqualTo(AppNotice.Kind.RECOVERY);
+            assertThat(notice.ruleRun().orElseThrow().outcome()).contains(outcome);
+        });
+    }
+
+    @Test
+    void followedResultsWaitForAssessmentAndQuietResultsNeverAlert()
+    {
+        show(task, turn().finish(TurnState.COMPLETED, AgentMetrics.empty(), Optional.empty(), NOW.plusSeconds(10)));
+        AppNotice notice = service.current().getFirst();
+        assertThat(service.alerts()).containsExactly(notice);
+        when(follows.followsTask(task.id().toString())).thenReturn(true);
+        assertThat(service.alerts()).isEmpty();
+        String source = notice.summaryLine();
+        AssistantReport report = new AssistantReport(AssistantReport.State.RESULT_READY, notice.id(),
+                AgendaTarget.of(AgendaTarget.Kind.TASK, "workspace", task.id().toString())).assessed("The fix passed its observed checks.");
+        AssistantItem item = new AssistantItem("assessment", "conversation", NOW, AssistantItem.Kind.REPORT, source, ImmutableList.of(), Optional.empty(),
+                Optional.empty(), ImmutableMap.of(), false, Optional.empty(), Optional.empty(), Optional.empty(), Optional.of(report));
+        AssistantAssessment job = new AssistantAssessment(item.id(), item.conversationId(), task.id().toString(), "fingerprint", item, "Fix recovery", true, false,
+                AssistantAssessment.State.QUEUED);
+        when(follows.result(task.id().toString(), notice.id(), source)).thenReturn(Optional.of(job));
+        assertThat(service.alerts()).isEmpty();
+        when(follows.result(task.id().toString(), notice.id(), source)).thenReturn(Optional.of(job.ended(AssistantAssessment.State.QUIET)));
+        assertThat(service.alerts()).isEmpty();
+        when(follows.result(task.id().toString(), notice.id(), source)).thenReturn(Optional.of(job.published(item)));
+        assertThat(service.alerts()).singleElement().satisfies(alert -> {
+            assertThat(alert.id()).isEqualTo(notice.id());
+            assertThat(alert.message()).isEqualTo("The fix passed its observed checks.");
+        });
+    }
+
+    @Test
+    void followingNeverDelaysAnApprovalQuestionFailureOrRecoveryAlert()
+    {
+        when(follows.followsTask(task.id().toString())).thenReturn(true);
+        AgentTurn active = turn();
+        show(task, active);
+        approval(active, ImmutableList.of("mvn verify"), "Run the tests");
+        assertThat(service.alerts()).singleElement().extracting(AppNotice::kind).isEqualTo(AppNotice.Kind.APPROVAL);
+        approval(active, ImmutableList.of("AskUserQuestion"), "Which branch?");
+        assertThat(service.alerts()).singleElement().extracting(AppNotice::kind).isEqualTo(AppNotice.Kind.QUESTION);
+        when(approvals.listPending()).thenReturn(ImmutableList.of());
+        show(task, active.finish(TurnState.FAILED, AgentMetrics.empty(), Optional.of("Provider failed"), NOW.plusSeconds(10)));
+        assertThat(service.alerts()).singleElement().extracting(AppNotice::kind).isEqualTo(AppNotice.Kind.FAILURE);
+        show(task.claimWorktreeMutation(WorktreeMutationClaim.recovery("launch", NOW), NOW),
+                active.finish(TurnState.COMPLETED, AgentMetrics.empty(), Optional.empty(), NOW.plusSeconds(10)));
+        assertThat(service.alerts()).singleElement().extracting(AppNotice::kind).isEqualTo(AppNotice.Kind.RECOVERY);
+        verify(follows, never()).result(any(), any(), any());
     }
 
     @Test

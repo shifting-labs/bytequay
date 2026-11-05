@@ -606,6 +606,8 @@
 .setw-rule-text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .setw-rule-actions { margin-top: 8px; }
 .setw-rule-check { margin-top: 10px; font-size: 12px; line-height: 1.6; color: light-dark(#6e6e73, var(--dark-muted)); }
+.setw-rule-instructions { margin: 8px 0; padding: 8px 10px; border-left: 2px solid light-dark(#e3e3e6, var(--dark-border-muted)); white-space: pre-wrap; overflow-wrap: anywhere; }
+.setw-rule-run-outcome { display: block; color: light-dark(#6e6e73, var(--dark-muted)); font-size: 11px; }
 .setw-rule-name { color: light-dark(#1d1d1f, var(--dark-text)); }
 .setw-rule-record { margin-top: 12px; max-height: 180px; overflow-y: auto; font-size: 12px; color: light-dark(#6e6e73, var(--dark-muted)); }
 .setw-rule-record-title { margin-bottom: 4px; }

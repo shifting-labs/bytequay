@@ -26,5 +26,11 @@ public interface RuleRunStore
     /** Newest first. */
     List<RuleRun> findByRule(String ruleId);
 
+    /** Recent execution records, including records whose rule has since been removed. */
+    List<RuleRun> recent();
+
+    /** All unfinished automatic operations, independent of the retained display-history window. */
+    List<RuleRun> pendingAutomatic();
+
     void deleteBefore(Instant cutoff);
 }

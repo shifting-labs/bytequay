@@ -895,7 +895,7 @@ class TestAssistantActions
     /** One call through a tool made for the message, as a run makes one; a retried run makes another for the same message. */
     private String act(AssistantItem message, Map<String, ServedRef> served, String arguments)
     {
-        AssistantContext context = new AssistantContext(mock(AssistantReader.class), DAY, message.visible(), message.onScreen(), served, mapper);
+        AssistantContext context = new AssistantContext(mock(AssistantReader.class), DAY, message.visible(), message.onScreen(), served, mapper, _ -> {});
         return actions.tool(message, context, receipts::add).call().apply(arguments);
     }
 

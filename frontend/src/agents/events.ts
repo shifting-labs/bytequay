@@ -12,7 +12,8 @@
  * limitations under the License.
  */
 
-import type { AgentHistoryPageDto, AgentPendingApprovalDto } from '../types';
+import { parseRuleAuthorization } from './contracts';
+import type { AgentHistoryPageDto, AgentPendingApprovalDto, RuleAuthorization } from '../types';
 import { count, flag as booleanValue, list as arrayValue, object as objectValue, oneOf as enumValue, text as stringValue } from '../pulls/wireParse';
 
 const EVENT_TYPES = [
@@ -142,6 +143,7 @@ export type AgentEventEnvelope =
     outcome: typeof APPROVAL_OUTCOMES[number];
     /** Whether the allow covers the task's later commands too. False on events stored before it existed. */
     forTask: boolean;
+    authorization?: RuleAuthorization | null;
   }>
   | AgentEvent<'usage', {
     semantics: typeof USAGE_SEMANTICS[number];
@@ -353,6 +355,9 @@ function validatePayload(type: typeof EVENT_TYPES[number], value: unknown, index
       enumValue(payload.outcome, APPROVAL_OUTCOMES, 'approvalResolved.outcome');
       if (payload.forTask === undefined) payload.forTask = false;
       booleanValue(payload.forTask, 'approvalResolved.forTask');
+      if (payload.authorization != null) {
+        payload.authorization = parseRuleAuthorization(payload.authorization, 'approvalResolved.authorization');
+      }
       break;
     case 'usage':
       enumValue(payload.semantics, USAGE_SEMANTICS, 'usage.semantics');

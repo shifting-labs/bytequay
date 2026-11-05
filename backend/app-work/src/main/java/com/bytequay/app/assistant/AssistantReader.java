@@ -251,6 +251,12 @@ class AssistantReader
         return facts("lookup", ref).orElseGet(() -> nothing("lookup"));
     }
 
+    /** Canonical execution task for a task or private-review reference, without exposing a second action target. */
+    Optional<String> taskRef(String ref)
+    {
+        return named(ref).map(named -> "task:" + named.task().id());
+    }
+
     /** What a task or review said last, by its agent or by the user, and how its latest turn ended. */
     Page result(String ref)
     {

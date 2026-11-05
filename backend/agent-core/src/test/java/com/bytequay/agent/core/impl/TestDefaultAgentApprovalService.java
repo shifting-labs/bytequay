@@ -37,7 +37,9 @@ import com.bytequay.agent.core.UnsequencedAgentEvent;
 import com.bytequay.agent.spi.AgentPermissionPolicy;
 import com.bytequay.agent.spi.ProviderAgentEventSource;
 import com.bytequay.agent.spi.ProviderApprovalRequest;
+import com.bytequay.agent.spi.ProviderApprovalScope;
 import com.bytequay.agent.spi.ProviderTurnRef;
+import com.bytequay.core.domain.RuleAuthorization;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import org.junit.jupiter.api.AfterEach;
@@ -61,6 +63,7 @@ import java.util.concurrent.Flow;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static com.bytequay.agent.spi.ProviderAgentEventSource.root;
 import static com.bytequay.agent.spi.ProviderApprovalRequest.Decision.ALLOW_FOR_TASK;
@@ -77,6 +80,7 @@ class TestDefaultAgentApprovalService
     private InMemoryAgentStores stores;
     private RecordingEventService eventService;
     private DefaultAgentApprovalService service;
+    private final AtomicReference<Optional<RuleAuthorization>> authorization = new AtomicReference<>(Optional.empty());
 
     @Test
     void providerApprovalMustOfferDeny()
@@ -108,13 +112,72 @@ class TestDefaultAgentApprovalService
                 eventService,
                 scheduler,
                 Clock.fixed(NOW, ZoneOffset.UTC),
-                new AgentRuntimeRegistry(stores, ignored -> {}, ignored -> false, true));
+                new AgentRuntimeRegistry(stores, ignored -> {}, ignored -> false, true), ignored -> authorization.get());
     }
 
     @AfterEach
     void tearDown()
     {
         scheduler.shutdownNow();
+    }
+
+    @Test
+    void aRuleAllowanceIsDurableBeforeTheProviderProceedsAndNeverBecomesPending()
+    {
+        RuleAuthorization rule = new RuleAuthorization("rule-1", "Allow GitHub network access", 7);
+        authorization.set(Optional.of(rule));
+        ApprovalRequest request = networkRequest();
+        eventService.approvalRequestCallback = () -> assertThat(stores.listPending()).isEmpty();
+
+        ApprovalDecision decision = service.request(request, Duration.ofMinutes(1)).toCompletableFuture().join();
+
+        assertThat(decision.decision()).isEqualTo(ApprovalDecision.Decision.ALLOW);
+        assertThat(decision.authorization()).contains(rule);
+        assertThat(decision.forTask()).isFalse();
+        assertThat(stores.find(request.id()).orElseThrow().decision()).contains(decision);
+        assertThat(service.listPending(request.turnId())).isEmpty();
+        assertThat(eventService.events).hasSize(2);
+        assertThat(eventService.events.getFirst().payload()).isInstanceOfSatisfying(AgentEventPayload.ApprovalRequested.class, event -> {
+            assertThat(event.actionable()).isFalse();
+            assertThat(event.availableDecisions()).isEmpty();
+        });
+        assertThat(eventService.events.getLast().payload()).isEqualTo(new AgentEventPayload.ApprovalResolved(
+                request.id().toString(), AgentEventPayload.ApprovalOutcome.ALLOWED, false, Optional.of(rule)));
+    }
+
+    @Test
+    void aRuleNeverAnswersAnUntypedRequestAndDoesNotCreateATaskWideGrant()
+    {
+        authorization.set(Optional.of(new RuleAuthorization("rule-1", "Network", 1)));
+        ApprovalRequest untyped = request(TurnId.random());
+        assertThat(service.request(untyped, Duration.ofMinutes(1)).toCompletableFuture()).isNotDone();
+        service.denyPending(untyped.turnId());
+        assertThat(service.request(networkRequest(), Duration.ofMinutes(1)).toCompletableFuture()).isDone();
+        authorization.set(Optional.empty());
+        ApprovalRequest afterPause = networkRequest();
+        assertThat(service.request(afterPause, Duration.ofMinutes(1)).toCompletableFuture()).isNotDone();
+        service.denyPending(afterPause.turnId());
+    }
+
+    @Test
+    void aRuleCannotAllowARequestAfterCancellation()
+    {
+        authorization.set(Optional.of(new RuleAuthorization("rule-1", "Network", 1)));
+        ApprovalRequest request = networkRequest();
+        stores.update(stores.find(request.turnId()).orElseThrow().requestCancellation(NOW));
+        assertThatThrownBy(() -> service.request(request, Duration.ofMinutes(1))).isInstanceOf(AgentConflictException.class)
+                .hasMessageContaining("no longer accepts decisions");
+        assertThat(stores.find(request.id())).isEmpty();
+    }
+
+    private ApprovalRequest networkRequest()
+    {
+        ApprovalRequest original = request(TurnId.random());
+        ProviderApprovalRequest provider = original.providerRequest();
+        return new ApprovalRequest(original.id(), original.taskId(), original.turnId(), new ProviderApprovalRequest(
+                provider.kind(), provider.title(), provider.detail(), provider.requestedPermissions(), provider.availableDecisions(), provider.taskScope(),
+                provider.sandboxed(), provider.source(), provider.requestedAt(), Optional.of(new ProviderApprovalScope(
+                        ProviderApprovalScope.Operation.NETWORK_ACCESS, ImmutableList.of("api.github.com"), Optional.empty()))), original.requestedAt());
     }
 
     @Test
@@ -460,7 +523,7 @@ class TestDefaultAgentApprovalService
                 restartedEvents,
                 scheduler,
                 Clock.fixed(NOW, ZoneOffset.UTC),
-                new AgentRuntimeRegistry(stores, ignored -> {}, ignored -> false, true));
+                new AgentRuntimeRegistry(stores, ignored -> {}, ignored -> false, true), ignored -> authorization.get());
 
         restarted.denyAllPending();
 
@@ -501,7 +564,7 @@ class TestDefaultAgentApprovalService
                 restartedEvents,
                 scheduler,
                 Clock.fixed(NOW, ZoneOffset.UTC),
-                new AgentRuntimeRegistry(stores, ignored -> {}, ignored -> false, true));
+                new AgentRuntimeRegistry(stores, ignored -> {}, ignored -> false, true), ignored -> authorization.get());
         assertThat(restarted.resolve(command).decision()).isEqualTo(ApprovalDecision.Decision.ALLOW);
         assertThat(stores.outboxEntries().getLast().sequence()).isPresent();
         assertThat(restartedEvents.events).singleElement().satisfies(event -> assertThat(event.payload()).isInstanceOf(AgentEventPayload.ApprovalResolved.class));

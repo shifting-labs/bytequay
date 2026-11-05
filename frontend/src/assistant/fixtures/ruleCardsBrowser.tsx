@@ -16,7 +16,7 @@ import { createFixtureRoot } from '../../fixtures/reactFixture';
 import { assert, button, runScenarios, settle } from '../../fixtures/harness';
 import type { AppNotice } from '../../notices/contracts';
 import type { Bridge } from '../../types';
-import { NoticeCard } from '../Cards';
+import { NoticeCard, ResultCard } from '../Cards';
 
 const RULE = '6f1c9a52-3d0e-4b8a-9a1d-2b7c4e5f6a70';
 
@@ -33,11 +33,14 @@ const RESULT: AppNotice = {
   occurredAt: '2026-11-04T09:30:00Z',
 };
 
-function render(notice: AppNotice) {
+function render(notice: AppNotice, result = false) {
   const { host, root, dispose } = createFixtureRoot();
   let opened = 0;
   let cleared = 0;
-  flushSync(() => root.render(<NoticeCard notice={notice} focused={false} onOpen={() => { opened++; }} onClear={() => { cleared++; }} />));
+  flushSync(() => root.render(result
+    ? <ResultCard notice={notice} onShow={target => { assert(target.kind === 'PULL' && target.number === 4530, 'Open resolves the pull request rather than a synthetic task'); opened++; }}
+      onOpen={() => { throw new Error('A rule without a task must not open a task'); }} onClear={() => { cleared++; }} />
+    : <NoticeCard notice={notice} focused={false} onOpen={() => { opened++; }} onClear={() => { cleared++; }} />));
   // Read through functions: an assertion on a plain field would narrow it to the count it checked.
   return { host, opened: () => opened, cleared: () => cleared, dispose };
 }
@@ -77,6 +80,25 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
         refused = false;
         card.dispose();
       }
+    }],
+    ['shows automatic merge outcomes with attribution and opens the actual pull request', async () => {
+      const notice: AppNotice = { ...RESULT, id: `rule-action:${RULE}:pr:4530`, taskId: `rule:${RULE}`, kind: 'TURN_FINISHED', reviewId: null, turnId: null,
+        message: 'Merged the approved pull request.', ruleRun: { subject: 'acme/warehouse#4530', title: 'Cache block reads', occurredAt: RESULT.occurredAt,
+          verdict: 'PENDING', suggestion: false, skipped: null, outcome: 'MERGED', authorization: { ruleId: RULE, ruleName: 'Merge approved work', ruleVersion: 2 } } };
+      const card = render(notice, true);
+      try {
+        assert(card.host.querySelector('[data-state="COMPLETED"]') !== null && card.host.textContent?.includes('under Merge approved work'), 'A verified merge is completed and attributed');
+        assert(!card.host.textContent?.includes('Check suggestion') && !card.host.textContent?.includes('Dismiss'), 'An already authorized action does not ask for acceptance');
+        button('Open pull request', card.host).click();
+        await settle();
+        assert(card.opened() === 1, 'Open uses the pull request');
+      }
+      finally { card.dispose(); }
+      const run = notice.ruleRun;
+      if (run == null) throw new Error('The result needs its rule run');
+      const uncertain = render({ ...notice, kind: 'FAILURE', ruleRun: { ...run, outcome: 'UNKNOWN' } }, true);
+      try { assert(uncertain.host.querySelector('[data-state="ATTENTION"]') !== null, 'Unknown remote outcomes need attention, never a retry or completion claim'); }
+      finally { uncertain.dispose(); }
     }],
     ["opens a rule's finished work, or dismisses it as the run it came from", async () => {
       const card = render(RESULT);

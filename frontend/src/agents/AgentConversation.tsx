@@ -472,7 +472,7 @@ export function PlanCard({ steps, open, onToggle, repository }: { steps: PlanSte
 }
 
 const OUTCOME_LABELS: Record<string, string> = {
-  ALLOWED: 'Approved once',
+  ALLOWED: 'Allowed once',
   DENIED: 'Denied',
   EXPIRED: 'Expired',
   CANCELLED: 'Cancelled',
@@ -586,8 +586,9 @@ function ApprovalView({ block, onDecide }: {
   const questions = approvalQuestions(block);
   if (block.outcome !== null) {
     const allowed = block.outcome === 'ALLOWED';
-    const outcome = allowed && questions.length > 0 ? 'Answered'
-      : block.outcome === 'ALLOWED' && block.forTask ? 'Approved for this task'
+    const outcome = allowed && block.authorization != null ? `Allowed under ${block.authorization.ruleName}`
+      : allowed && questions.length > 0 ? 'Answered'
+      : block.outcome === 'ALLOWED' && block.forTask ? 'Allowed for this task'
         : OUTCOME_LABELS[block.outcome] ?? block.outcome;
     return (
       <div className="agt-appr-done" role="group" aria-label={`Approval: ${block.title}`}>

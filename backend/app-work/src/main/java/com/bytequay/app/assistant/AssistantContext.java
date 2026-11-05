@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import static com.bytequay.agent.spi.ToolSchemas.object;
 import static com.google.common.base.Preconditions.checkArgument;
@@ -51,6 +52,7 @@ final class AssistantContext
     private static final int MAXIMUM_ARGUMENTS = 4096;
 
     private final AssistantReader reader;
+    private final Consumer<String> assess;
     private final LocalDate day;
     private final List<String> visible;
     private final Optional<String> onScreen;
@@ -62,9 +64,11 @@ final class AssistantContext
      * @param onScreen the ref of what the user was looking at
      * @param served the refs earlier messages in the conversation were handed
      */
-    AssistantContext(AssistantReader reader, LocalDate day, List<String> visible, Optional<String> onScreen, Map<String, ServedRef> served, ObjectMapper mapper)
+    AssistantContext(AssistantReader reader, LocalDate day, List<String> visible, Optional<String> onScreen, Map<String, ServedRef> served, ObjectMapper mapper,
+            Consumer<String> assess)
     {
         this.reader = requireNonNull(reader, "reader is null");
+        this.assess = requireNonNull(assess, "assess is null");
         this.day = requireNonNull(day, "day is null");
         this.visible = ImmutableList.copyOf(visible);
         this.onScreen = requireNonNull(onScreen, "onScreen is null");
@@ -128,7 +132,11 @@ final class AssistantContext
                 case "waiting" -> reader.waiting(visible);
                 case "screen" -> reader.screen(onScreen);
                 case "lookup" -> reader.lookup(ref);
-                case "result" -> reader.result(ref);
+                case "result" -> {
+                    AssistantReader.Page result = reader.result(ref);
+                    reader.taskRef(ref).ifPresent(assess);
+                    yield result;
+                }
                 case "search" -> reader.search(request.path("query").asText(""), page.asInt(0));
                 case "start_options" -> reader.startOptions();
                 default -> throw new IllegalArgumentException("Unknown kind " + kind);

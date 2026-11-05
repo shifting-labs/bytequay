@@ -30,6 +30,8 @@ export type AssistantView = Pill | 'conversation';
 /** What an empty composer suggests asking; Tab or → types it in. */
 export const SUGGESTION = 'What needs my attention first?';
 
+export const isRulesCommand = (text: string): boolean => text.trim() === '@rules';
+
 /** Tab or → in an empty composer, without modifiers, as a shell takes its suggestion: it types the one the composer shows. */
 export const takesSuggestion = (event: { key: string; shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }, draft: string): boolean =>
   (event.key === 'Tab' || event.key === 'ArrowRight') && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && draft.trim() === '';
@@ -55,9 +57,8 @@ export type WaitingCard = { key: string; group: 'decision' | 'finished'; at: num
   | { key: string; group: 'running'; at: number; task: RunningTask };
 
 /**
- * Newest first, one card for each task and each reviewed pull request: notices that wait on the user are Decisions, finished and failed
- * turns are Finished, and running tasks are Running. A newer card replaces an older one about the same thing, but only a Decision's own
- * task replaces it, so another task on the pull request never hides a question.
+ * Keep every pending decision, and the newest result or running card for each task and pull request. A task waiting on a decision
+ * appears there instead of also counting as running. Rule actions without tasks are independent results.
  */
 export function waitingCards(notices: AppNotice[], tasks: RunningTask[]): WaitingCard[] {
   const cards: WaitingCard[] = notices.map(notice => ({ key: notice.id, group: isDecision(notice) ? 'decision' : 'finished', at: Date.parse(notice.occurredAt), notice }));
@@ -65,11 +66,19 @@ export function waitingCards(notices: AppNotice[], tasks: RunningTask[]): Waitin
     if (task.status === 'RUNNING') cards.push({ key: `running:${task.id}`, group: 'running', at: Date.parse(task.startedAt), task });
   }
   const seen = new Set<string>();
+  const decisions = new Set(cards.filter(card => card.group === 'decision').map(card => 'notice' in card ? card.notice.taskId : ''));
   return cards.sort((left, right) => right.at - left.at).filter(card => {
-    const task = `task:${'notice' in card ? card.notice.taskId : card.task.id}`;
+    const task = 'notice' in card && card.notice.ruleRun != null && card.notice.taskId.startsWith('rule:') ? card.key
+      : `task:${'notice' in card ? card.notice.taskId : card.task.id}`;
     // A running task's repository is its workspace's, which can differ from the reviewed pull request's, so it matches by task only.
     const pull = 'notice' in card && card.notice.pullRequest !== null ? `pr:${card.notice.pullRequest.toLowerCase()}` : null;
-    const replaced = seen.has(task) || card.group !== 'decision' && pull !== null && seen.has(pull);
+    // Each pending request needs its own answer, even when a task asks more than one question.
+    if (card.group === 'decision') {
+      if (seen.has(card.key)) return false;
+      seen.add(card.key);
+      return true;
+    }
+    const replaced = decisions.has('notice' in card ? card.notice.taskId : card.task.id) || seen.has(task) || pull !== null && seen.has(pull);
     seen.add(task);
     if (pull !== null) seen.add(pull);
     return !replaced;

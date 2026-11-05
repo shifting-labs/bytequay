@@ -25,7 +25,9 @@ import org.hibernate.type.SqlTypes;
 import java.time.Instant;
 
 @Entity
-@Table(name = "rule_run", indexes = @Index(name = "idx_rule_run_rule_time", columnList = "rule_id,occurred_at"))
+@Table(name = "rule_run", indexes = {
+        @Index(name = "idx_rule_run_rule_time", columnList = "rule_id,occurred_at"),
+        @Index(name = "idx_rule_run_pending_time", columnList = "needs_reconciliation,occurred_at")})
 public class RuleRunEntity
 {
     // The rule and the event key, so a rule's second run for one event replaces the first.
@@ -37,6 +39,9 @@ public class RuleRunEntity
 
     @Column(name = "occurred_at", nullable = false)
     private Instant occurredAt;
+
+    @Column(name = "needs_reconciliation")
+    private Boolean needsReconciliation;
 
     @Column(name = "run", nullable = false, columnDefinition = "TEXT")
     @JdbcTypeCode(SqlTypes.JSON)
@@ -50,6 +55,7 @@ public class RuleRunEntity
         entity.id = run.ruleId() + ":" + run.key();
         entity.ruleId = run.ruleId();
         entity.occurredAt = run.occurredAt();
+        entity.needsReconciliation = run.needsReconciliation();
         entity.run = run;
         return entity;
     }

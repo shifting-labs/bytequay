@@ -38,6 +38,7 @@ import com.bytequay.app.workspace.TaskPullRequestOwnership;
 import com.bytequay.core.ci.CiAutofixRun;
 import com.bytequay.core.ci.CiAutofixStore;
 import com.bytequay.core.domain.Artifact;
+import com.bytequay.core.domain.AssistantAssessment;
 import com.bytequay.core.domain.PullRequest;
 import com.bytequay.core.domain.PullRequestDetail;
 import com.bytequay.core.domain.RuleRun;
@@ -46,6 +47,7 @@ import com.bytequay.core.review.AgentReviewStore;
 import com.bytequay.core.review.ReviewRun;
 import com.bytequay.core.review.ReviewRunOverview;
 import com.bytequay.core.store.ArtifactStore;
+import com.bytequay.core.store.AssistantFollowStore;
 import com.bytequay.core.store.PullRequestStore;
 import com.bytequay.core.store.WorkspaceStore;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -96,6 +98,7 @@ public class AppNoticeService
     private final AgentRuleService rules;
     private final RuleWork ruleWork;
     private final ObjectMapper mapper;
+    private final AssistantFollowStore follows;
 
     public AppNoticeService(
             AgentTaskStore tasks,
@@ -112,7 +115,8 @@ public class AppNoticeService
             TaskWatchdog watchdog,
             AgentRuleService rules,
             RuleWork ruleWork,
-            ObjectMapper mapper)
+            ObjectMapper mapper,
+            AssistantFollowStore follows)
     {
         this.tasks = requireNonNull(tasks, "tasks is null");
         this.turns = requireNonNull(turns, "turns is null");
@@ -129,6 +133,7 @@ public class AppNoticeService
         this.rules = requireNonNull(rules, "rules is null");
         this.ruleWork = requireNonNull(ruleWork, "ruleWork is null");
         this.mapper = requireNonNull(mapper, "mapper is null");
+        this.follows = requireNonNull(follows, "follows is null");
     }
 
     /**
@@ -138,11 +143,14 @@ public class AppNoticeService
     public List<AppNotice> alerts()
     {
         Map<String, Suggestion> suggestions = suggestions();
+        Map<String, RuleRun> automatic = automaticTasks();
         ImmutableList.Builder<AppNotice> alerts = ImmutableList.builder();
         for (AppNotice notice : current()) {
             Optional<Suggestion> suggestion = Optional.ofNullable(suggestions.get(notice.taskId())).filter(any -> notice.kind() == AppNotice.Kind.TURN_FINISHED);
-            alerts.add(suggestion.map(found -> suggested(notice, found)).orElse(notice));
+            AppNotice result = suggestion.map(found -> suggested(notice, found)).orElse(notice);
+            resultNotice(automatic.containsKey(notice.taskId()) ? automaticResult(result, automatic.get(notice.taskId())) : result).ifPresent(alerts::add);
         }
+        automaticResults().forEach(alerts::add);
         for (AgentRuleView rule : rules.movable()) {
             alerts.add(new AppNotice(RULE_NOTICE + rule.id() + ":" + rule.keptObserving().orElse(rule.recordSince()).toEpochMilli(), AppNotice.Kind.QUESTION,
                     RULE_NOTICE + rule.id(), RULES, Optional.empty(), Optional.empty(), clip(rule.rule().name(), 160), Optional.empty(), Optional.empty(), Optional.empty(),
@@ -159,6 +167,81 @@ public class AppNoticeService
         return alerts.build();
     }
 
+    private Optional<AppNotice> resultNotice(AppNotice notice)
+    {
+        if (notice.kind() != AppNotice.Kind.TURN_FINISHED) {
+            return Optional.of(notice);
+        }
+        String sourceLine = notice.summaryLine();
+        Optional<AssistantAssessment> result = follows.result(notice.taskId(), notice.id(), sourceLine);
+        if (result.isPresent()) {
+            return result.filter(job -> job.state() == AssistantAssessment.State.PUBLISHED)
+                    .map(job -> notice.withMessage(job.item().report().orElseThrow().assessment().orElse(notice.message())));
+        }
+        return follows.followsTask(notice.taskId()) ? Optional.empty() : Optional.of(notice);
+    }
+
+    private static AppNotice automaticResult(AppNotice notice, RuleRun run)
+    {
+        if (notice.kind() == AppNotice.Kind.TURN_FINISHED && run.outcome().filter(outcome -> outcome.equals("UNKNOWN") || outcome.equals("STARTING")).isPresent()) {
+            return new AppNotice("rule-action:" + run.ruleId() + ":" + run.key() + ":" + run.outcome().orElseThrow(), AppNotice.Kind.RECOVERY,
+                    notice.taskId(), notice.workspaceId(), notice.turnId(), notice.reviewId(), notice.title(), notice.pullRequest(), notice.pullRequestTitle(), notice.branch(),
+                    notice.changes(), run.skipped().orElse("The automatic action has not been confirmed; inspect existing work before retrying"), notice.repository(),
+                    notice.laneId(), notice.workItemId(), run.occurredAt(), Optional.empty(), Optional.of(run));
+        }
+        RuleRun projected = switch (notice.kind()) {
+            case TURN_FINISHED -> run.finished("RESULT_READY");
+            case FAILURE, RECOVERY -> run.finished("FAILED");
+            default -> run;
+        };
+        return notice.withRuleRun(projected);
+    }
+
+    private Map<String, RuleRun> automaticTasks()
+    {
+        Map<String, RuleRun> result = new HashMap<>();
+        automaticRuns().stream().filter(run -> run.authorization().isPresent() && run.work().isPresent())
+                .forEach(run -> ruleWork.resultTask(run).ifPresent(taskId -> result.putIfAbsent(taskId, run)));
+        return result;
+    }
+
+    private List<RuleRun> automaticRuns()
+    {
+        Map<String, RuleRun> result = new LinkedHashMap<>();
+        rules.pendingRuns().forEach(run -> result.put(run.ruleId() + ":" + run.key(), run));
+        rules.recentRuns().forEach(run -> result.put(run.ruleId() + ":" + run.key(), run));
+        return ImmutableList.copyOf(result.values());
+    }
+
+    private List<AppNotice> automaticResults()
+    {
+        ImmutableList.Builder<AppNotice> result = ImmutableList.builder();
+        for (RuleRun run : automaticRuns()) {
+            if (run.authorization().isEmpty() || run.outcome().isEmpty() || !run.key().startsWith("pr:")) {
+                continue;
+            }
+            String outcome = run.outcome().orElseThrow();
+            boolean failed = outcome.equals("FAILED") || outcome.equals("UNKNOWN");
+            if (!(failed || outcome.equals("MERGED") || outcome.equals("QUEUED")) || failed && ruleWork.resultTask(run).isPresent()) {
+                continue;
+            }
+            long prId = Long.parseLong(run.key().split(":", 3)[1]);
+            pullRequests.findById(prId).ifPresent(pr -> workspaces.findAll().stream()
+                    .filter(workspace -> RuleWork.watchedWorkspace(pr, workspace)).findFirst().ifPresent(workspace -> {
+                        result.add(new AppNotice("rule-action:" + run.ruleId() + ":" + run.key() + ":" + outcome,
+                                failed ? AppNotice.Kind.FAILURE : AppNotice.Kind.TURN_FINISHED, "rule:" + run.ruleId(), workspace.id(), Optional.empty(), Optional.empty(),
+                                pr.title(), Optional.of(run.subject()), Optional.of(pr.title()), Optional.empty(), Optional.empty(),
+                                switch (outcome) {
+                                    case "MERGED" -> "Pull request merged";
+                                    case "QUEUED" -> "Waiting in the merge queue";
+                                    case "UNKNOWN" -> run.skipped().orElse("Action outcome unknown; inspect the pull request before retrying");
+                                    default -> run.skipped().orElse("The automatic action could not finish");
+                                }, pr.repo(), "Rules", Optional.empty(), run.occurredAt(), Optional.empty(), Optional.of(run)));
+                    }));
+        }
+        return result.build();
+    }
+
     /** A rule's suggestion whose work waits on the user. */
     private record Suggestion(AgentRuleView rule, RuleRun run) {}
 
@@ -170,7 +253,7 @@ public class AppNoticeService
             if (rule.mode() != AgentRule.Mode.SUGGEST) {
                 continue;
             }
-            rules.record(rule.id()).stream().filter(run -> run.verdict() == RuleRun.Verdict.PENDING && run.work().isPresent())
+            rules.record(rule.id()).stream().filter(run -> run.authorization().isEmpty() && run.verdict() == RuleRun.Verdict.PENDING && run.work().isPresent())
                     .forEach(run -> ruleWork.resultTask(run).ifPresent(taskId -> waiting.put(taskId, new Suggestion(rule, run))));
         }
         return waiting;
@@ -200,7 +283,9 @@ public class AppNoticeService
     {
         Map<TaskId, AgentTask> candidates = new LinkedHashMap<>();
         taskIds.forEach(id -> tasks.find(id).ifPresent(task -> candidates.put(id, task)));
-        return notices(candidates);
+        Map<String, RuleRun> automatic = automaticTasks();
+        return notices(candidates).stream().map(notice -> automatic.containsKey(notice.taskId()) ? automaticResult(notice, automatic.get(notice.taskId())) : notice)
+                .collect(ImmutableList.toImmutableList());
     }
 
     private List<AppNotice> notices(Map<TaskId, AgentTask> candidates)

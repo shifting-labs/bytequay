@@ -558,8 +558,10 @@ starts nothing.
 
 The Assistant panel keeps a conversation for each topic, each with its own
 tools-only session and folder, resumed when the user goes back to it from the
-history. The panel names a new conversation itself, so a message sent twice
-still begins it once. A session has no shell, file or web tools, only
+history. Each conversation serializes its own foreground replies; another
+conversation can answer concurrently, and Stop addresses only that conversation.
+The panel names a new conversation itself, so a message sent twice still begins
+it once. A session has no shell, file or web tools, only
 `assistant_context`, which reads the agenda's stored data plus what runs now,
 what is on screen and what a search of stored items finds, `assistant_act`, and
 `assistant_show`, which changes no data. A list it shows holds only references
@@ -587,6 +589,46 @@ Epic, add work to one, create a work item titled with the user's words, and
 acknowledge or snooze a Needs attention item, all of it local. Each call is
 logged and leaves a receipt in the conversation, and the switches that let it
 act are off by default.
+
+A task-start or task-reply receipt atomically saves the conversation's follow
+relationship and request context. Several conversations can follow the same task.
+Following has no one-day expiry or history-list cutoff. A follow retains its
+conversation while the work remains open; completed linked work ends following.
+A task ending alone reports that its result can be reviewed, and does not claim
+that the user's work is complete. The task event cursor durably replays resolved
+approval receipts, including the exact saved rule and version that authorized
+one. Automatic grants stay quiet in the durable record and are included as
+individual permission receipts on the result; their displayed counts come from
+those receipts. Event replay finishes before a result is summarized. Other task
+cards project the current app state; this is not a replay of
+every intermediate task state.
+
+Result interpretation runs in separate bounded, tool-free provider sessions
+with their own scratch folders. Reading a task or review result queues that
+interpretation and immediately returns the stored facts, so the user can keep
+chatting. Jobs retain source fingerprints and publication keys in SQLite;
+restarting can repeat read-only interpretation, but cannot duplicate its card or
+replay an action. The worker reads a bounded selection of retained messages,
+command outcomes and lifecycle events, without copying task logs or blobs into
+another transcript. It checks source freshness before publishing. Changed
+sources supersede the old job; missing or invalid model output keeps the
+app-owned result without an interpretation. Automatic interpretations can
+remain quiet when they add nothing useful; explicitly requested interpretations
+are delivered. For followed tasks, routine global result alerts wait for the same
+durable decision and use its saved summary. Quiet results do not alert. Unfollowed
+tasks retain their existing alerts. Approval requests, questions, failures and
+recovery never wait for that judgment.
+
+Reports use seven app-owned card kinds: approval required, answer required,
+proposal, result ready, completed work, attention, and progress. Resolved
+approvals remain permission receipts, including answered questions and rule
+provenance; they never become work-completion claims. Active user-authorized
+rules are supplied as bounded foreground context, while their executors enforce
+the scope. Each foreground session retains the report cursor it actually read;
+a report arriving during inference remains available to the next turn. No
+background session resumes or updates a foreground provider session. Foreground
+messages waiting behind a reply remain in memory and are not automatically
+replayed after a restart; their saved user messages remain in the conversation.
 
 ## Trust and external services
 
@@ -623,6 +665,28 @@ scope. Repository content, model output, and a private discussion cannot grant
 that authority. An Assistant action counts as the user's direct action only within
 the bounds above: the user's own words, in the message that asked for it. Preview and execution must remain bound to the accepted target;
 uncertain remote outcomes are reconciled instead of blindly repeated.
+
+Activated Rules use the existing approval, private-review, and checked-merge
+services. A rule revision is explicit prior authority; observation history never
+grants it. The approval boundary matches typed operations and exact hosts before
+publishing a pending request, and persists the resolution and rule attribution
+together. Generic shell text is insufficient to authorize a permission.
+
+Rule-triggered merges refresh the PR and validate the owned current head,
+approval, checks, permissions, and rule scope before calling the existing merge
+operation. Task automation and Rules share a persisted PR operation reservation,
+including its initiating action, so concurrent rules neither send nor claim the
+same merge twice. A queue entry remains progress. An uncertain outcome remains
+attention and prevents an automatic resend. Reconciliation of an accepted merge
+continues after its rule is paused, edited, or removed.
+
+An automatic private review records its start before invoking the review service.
+An interrupted start becomes an uncertain result rather than replaying silently.
+Only a review previously started by the same rule can receive automatic updates;
+the user's pause remains effective. Changed-line ownership uses bounded local
+blame at the fetched PR merge base, matching the local Git email or the selected
+GitHub login's noreply email. This is last-author attribution, not an inference
+from the user's conversation history.
 
 The existing draft-publication turn receives a `publicPublication` flag resolved
 by ByteQuay through the selected hosting account. Either a public push repository

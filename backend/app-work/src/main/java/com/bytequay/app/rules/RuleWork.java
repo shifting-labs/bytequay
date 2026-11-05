@@ -20,15 +20,21 @@ import com.bytequay.agent.core.TaskState;
 import com.bytequay.agent.core.store.AgentTaskStore;
 import com.bytequay.agent.core.store.AgentTurnStore;
 import com.bytequay.app.agenda.ItemTaskStarter;
+import com.bytequay.app.merge.AutoMergeService;
 import com.bytequay.app.review.AgentReviewService;
+import com.bytequay.app.service.pr.PullRequestRead;
 import com.bytequay.app.service.pr.PullRequestService;
+import com.bytequay.app.service.rules.AgentRuleService;
 import com.bytequay.app.service.rules.AgentRuleView;
 import com.bytequay.app.service.rules.RuleDefinition;
 import com.bytequay.app.utils.ContextText;
 import com.bytequay.app.workspace.TaskPullRequestOwnership;
+import com.bytequay.core.domain.DiffFile;
 import com.bytequay.core.domain.PullRequest;
+import com.bytequay.core.domain.PullRequestDetail;
 import com.bytequay.core.domain.RuleRun;
 import com.bytequay.core.domain.Workspace;
+import com.bytequay.core.merge.AutoMerge;
 import com.bytequay.core.review.AgentReview;
 import com.bytequay.core.review.AgentReviewStore;
 import com.bytequay.core.review.ReviewFinding;
@@ -41,6 +47,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
+import java.net.URI;
+import java.nio.file.FileSystems;
+import java.nio.file.Path;
+import java.nio.file.PathMatcher;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -48,17 +58,20 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 import static com.bytequay.app.config.AsyncConfig.IO_EXECUTOR;
 import static com.bytequay.core.domain.RuleRun.Verdict.AGREED;
 import static com.bytequay.core.domain.RuleRun.Verdict.DISAGREED;
 import static com.bytequay.core.domain.RuleRun.Verdict.EDITED;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 
 /**
- * Does a rule's work in Suggest and reads back what the user did with it. A review only drafts findings, and a task only commits on this
- * Mac, so nothing reaches GitHub until the user publishes or pushes it themselves; what they do then is the run's verdict.
+ * Starts suggested work and explicitly authorized actions through their existing services. Reviews draft findings, tasks commit locally,
+ * and activated merge rules carry the user's reviewed scope to the merge boundary. Suggestion verdicts remain separate from action receipts.
  */
 @Component
 public class RuleWork
@@ -78,12 +91,15 @@ public class RuleWork
     private final TaskPullRequestOwnership ownership;
     private final RuleRunStore runs;
     private final ExecutorService executor;
-    // ponytail: in memory, so a run still starting when ByteQuay stops is set aside at the next check rather than resumed.
+    private final AgentRuleService rules;
+    private final AutoMergeService merges;
+    private final RuleLineOwnership lineOwnership;
+    // Prevents duplicate dispatch in this process; the durable STARTING receipt prevents replay after an uncertain review start.
     private final Set<String> starting = ConcurrentHashMap.newKeySet();
 
     public RuleWork(AgentReviewService reviewer, AgentReviewStore reviews, PullRequestService reads, PullRequestStore pullRequests, WorkspaceStore workspaces,
             ItemTaskStarter starter, AgentTaskStore tasks, AgentTurnStore turns, TaskPullRequestOwnership ownership, RuleRunStore runs,
-            @Qualifier(IO_EXECUTOR) ExecutorService executor)
+            @Qualifier(IO_EXECUTOR) ExecutorService executor, AgentRuleService rules, AutoMergeService merges, RuleLineOwnership lineOwnership)
     {
         this.reviewer = requireNonNull(reviewer, "reviewer is null");
         this.reviews = requireNonNull(reviews, "reviews is null");
@@ -96,29 +112,126 @@ public class RuleWork
         this.ownership = requireNonNull(ownership, "ownership is null");
         this.runs = requireNonNull(runs, "runs is null");
         this.executor = requireNonNull(executor, "executor is null");
+        this.rules = requireNonNull(rules, "rules is null");
+        this.merges = requireNonNull(merges, "merges is null");
+        this.lineOwnership = requireNonNull(lineOwnership, "lineOwnership is null");
     }
 
     /** Starts the run's work away from the scheduler, since it fetches and checks out; the run then names it, or says why it has none. */
     public void start(AgentRuleView rule, RuleRun run)
     {
-        String id = run.ruleId() + ":" + run.key();
-        starting.add(id);
-        executor.execute(() -> {
-            RuleRun done;
+        if (run.outcome().filter("STARTING"::equals).isPresent()) {
+            reconcileInterruptedReview(run);
+            return;
+        }
+        if (acceptedMerge(run)) {
+            reconcileMerge(run);
+            return;
+        }
+        dispatch(run, () -> execute(rule, run));
+    }
+
+    /** Startup uncertainty belongs to the accepted attempt, independent of later rule edits or deletion. */
+    public void reconcileInterruptedReview(RuleRun run)
+    {
+        dispatch(run, () -> {
+            RuleRun current = saved(run);
+            return current.outcome().filter("STARTING"::equals).isPresent() ? uncertainReview(current) : current;
+        });
+    }
+
+    /** An accepted external operation is observed even after its original rule is changed or removed. */
+    public void reconcileMerge(RuleRun run)
+    {
+        dispatch(run, () -> {
             try {
-                done = rule.rule().action() == RuleDefinition.Action.REVIEW ? review(rule, run) : task(rule, run);
+                return merge(run, Optional.empty(), () -> false);
             }
             catch (RuntimeException failure) {
-                log.warn("Rule {} could not start its work for {}", rule.id(), run.subject(), failure);
-                done = run.skip(clip("Could not start: " + Optional.ofNullable(failure.getMessage()).orElse(failure.getClass().getSimpleName())));
-            }
-            try {
-                runs.save(done);
-            }
-            finally {
-                starting.remove(id);
+                log.warn("Rule {} could not read its accepted merge for {}", run.ruleId(), run.subject(), failure);
+                return run;
             }
         });
+    }
+
+    static boolean acceptedMerge(RuleRun run)
+    {
+        return run.authorization().isPresent() && run.key().contains(":ready:")
+                && run.outcome().filter(value -> value.equals("QUEUED") || value.equals("UNKNOWN")).isPresent();
+    }
+
+    private void dispatch(RuleRun run, Supplier<RuleRun> action)
+    {
+        String id = run.ruleId() + ":" + run.key();
+        if (!starting.add(id)) {
+            return;
+        }
+        try {
+            executor.execute(() -> {
+                try {
+                    runs.save(action.get());
+                }
+                finally {
+                    starting.remove(id);
+                }
+            });
+        }
+        catch (RuntimeException failure) {
+            starting.remove(id);
+            throw failure;
+        }
+    }
+
+    private RuleRun execute(AgentRuleView rule, RuleRun run)
+    {
+        if (rule.rule().action() == RuleDefinition.Action.REVIEW) {
+            RuleRun saved = saved(run);
+            if (saved.outcome().filter("STARTING"::equals).isPresent()) {
+                return uncertainReview(saved);
+            }
+            if (saved.work().isPresent() || saved.outcome().filter("UNKNOWN"::equals).isPresent()) {
+                return saved;
+            }
+        }
+        try {
+            if (!authorized(run)) {
+                return run.skip("The rule changed or was paused").finished("CANCELLED");
+            }
+            return switch (rule.rule().action()) {
+                case REVIEW -> review(rule, run);
+                case TASK -> task(rule, run);
+                case MERGE -> merge(run, Optional.of(rule.rule()), () -> authorized(run));
+                case ALLOW, REBASE, BACKPORT -> run.skip("This action does not run from a rule event");
+            };
+        }
+        catch (RuntimeException failure) {
+            log.warn("Rule {} could not start its work for {}", rule.id(), run.subject(), failure);
+            if (rule.rule().action() == RuleDefinition.Action.MERGE && run.authorization().isPresent()) {
+                return run.started("pr:" + pullRequestId(run)).finished("UNKNOWN");
+            }
+            RuleRun saved = saved(run);
+            if (rule.rule().action() == RuleDefinition.Action.REVIEW && saved.outcome().filter("STARTING"::equals).isPresent()) {
+                return uncertainReview(saved);
+            }
+            return run.skip(clip("Could not start: " + Optional.ofNullable(failure.getMessage()).orElse(failure.getClass().getSimpleName()))).finished("FAILED");
+        }
+    }
+
+    private RuleRun saved(RuleRun run)
+    {
+        return runs.findByRule(run.ruleId()).stream().filter(each -> each.key().equals(run.key())).findFirst().orElse(run);
+    }
+
+    private boolean authorized(RuleRun run)
+    {
+        return run.authorization().isEmpty() || run.authorization()
+                .filter(authorization -> rules.authorization(authorization.ruleId(), authorization.ruleVersion()).isPresent()).isPresent();
+    }
+
+    private static RuleRun uncertainReview(RuleRun run)
+    {
+        return (run.work().isPresent() ? run : run.skip("The review may have started before ByteQuay stopped; inspect the pull request before retrying"))
+                .finished("UNKNOWN");
     }
 
     /**
@@ -138,8 +251,8 @@ public class RuleWork
         if (workspace.isEmpty()) {
             return Optional.of("Not in a watched repository");
         }
-        return reviewer.find(workspace.orElseThrow().id(), pr.orElseThrow().repo(), pr.orElseThrow().number()).isPresent()
-                ? Optional.of("Already has a review") : Optional.empty();
+        return reviewer.find(workspace.orElseThrow().id(), pr.orElseThrow().repo(), pr.orElseThrow().number())
+                .filter(existing -> !canUpdate(rule, run, existing.review())).map(existing -> "Already has a review");
     }
 
     /** Whether the run's work is still being started. */
@@ -152,7 +265,40 @@ public class RuleWork
     public Optional<String> resultTask(RuleRun run)
     {
         return run.work().flatMap(work -> work.startsWith(REVIEW) ? reviews.findReview(work.substring(REVIEW.length())).map(AgentReview::taskId)
-                : Optional.of(work.substring(TASK.length())));
+                : work.startsWith(TASK) ? Optional.of(work.substring(TASK.length())) : Optional.empty());
+    }
+
+    private RuleRun merge(RuleRun run, Optional<RuleDefinition> definition, BooleanSupplier authorized)
+    {
+        PullRequest pr = pullRequests.findById(pullRequestId(run)).orElseThrow();
+        Workspace workspace = watched(pr).orElseThrow(() -> new IllegalStateException("Not in a watched repository"));
+        if (run.authorization().isEmpty()) {
+            throw new IllegalStateException("Activate the merge rule first");
+        }
+        var route = reads.prepareRead(workspace.id(), pr.repo(), pr.number());
+        String head = run.key().substring(run.key().lastIndexOf(':') + 1);
+        AutoMerge result = merges.mergeAuthorized(route, pr, head, run.ruleId() + ":" + run.key(),
+                fresh -> definition.filter(rule -> matches(rule, fresh, route.login()) && touches(rule, workspace, route, fresh)).isPresent(), authorized);
+        return run.started("pr:" + pr.id()).finished(result.outcome().map(Enum::name).orElse("WAITING"));
+    }
+
+    private static boolean matches(RuleDefinition rule, PullRequestDetail fresh, String viewer)
+    {
+        return (rule.repositories().isEmpty() || rule.repositories().stream().anyMatch(fresh.repo()::equalsIgnoreCase))
+                && (rule.labels().isEmpty() || fresh.labels().stream().anyMatch(label -> rule.labels().stream().anyMatch(label.name()::equalsIgnoreCase)))
+                && (rule.authors().isEmpty() || rule.authors().stream()
+                        .anyMatch(author -> fresh.author() != null && fresh.author().equalsIgnoreCase(author.equals("@me") ? viewer : author)));
+    }
+
+    private boolean touches(RuleDefinition rule, Workspace workspace, PullRequestRead route, PullRequestDetail fresh)
+    {
+        if (rule.paths().isEmpty() && !rule.ownedLines()) {
+            return true;
+        }
+        List<PathMatcher> globs = rule.paths().stream().map(glob -> FileSystems.getDefault().getPathMatcher("glob:" + glob)).collect(toImmutableList());
+        List<DiffFile> matching = reads.getValidatedPullRequestDiffFiles(route, fresh.headSha()).stream()
+                .filter(file -> globs.isEmpty() || globs.stream().anyMatch(glob -> glob.matches(Path.of(file.filename())))).collect(toImmutableList());
+        return !matching.isEmpty() && (!rule.ownedLines() || lineOwnership.touches(workspace, route, fresh.headSha(), fresh.baseRef(), matching));
     }
 
     /** The run as the user's handling of its work leaves it: decided, set aside with a reason, or unchanged while it waits. */
@@ -172,12 +318,52 @@ public class RuleWork
         PullRequest pr = pullRequests.findById(pullRequestId(run)).orElseThrow();
         String workspaceId = watched(pr).orElseThrow().id();
         reads.prepareRead(workspaceId, pr.repo(), pr.number());
-        return run.started(REVIEW + reviewer.start(workspaceId, pr.repo(), pr.number(), rule.rule().body()).review().id());
+        if (!authorized(run)) {
+            return run.skip("The rule changed or was paused").finished("CANCELLED");
+        }
+        Optional<AgentReview> existing = reviewer.find(workspaceId, pr.repo(), pr.number()).map(projection -> projection.review());
+        if (existing.isPresent()) {
+            AgentReview review = existing.orElseThrow();
+            if (!canUpdate(rule, run, review)) {
+                return run.skip("Already has a review");
+            }
+            RuleRun linked = run.started(REVIEW + review.id());
+            runs.save(linked.finished("STARTING"));
+            return reviewer.updateIfUnpaused(review.id(), () -> authorized(run))
+                    .map(updated -> linked.finished("STARTED"))
+                    .orElseGet(() -> run.skip("The review or rule was paused or changed").finished("CANCELLED"));
+        }
+        runs.save(run.finished("STARTING"));
+        return reviewer.startIfAbsent(workspaceId, pr.repo(), pr.number(), rule.rule().body(), () -> authorized(run))
+                .map(started -> run.started(REVIEW + started.review().id()).finished("STARTED"))
+                .orElseGet(() -> run.skip("A review already exists or the rule changed").finished("CANCELLED"));
+    }
+
+    private boolean canUpdate(AgentRuleView rule, RuleRun run, AgentReview review)
+    {
+        return run.authorization().isPresent() && rule.rule().event() == RuleDefinition.Event.PULL_REQUEST_UPDATED
+                && review.state() == AgentReview.State.OPEN && !review.followUpPaused()
+                && runs.findByRule(rule.id()).stream().anyMatch(previous -> previous.work().equals(Optional.of(REVIEW + review.id())));
     }
 
     private Optional<Workspace> watched(PullRequest pr)
     {
-        return workspaces.findAll().stream().filter(each -> each.monitoredRepository().fullName().equalsIgnoreCase(pr.repo())).findFirst();
+        return workspaces.findAll().stream().filter(each -> watchedWorkspace(pr, each)).findFirst();
+    }
+
+    public static boolean watchedWorkspace(PullRequest pr, Workspace workspace)
+    {
+        if (!workspace.monitoredRepository().fullName().equalsIgnoreCase(pr.repo()) || pr.htmlUrl() == null) {
+            return false;
+        }
+        try {
+            URI url = URI.create(pr.htmlUrl());
+            URI server = workspace.server().webBaseUrl();
+            return server.getHost().equalsIgnoreCase(url.getHost()) && server.getPort() == url.getPort();
+        }
+        catch (IllegalArgumentException invalid) {
+            return false;
+        }
     }
 
     private static long pullRequestId(RuleRun run)

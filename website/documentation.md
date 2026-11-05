@@ -215,11 +215,11 @@ allowance.
 1. Press **⌘J**, or type in the composer under My work on Home, and ask what
    needs you, or about the item on screen.
 2. The pills under the composer open one view each: **All**, **Decision**,
-   **Running**, **Finished**, **Today**, and **My work**. Click the open pill
+   **Running**, **Results**, **Today**, and **My work**. Click the open pill
    again to go back to the conversation. Answer approvals and questions right
-   on Decision's cards; a failed turn shows under Finished with why. A finished
+   on Decision's cards; a failed turn shows under Results with why. A finished
    task with a pull request shows where it stands, such as a draft PR or
-   failing checks, and **Review** opens it. A result you open leaves Finished.
+   failing checks, and **Review** opens it. A result you open leaves Results.
 3. Ask it to find work or open a page, such as a repository's Tasks. A page
    with a message box, such as a task, opens with the cursor in it. Pull
    request cards can **Approve**, **Merge**, **Comment**, and, on your own PRs,
@@ -231,14 +231,32 @@ allowance.
 6. Start a new topic with **New conversation** or **⌘N**. After 15 minutes
    away, ⌘J opens on a new one. Go back to an earlier one from the clock
    button to keep going.
-7. Keep typing while it answers: a message you send then waits in line, and
-   each is answered in turn.
+7. Keep typing while it answers: messages in the same conversation wait in
+   order. Tasks and result reviews run in the background, so you can keep
+   chatting with the same Assistant. **Stop this reply** stops only its current
+   reply; **Stop work…** on a task asks before stopping that task’s current turn.
+
+The card’s label tells you what happens next:
+
+- **Approval required** — allow or deny a specific action with the task’s buttons.
+- **Answer needed** — answer a question before the work can continue.
+- **Proposal** — review a suggestion before adopting it or creating anything.
+- **Result ready** — inspect the work; a finished turn still needs your review.
+- **Completed** — the work’s completion condition has been verified.
+- **Needs attention** — inspect a blocker, failure, or uncertain outcome.
+- **Progress** — work is continuing; open it for details or stop its current turn.
+
+Reports keep their findings and evidence in the conversation after a notice is
+cleared. A permission receipt says **Allowed**, **Denied**, or **Answered**;
+it does not mean the work is completed. **Evidence** and rule receipts expand
+to show the supporting records. Type **@rules** on its own, or choose **Rules**
+in the composer, to inspect and activate your rules.
 
 **⇧⌘J** opens the task that has waited longest on your decision, and the Dock
 counts what Decision counts. Task alerts also show as macOS notifications. An
 approval or question waits five minutes for your answer: its card shows the
 time left, and its alert comes back once in the last minute. With no answer by
-then, the turn stops and Finished shows **No answer within 5 minutes**.
+then, the turn stops and Results shows **No answer within 5 minutes**.
 A CI Autofix request alerts on its development task, whose page answers it.
 Memory's spec checks and learning runs don't alert: one that asks stops after
 five minutes, or sooner with **Stop**.
@@ -246,7 +264,7 @@ five minutes, or sooner with **Stop**.
 A running task that goes quiet for 10 minutes, with no command running and
 nothing waiting on you, or whose command runs far longer than that program
 usually takes, moves to **Decision** as **Looks stuck**, with why. Open it or
-choose **Stop turn…**; nothing is stopped for you.
+choose **Stop work…**; nothing is stopped for you.
 
 **⌥Space** opens the same Assistant from any app, even over a full-screen
 window, with voice, cards and replies. What you open from it shows in
@@ -270,13 +288,15 @@ Ask it to backport a pull request into a repository and it starts a
 **@backport** task there. The pull request doesn't have to be merged: the
 backport waits for the merge, then opens its PR.
 
-Every action leaves a receipt with **Open**; **Stop…** asks, then cancels the
-first turn of a task it started. The Assistant never edits files or runs code itself.
+Every action leaves a receipt with **Open**. **Stop work…** asks, then cancels
+the current turn it identifies. The Assistant delegates file edits and commands
+to the task’s agent.
 
 A task it starts or sends your words to reports back into the same
-conversation, without using your model allowance: each approval or question it
-waits on, with its buttons, then that it is ready or why it failed. **Reply to
-the task** under its latest report sends your words straight to that task.
+conversation: each unresolved approval or question, with its buttons, then its
+result or why it stopped. The Assistant can review results in the background;
+these reviews use your model allowance. **Reply to the task** under its latest
+report sends your words straight to that task.
 
 <a id="dictation"></a>
 
@@ -558,21 +578,21 @@ guidance and lets a task start work there.
 **Pause** holds the task; **Abort** closes the PR and deletes the work branch.
 **Backport** carries a PR down the line, one cherry-pick per repository.
 To ask before a PR merges, type **@backport** and its number or link in the
-destination's task composer. Each step waits for its PR to merge; ByteQuay
-never merges one itself.
+destination's task composer. Each step waits for its PR to merge.
 Each backport PR uses the destination repository’s template and title conventions
 from recently merged PRs. Without a clear convention, its title is
 **Backport: _source PR title_**.
 
 <a id="rules"></a>
 
-## Let rules watch your work
+## Let rules watch and act on your work
 
 A rule names something that happens, such as a review requested from you, and
 the work ByteQuay could do then. A new rule only watches: it records what it
 would have done, and whether you then did that work yourself.
 
-1. In **Settings → Rules**, choose **Paste a rule**.
+1. Type **@rules** on its own in the Assistant, choose its **Rules** button,
+   or open **Settings → Agents → Rules**. Choose **Paste a rule**.
 2. Between two `---` lines, name the event (`when`), the work (`does`), and
    what you do when you agree (`agrees-when`). Write the instructions below
    them. The box shows an example.
@@ -594,7 +614,38 @@ focus and keeps the findings as drafts, and an issue rule starts a task that
 only commits on your Mac. The result waits in the Assistant’s **Decision**
 view: **Open** it to publish, push, or continue it, or **Dismiss** it. A
 finding published as written agrees; changing the work first counts as edited.
-A rule starts at most 3 suggestions a day, and all rules together 10.
+Suggestions and automatic private reviews share a limit of 3 starts per rule
+and 10 total per local day. Merges and permission resolutions
+are outside that budget. Skips and their reasons appear in the rule’s history.
+
+### Activate a rule
+
+**Active rules** are separate from **Learning and suggestions**. A good
+observational record never grants permission on its own.
+
+1. Save and check a rule, then choose **Activate…** beside it.
+2. Review its event, repositories and other scope, instructions, and the action
+   it authorizes. For merge and permission rules, prose notes add no enforced
+   conditions. Choose **Activate rule** to authorize that saved revision.
+3. Matching actions run without another approval card. Their results name the
+   rule; expand its receipt to inspect each action. A summary such as **Allowed
+   3 requests under Build access** records permission, not whether the work
+   succeeded.
+4. Pause a rule with its switch. Editing an active rule returns it to
+   **Observe**; review and activate the saved revision again.
+
+Active review rules prepare findings without posting them. A
+`pull-request-ready` rule with `does: merge` can merge your own approved PR
+once its checks pass; ByteQuay rechecks the current head before acting. A
+`permission-requested` rule with `does: allow` needs exact `hosts` and explicit
+`operations` (`network-access` or `github-read`). Requests outside that scope
+still ask you. An uncertain remote outcome shows **Needs attention**, so you
+can inspect it before taking another action.
+
+With `owned-lines: true`, a rule checks the last author at the fetched merge
+base, using your configured Git email or GitHub noreply identity. Only deleted
+or replaced existing lines establish ownership; additions-only files and
+renames do not.
 
 <a id="issues-and-jira"></a>
 
