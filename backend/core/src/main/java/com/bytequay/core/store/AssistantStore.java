@@ -36,6 +36,23 @@ public interface AssistantStore
 
     void add(AssistantItem item);
 
+    /** Saves the user's message and its pending delivery together; an explicit retry requeues the same saved message. */
+    void enqueue(AssistantItem message);
+
+    /** Definitely not started, ordered within each conversation. */
+    List<AssistantItem> queued();
+
+    /** Claimed messages without a saved outcome; these must never be replayed automatically. */
+    List<AssistantItem> interrupted();
+
+    boolean begin(String itemId);
+
+    /** Saves the outcome and settles its claimed message atomically. Repeating completion adds nothing. */
+    void complete(String itemId, AssistantItem outcome);
+
+    /** Cancels messages that have not started in this conversation. */
+    void cancelQueued(String conversationId);
+
     void addAction(AssistantAction action);
 
     /** The action tool's calls on one message, in the order they were made. */

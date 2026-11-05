@@ -211,7 +211,7 @@ it('does not restart background features if readiness returns during quit', asyn
 });
 
 it('reads only task notices and opens the matching task or conversation', async () => {
-  const task: AppNotice = { id: 'question', kind: 'QUESTION', taskId: 'task', workspaceId: 'workspace', turnId: 'turn', reviewId: null,
+  const task: AppNotice = { delivery: 'INTERRUPT', deliveryReason: 'A decision needs your attention.', report: null, id: 'question', kind: 'QUESTION', taskId: 'task', workspaceId: 'workspace', turnId: 'turn', reviewId: null,
     repository: 'owner/repo', laneId: 'codex', title: 'A question', pullRequest: null, pullRequestTitle: null, changes: null, message: 'Please answer', occurredAt: '2026-10-12T00:00:00Z' };
   const conversation = { artifact: { id: 'conversation', workspaceId: 'workspace', title: 'Explain snapshots', working: false, updatedAt: '2026-10-12T00:00:00Z' },
     offers: [], pages: [], questions: [], pendingApprovals: [] };
@@ -236,7 +236,7 @@ it('reads only task notices and opens the matching task or conversation', async 
 });
 
 it('keeps the held notices while the backend answers that nothing changed', async () => {
-  const task: AppNotice = { id: 'question', kind: 'QUESTION', taskId: 'task', workspaceId: 'workspace', turnId: 'turn', reviewId: null,
+  const task: AppNotice = { delivery: 'INTERRUPT', deliveryReason: 'A decision needs your attention.', report: null, id: 'question', kind: 'QUESTION', taskId: 'task', workspaceId: 'workspace', turnId: 'turn', reviewId: null,
     repository: 'owner/repo', laneId: 'codex', title: 'A question', pullRequest: null, pullRequestTitle: null, changes: null, message: 'Please answer', occurredAt: '2026-10-12T00:00:00Z' };
   const fetcher = vi.fn(async (_url: string, init?: RequestInit) => new Headers(init?.headers).get('If-None-Match') === '"v1"'
     ? new Response(null, { status: 304 }) : new Response(JSON.stringify([task]), { headers: { ETag: '"v1"' } }));
@@ -249,7 +249,7 @@ it('keeps the held notices while the backend answers that nothing changed', asyn
 
 it('opens completed reviews through their review route and checks their task and workspace', async () => {
   const review = reviewFixture();
-  const notice: AppNotice = { id: 'review-finished', kind: 'TURN_FINISHED', taskId: review.task.id, workspaceId: review.workspaceId,
+  const notice: AppNotice = { delivery: 'INTERRUPT', deliveryReason: 'A decision needs your attention.', report: null, id: 'review-finished', kind: 'TURN_FINISHED', taskId: review.task.id, workspaceId: review.workspaceId,
     turnId: 'turn', reviewId: review.id, repository: review.repo, laneId: 'codex', title: 'Review finished', pullRequest: 'owner/repo#42', pullRequestTitle: 'Improve recovery',
     changes: { update: false, commits: 2, files: 3, additions: 42, deletions: 12 }, message: 'Ready', occurredAt: '2026-10-12T00:00:00Z' };
   const fetcher = vi.fn(async () => new Response(JSON.stringify(review)));

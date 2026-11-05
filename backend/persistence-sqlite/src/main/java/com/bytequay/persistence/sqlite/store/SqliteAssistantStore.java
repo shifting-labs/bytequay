@@ -37,7 +37,11 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
+import static com.bytequay.persistence.sqlite.entity.AssistantItemEntity.Delivery.QUEUED;
+import static com.bytequay.persistence.sqlite.entity.AssistantItemEntity.Delivery.RUNNING;
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.util.Comparator.comparing;
 import static java.util.Objects.requireNonNull;
@@ -122,6 +126,59 @@ public class SqliteAssistantStore
     }
 
     @Override
+    @Transactional
+    public void enqueue(AssistantItem message)
+    {
+        checkArgument(message.kind() == AssistantItem.Kind.USER, "only a user's message can be queued");
+        AssistantItemEntity entity = items.findById(message.id()).orElseGet(() -> new AssistantItemEntity(message, items.countByConversationId(message.conversationId())));
+        if (entity.delivery().isEmpty()) {
+            entity.delivery(Optional.of(QUEUED));
+        }
+        items.save(entity);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<AssistantItem> queued()
+    {
+        return items.findByDeliveryOrderByConversationIdAscOrdinalAsc(QUEUED).stream().map(AssistantItemEntity::toDomain).collect(toImmutableList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<AssistantItem> interrupted()
+    {
+        return items.findByDeliveryOrderByConversationIdAscOrdinalAsc(RUNNING).stream().map(AssistantItemEntity::toDomain).collect(toImmutableList());
+    }
+
+    @Override
+    @Transactional
+    public boolean begin(String itemId)
+    {
+        Optional<AssistantItemEntity> entity = items.findById(itemId).filter(value -> value.delivery().filter(QUEUED::equals).isPresent());
+        entity.ifPresent(value -> value.delivery(Optional.of(RUNNING)));
+        return entity.isPresent();
+    }
+
+    @Override
+    @Transactional
+    public void complete(String itemId, AssistantItem outcome)
+    {
+        items.findById(itemId).filter(value -> value.delivery().filter(RUNNING::equals).isPresent()).ifPresent(value -> {
+            checkArgument(value.toDomain().conversationId().equals(outcome.conversationId()), "outcome belongs to another conversation");
+            add(outcome);
+            value.delivery(Optional.empty());
+        });
+    }
+
+    @Override
+    @Transactional
+    public void cancelQueued(String conversationId)
+    {
+        items.findByConversationIdAndDelivery(conversationId, QUEUED).forEach(value -> value.delivery(Optional.empty()));
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public List<AssistantAction> actions(String itemId)
     {
@@ -132,7 +189,8 @@ public class SqliteAssistantStore
     @Transactional
     public void deleteBefore(Instant updatedBefore, LocalDate actionsBefore)
     {
-        List<String> retained = follows.findAll().stream().flatMap(entity -> entity.toDomain().conversationId().stream()).collect(toImmutableList());
+        List<String> retained = Stream.concat(follows.findAll().stream().flatMap(entity -> entity.toDomain().conversationId().stream()),
+                Stream.concat(queued().stream(), interrupted().stream()).map(AssistantItem::conversationId)).collect(toImmutableList());
         List<AssistantConversationEntity> old = conversations.findByUpdatedAtBefore(updatedBefore).stream()
                 .filter(conversation -> !retained.contains(conversation.getId())).collect(toImmutableList());
         items.deleteByConversationIdIn(old.stream().map(AssistantConversationEntity::getId).collect(toImmutableList()));

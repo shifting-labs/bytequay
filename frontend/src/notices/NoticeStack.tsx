@@ -15,7 +15,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from
 import { X } from 'lucide-react';
 import { ago } from '@bytequay/ui/relativeTime';
 import { useNow, useTimeLeft } from '../useNow';
-import { needsAction, noticeAction, noticeLabel as label, shownAlert, type AppNotice, type NoticeBridge, type NoticeSnapshot } from './contracts';
+import { interrupts, needsAction, noticeAction, noticeLabel as label, shownAlert, type AppNotice, type NoticeBridge, type NoticeSnapshot } from './contracts';
 
 const describe = (notice: AppNotice): string => `${label(notice)}: ${notice.pullRequestTitle ?? notice.title}`;
 const count = (value: number, noun: string): string => `${value} ${noun}${value === 1 ? '' : 's'}`;
@@ -69,7 +69,7 @@ export default function NoticeStack({ bridge = window.noticeBridge }: { bridge?:
     let prior = new Set<string>();
     const update = (next: NoticeSnapshot) => {
       if (!active) return;
-      const added = next.notices.filter(item => next.popupIds.includes(item.id) && !prior.has(item.id));
+      const added = next.notices.filter(item => interrupts(item) && next.popupIds.includes(item.id) && !prior.has(item.id));
       if (next.active && added.length) setAnnouncement(added.map(describe).join('. '));
       prior = new Set(next.popupIds);
       setState(next);
@@ -78,7 +78,7 @@ export default function NoticeStack({ bridge = window.noticeBridge }: { bridge?:
     void bridge.read().then(next => { if (!received) update(next); }).catch(() => {});
     return () => { active = false; stop(); };
   }, [bridge]);
-  const popups = state.notices.filter(notice => state.popupIds.includes(notice.id));
+  const popups = state.notices.filter(notice => interrupts(notice) && state.popupIds.includes(notice.id));
   // Ticks while an alert has a deadline: an approval reaching its last minute behind a newer alert brings no new snapshot.
   const now = useNow(popups.some(notice => notice.expiresAt !== undefined));
   const alert = shownAlert(popups, now);

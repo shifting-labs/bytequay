@@ -48,7 +48,7 @@ export async function run() {
     },
     resize: height => sizes.push(height),
   };
-  const make = (id: string, kind: AppNotice['kind'], minutesAgo = 0): AppNotice => ({ id, kind, taskId: id, workspaceId: 'workspace', turnId: 'turn', reviewId: null,
+  const make = (id: string, kind: AppNotice['kind'], minutesAgo = 0): AppNotice => ({ delivery: 'INTERRUPT', deliveryReason: 'A decision needs your attention.', report: null, id, kind, taskId: id, workspaceId: 'workspace', turnId: 'turn', reviewId: null,
     title: kind === 'QUESTION' ? 'Improve task recovery' : 'Review the settings screen',
     pullRequest: null, pullRequestTitle: null, changes: null,
     message: kind === 'QUESTION' ? 'Should interrupted tasks resume automatically?' : 'The latest response is ready to read.',

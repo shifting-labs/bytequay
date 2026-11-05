@@ -14,6 +14,7 @@
 package com.bytequay.persistence.sqlite.repository;
 
 import com.bytequay.persistence.sqlite.entity.AssistantItemEntity;
+import com.bytequay.persistence.sqlite.entity.AssistantItemEntity.Delivery;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Collection;
@@ -23,6 +24,10 @@ public interface AssistantItemJpaRepository
         extends JpaRepository<AssistantItemEntity, String>
 {
     List<AssistantItemEntity> findByConversationIdOrderByOrdinalAsc(String conversationId);
+
+    List<AssistantItemEntity> findByDeliveryOrderByConversationIdAscOrdinalAsc(Delivery delivery);
+
+    List<AssistantItemEntity> findByConversationIdAndDelivery(String conversationId, Delivery delivery);
 
     long countByConversationId(String conversationId);
 

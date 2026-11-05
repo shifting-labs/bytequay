@@ -26,9 +26,10 @@ import { APPROVAL_NOTICE, NOTICE_ACTIONS, RULE_NOTICE, RULE_RESULT_NOTICE, notic
 import { errorMessage } from '../errorMessage';
 import { laneLabel } from '../settings/model';
 import type { AgentEventEnvelope } from '../agents/events';
-import type { AgendaTargetDto, AgentPendingApprovalDto, AssistantReportDto, AssistantReportState, AssistantRuleActionDto } from '../types';
+import type { AgendaTargetDto, AgentPendingApprovalDto, AssistantItemDto, AssistantReportDto, AssistantReportState, AssistantRuleActionDto } from '../types';
 import { useAsyncAction } from '../useAsyncAction';
 import { useNow, useTimeLeft } from '../useNow';
+import { ResultDiscussion } from './ResultDiscussion';
 
 const STEP_POLL_MS = 2000;
 
@@ -114,26 +115,47 @@ export function ReportEvidence({ report }: { report: Pick<AssistantReportDto, 'e
   </>;
 }
 
+/** One place to inspect the source evidence, authorization and prior outcomes without expanding the conversation. */
+export function ReportActivity({ report, history = [] }: { report: AssistantReportDto; history?: AssistantItemDto[] }) {
+  return <details className="assistant-report-activity">
+    <summary>Activity{history.length > 0 ? ` · ${history.length} earlier ${history.length === 1 ? 'update' : 'updates'}` : ''}</summary>
+    <p>{report.deliveryReason}</p>
+    {report.outcome !== null && <p>{report.outcome.toLowerCase().replaceAll('_', ' ')}</p>}
+    <ReportEvidence report={report} />
+    {history.length > 0 && <ol>{history.map(previous => <li key={previous.id}>
+      <time dateTime={previous.at}>{new Date(previous.at).toLocaleString()}{previous.report?.outcome === null ? ' · superseded update' : ''}</time>
+      <div>{previous.text}</div>
+      {previous.report?.outcome != null && <span className="assistant-dim">{previous.report.outcome.toLowerCase().replaceAll('_', ' ')}</span>}
+      {previous.report?.assessment != null && <p>{previous.report.assessment}</p>}
+      {previous.report !== null && <ReportEvidence report={previous.report} />}
+    </li>)}</ol>}
+  </details>;
+}
+
 /** Durable result presentation stays intact after its transient notice is seen or cleared. */
-export function DurableReportCard({ report, text, onOpen }: { report: AssistantReportDto; text: string; onOpen: () => void }) {
+export function DurableReportCard({ report, text, onOpen, onClear, activity, summary, meta }: {
+  report: AssistantReportDto; text: string; onOpen: () => void; onClear?: () => void; activity?: AssistantItemDto[]; summary?: string; meta?: string;
+}) {
   const outcomes: Record<string, string> = { ANSWERED: 'Answered', ALLOWED: 'Allowed', DENIED: 'Denied', EXPIRED: 'Expired', CANCELLED: 'Cancelled' };
   const ReceiptIcon = report.outcome === 'DENIED' || report.outcome === 'EXPIRED' || report.outcome === 'CANCELLED' ? ShieldX : ShieldCheck;
-  if (report.outcome !== null) return <div className="assistant-report-resolved">
+  if (report.outcome !== null && report.outcome in outcomes) return <div className="assistant-report-resolved">
     <div className="assistant-receipt">
       <ReceiptIcon className="assistant-receipt__icon" size={14} aria-hidden="true" />
       <span className="assistant-receipt__text"><strong>{outcomes[report.outcome] ?? report.outcome}</strong> · {text}</span>
       <button type="button" className="assistant-button" onClick={onOpen}>Open work</button>
     </div>
-    <ReportEvidence report={report} />
+    <ReportActivity report={report} history={activity} />
   </div>;
   const unavailable = report.state === 'APPROVAL_REQUIRED' || report.state === 'ANSWER_REQUIRED';
   const state = unavailable ? 'ATTENTION' : report.state;
-  return <CardRow wrapTitle state={state} icon={CARD_STATES[state].icon} title={text} meta={report.target.repo ?? ''}
-    right={<button type="button" className="assistant-button" onClick={onOpen}>{state === 'RESULT_READY' ? 'Review result' : 'Open work'}</button>}
+  return <CardRow wrapTitle state={state} icon={CARD_STATES[state].icon} title={text} meta={meta ?? report.target.repo ?? ''}
+    right={<button type="button" className="assistant-button" onClick={onOpen}>{state === 'RESULT_READY' ? report.target.kind === 'REVIEW' ? 'Read full review' : 'Review result' : 'Open work'}</button>}
     body={<>
       {unavailable && <div className="assistant-card__why">This request is no longer available here. Open the work to see its latest state.</div>}
-      {report.assessment !== null && <div className="assistant-card__assessment">{report.assessment}</div>}
-      <ReportEvidence report={report} />
+      {(report.assessment ?? summary) != null && <div className="assistant-card__assessment">{report.assessment ?? summary}</div>}
+      <ReportActivity report={report} history={activity} />
+      <ResultDiscussion key={report.sourceTurnId ?? report.noticeId} report={report} />
+      {onClear !== undefined && <button type="button" className="assistant-link" onClick={onClear}>Clear result</button>}
     </>} />;
 }
 
@@ -153,8 +175,10 @@ function RuleActionResult({ notice, onShow, onOpen, onClear }: {
     right={<button type="button" className="assistant-button" onClick={open}>{notice.reviewId !== null ? 'Read full review' : pull === null ? 'Open' : 'Open pull request'}</button>}
     body={<>
       <div className="assistant-card__assessment">{notice.message}</div>
+      <details className="assistant-report-evidence"><summary>Activity</summary><p>{notice.deliveryReason}</p>
       {run.authorization !== null && <ReportEvidence report={{ evidence: [], ruleActions: [{ ruleId: run.authorization.ruleId,
         ruleName: run.authorization.ruleName, ruleVersion: run.authorization.ruleVersion, outcome: run.outcome ?? 'UNKNOWN', detail: `${run.subject} · ${run.title}` }] }} />}
+      </details>
       <div className="assistant-card__buttons"><span className="assistant-spacer" />
         <button type="button" className="assistant-link" onClick={onClear}>Clear result</button>
       </div>
@@ -336,6 +360,9 @@ export function ResultCard({ notice, onShow, onOpen, onClear }: {
   onOpen: () => void;
   onClear: () => void;
 }) {
+  if (notice.id.startsWith(RULE_NOTICE) || notice.id.startsWith(RULE_RESULT_NOTICE)) return <NoticeCard notice={notice} focused={false} onOpen={onOpen} onClear={onClear} />;
+  if (notice.report !== null) return <DurableReportCard report={notice.report} text={heading(notice)} summary={notice.message} meta={where(notice)}
+    onOpen={onOpen} onClear={onClear} />;
   if (notice.ruleRun != null) return <RuleActionResult notice={notice} onShow={onShow} onOpen={onOpen} onClear={onClear} />;
   const failed = notice.kind === 'FAILURE';
   const review = notice.reviewId !== null;

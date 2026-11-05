@@ -18,7 +18,7 @@ import type { AgendaTargetDto, AssistantItemDto, AssistantReceiptDto, AssistantR
 import { workspaceAgentTaskRoute, workspaceIssueRoute, workspacePullRequestRoute, workspaceReviewTaskRoute, workspaceRoute } from '../workspaces/model';
 import { settingsRoute } from '../settings/routes';
 import {
-  arrivedOpen, createdDrafts, dayLabel, decisionOrder, endedTurns, inAnswerOrder, isRulesCommand, linkRefs, localDay, pageRoute, refFromHref, refLabel, rowState, rowTitle, screenRef,
+  arrivedOpen, createdDrafts, dayLabel, decisionOrder, endedTurns, inAnswerOrder, isRulesCommand, linkRefs, localDay, pageRoute, reportActivity, refFromHref, refLabel, rowState, rowTitle, screenRef,
   soonestDeadline, takesSuggestion, timelineDays, waitingCards,
 } from './model';
 
@@ -73,6 +73,7 @@ describe('linkRefs', () => {
 
 describe('waitingCards', () => {
   const notice = (id: string, kind: AppNotice['kind'], minute: number, fields: Partial<AppNotice> = {}): AppNotice => ({
+    delivery: 'INTERRUPT', deliveryReason: 'A decision needs your attention.', report: null,
     id, kind, taskId: id, workspaceId: 'ws', turnId: null, reviewId: null, title: id, pullRequest: null, pullRequestTitle: null, changes: null,
     message: '', repository: 'owner/repository', laneId: 'claude', occurredAt: `2026-10-17T09:${String(minute).padStart(2, '0')}:00Z`,
     ...fields,
@@ -129,6 +130,7 @@ describe('takesSuggestion', () => {
 
 describe('decisionOrder', () => {
   const notice = (id: string, minute: number, expiresAt?: string): AppNotice => ({
+    delivery: 'INTERRUPT', deliveryReason: 'A decision needs your attention.', report: null,
     id, kind: 'APPROVAL', taskId: id, workspaceId: 'ws', turnId: null, reviewId: null, title: id, pullRequest: null, pullRequestTitle: null, changes: null,
     message: '', repository: 'owner/repository', laneId: 'claude', occurredAt: `2026-10-17T09:${String(minute).padStart(2, '0')}:00Z`,
     ...(expiresAt === undefined ? {} : { expiresAt }),
@@ -229,7 +231,7 @@ describe('the conversation as it reads', () => {
   const started = (id: string, taskId: string, turnId: string | null) => item(id, 'RECEIPT', {
     receipt: { operation: 'START_TASK', outcome: 'DONE', detail: null, target: task(taskId), page: null, turnId, fix: null, words: null },
   });
-  const reported = (id: string, taskId: string, noticeId: string) => item(id, 'REPORT', { report: { state: 'APPROVAL_REQUIRED', sourceTurnId: null, assessment: null, outcome: null, evidence: [], ruleActions: [], noticeId, target: task(taskId) } });
+  const reported = (id: string, taskId: string, noticeId: string) => item(id, 'REPORT', { report: { delivery: 'INTERRUPT', deliveryReason: 'Your approval is required.', state: 'APPROVAL_REQUIRED', sourceTurnId: null, assessment: null, outcome: null, evidence: [], ruleActions: [], noticeId, target: task(taskId) } });
   const ids = (items: AssistantItemDto[]) => items.map(each => each.id);
 
   it('shows a message sent during a reply right above its own answer, and one still waiting at the end', () => {
@@ -240,6 +242,33 @@ describe('the conversation as it reads', () => {
     // A retried failure answers the same message again, and a report or a card's receipt stays where it came.
     expect(ids(inAnswerOrder([item('u1', 'USER'), item('f1', 'FAILURE'), item('k1', 'REPORT'), item('r1', 'REPLY'), item('u2', 'USER'), item('r2', 'REPLY')])))
       .toEqual(['u1', 'f1', 'k1', 'r1', 'u2', 'r2']);
+  });
+
+  it('folds earlier outcomes by work identity while preserving every live decision', () => {
+    const before = reported('before', 't1', 'finished:old');
+    const latest = reported('latest', 't1', 'finished:new');
+    if (latest.report !== null) latest.report.target.repo = 'owner/repository';
+    const pending = reported('pending', 't1', 'approval:a1');
+    const notice: AppNotice = { delivery: 'INTERRUPT', deliveryReason: 'Approval required.', report: null, id: 'approval:a1', kind: 'APPROVAL',
+      taskId: 't1', workspaceId: 'ws', turnId: null, reviewId: null, title: 'Approval', pullRequest: null, pullRequestTitle: null, changes: null,
+      message: 'Approve this request.', repository: 'owner/repository', laneId: 'codex', occurredAt: before.at };
+    const groups = reportActivity([before, pending, latest, reported('other', 't2', 'finished:other')], [notice]);
+    expect([...groups.keys()]).toEqual(['latest', 'other']);
+    expect(groups.get('latest')).toEqual([before]);
+    expect([...groups.values()].flat()).not.toContain(pending);
+  });
+
+  it('keeps the newest work state when an older continuation receipt arrives later', () => {
+    const progress = { ...reported('progress', 't1', 'running:new'), at: '2026-10-17T07:03:00Z' };
+    const earlier = { ...reported('earlier', 't1', 'finished:earlier'), at: '2026-10-17T07:01:00Z' };
+    const lateReceipt = { ...reported('late-receipt', 't1', 'continued:previous'), at: '2026-10-17T07:02:00Z' };
+    if (progress.report !== null) progress.report.state = 'PROGRESS';
+    if (lateReceipt.report !== null) lateReceipt.report.outcome = 'CONTINUED';
+    const arrivalOrder = [progress, lateReceipt, earlier];
+    const groups = reportActivity(arrivalOrder, []);
+    expect([...groups.keys()]).toEqual(['progress']);
+    expect(ids(groups.get('progress') ?? [])).toEqual(['earlier', 'late-receipt']);
+    expect(ids(arrivalOrder)).toEqual(['progress', 'late-receipt', 'earlier']);
   });
 
   it('ends a receipt’s turn once a later report says how it ended or another turn of its task started', () => {

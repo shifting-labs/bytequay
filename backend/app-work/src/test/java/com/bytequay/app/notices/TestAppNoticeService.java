@@ -289,7 +289,11 @@ class TestAppNoticeService
 
         assertThat(service.current(ImmutableList.of(task.id()))).singleElement()
                 .satisfies(notice -> assertThat(notice.ruleRun()).contains(run.finished("RESULT_READY")));
-        assertThat(service.alerts()).isEmpty();
+        assertThat(service.alerts()).singleElement().satisfies(notice -> {
+            assertThat(notice.delivery()).isEqualTo(AssistantReport.Delivery.PASSIVE);
+            assertThat(notice.report().orElseThrow().state()).isEqualTo(AssistantReport.State.PROGRESS);
+            assertThat(notice.ruleRun().orElseThrow().authorization()).contains(run.authorization().orElseThrow());
+        });
 
         show(task, turn.finish(TurnState.FAILED, AgentMetrics.empty(), Optional.of("Provider failed"), NOW.plusSeconds(10)));
         assertThat(service.current(ImmutableList.of(task.id()))).singleElement().satisfies(notice -> assertThat(notice.ruleRun()).contains(run.finished("FAILED")));
@@ -321,13 +325,17 @@ class TestAppNoticeService
     }
 
     @Test
-    void followedResultsWaitForAssessmentAndQuietResultsNeverAlert()
+    void followedResultsRemainVisibleWhileAssessmentAndDeliveryStayQuiet()
     {
         show(task, turn().finish(TurnState.COMPLETED, AgentMetrics.empty(), Optional.empty(), NOW.plusSeconds(10)));
         AppNotice notice = service.current().getFirst();
-        assertThat(service.alerts()).containsExactly(notice);
+        assertThat(service.alerts()).singleElement().satisfies(alert -> {
+            assertThat(alert.id()).isEqualTo(notice.id());
+            assertThat(alert.delivery()).isEqualTo(AssistantReport.Delivery.PASSIVE);
+        });
         when(follows.followsTask(task.id().toString())).thenReturn(true);
-        assertThat(service.alerts()).isEmpty();
+        assertThat(service.alerts()).singleElement().satisfies(alert ->
+                assertThat(alert.delivery()).isEqualTo(AssistantReport.Delivery.PASSIVE));
         String source = notice.summaryLine();
         AssistantReport report = new AssistantReport(AssistantReport.State.RESULT_READY, notice.id(),
                 AgendaTarget.of(AgendaTarget.Kind.TASK, "workspace", task.id().toString())).assessed("The fix passed its observed checks.");
@@ -336,9 +344,11 @@ class TestAppNoticeService
         AssistantAssessment job = new AssistantAssessment(item.id(), item.conversationId(), task.id().toString(), "fingerprint", item, "Fix recovery", true, false,
                 AssistantAssessment.State.QUEUED);
         when(follows.result(task.id().toString(), notice.id(), source)).thenReturn(Optional.of(job));
-        assertThat(service.alerts()).isEmpty();
+        assertThat(service.alerts()).singleElement().satisfies(alert ->
+                assertThat(alert.delivery()).isEqualTo(AssistantReport.Delivery.PASSIVE));
         when(follows.result(task.id().toString(), notice.id(), source)).thenReturn(Optional.of(job.ended(AssistantAssessment.State.QUIET)));
-        assertThat(service.alerts()).isEmpty();
+        assertThat(service.alerts()).singleElement().satisfies(alert ->
+                assertThat(alert.delivery()).isEqualTo(AssistantReport.Delivery.PASSIVE));
         when(follows.result(task.id().toString(), notice.id(), source)).thenReturn(Optional.of(job.published(item)));
         assertThat(service.alerts()).singleElement().satisfies(alert -> {
             assertThat(alert.id()).isEqualTo(notice.id());
@@ -359,15 +369,18 @@ class TestAppNoticeService
         AppNotice notice = service.current(ImmutableList.of(task.id())).getFirst();
         assertThat(notice.id()).startsWith("review-result:run:0:");
         assertThat(notice.ruleRun().orElseThrow().outcome()).contains("RESULT_READY");
-        assertThat(service.alerts()).isEmpty();
+        assertThat(service.alerts()).singleElement().satisfies(alert ->
+                assertThat(alert.delivery()).isEqualTo(AssistantReport.Delivery.PASSIVE));
 
         AssistantReport report = new AssistantReport(AssistantReport.State.RESULT_READY, notice.id(), AgendaTarget.of(AgendaTarget.Kind.REVIEW, "workspace", review.id()));
         AssistantAssessment job = new AssistantAssessment("review-assessment", Optional.empty(), task.id().toString(), "fingerprint", NOW,
                 notice.summaryLine(), report, "Review changes to my lines", true, false, AssistantAssessment.State.QUEUED);
         when(follows.result(task.id().toString(), notice.id(), notice.summaryLine())).thenReturn(Optional.of(job));
-        assertThat(service.alerts()).isEmpty();
+        assertThat(service.alerts()).singleElement().satisfies(alert ->
+                assertThat(alert.delivery()).isEqualTo(AssistantReport.Delivery.PASSIVE));
         when(follows.result(task.id().toString(), notice.id(), notice.summaryLine())).thenReturn(Optional.of(job.ended(AssistantAssessment.State.QUIET)));
-        assertThat(service.alerts()).isEmpty();
+        assertThat(service.alerts()).singleElement().satisfies(alert ->
+                assertThat(alert.delivery()).isEqualTo(AssistantReport.Delivery.PASSIVE));
 
         String summary = "The recovery change can leave stale state after an interrupted write. Check the write-then-retry test before approving.";
         when(follows.result(task.id().toString(), notice.id(), notice.summaryLine()))
@@ -431,12 +444,14 @@ class TestAppNoticeService
         when(reviews.listFindings(review.id())).thenReturn(ImmutableList.of(finding.withState(ReviewFinding.State.RESOLVED, Optional.empty(), NOW.plusSeconds(20)).withVersion(1)));
         AppNotice resolved = service.current(ImmutableList.of(task.id())).getFirst();
         assertThat(resolved.id()).isNotEqualTo(original.id());
-        assertThat(service.alerts()).isEmpty();
+        assertThat(service.alerts()).singleElement().satisfies(alert ->
+                assertThat(alert.delivery()).isEqualTo(AssistantReport.Delivery.PASSIVE));
         AssistantReport noAction = new AssistantReport(AssistantReport.State.RESULT_READY, resolved.id(), warning.target()).assessed("The finding has already been resolved.");
         AssistantAssessment quiet = new AssistantAssessment("resolved", Optional.empty(), task.id().toString(), "resolved-fingerprint", NOW.plusSeconds(20),
                 resolved.summaryLine(), noAction, "Review changes to my lines", true, false, AssistantAssessment.State.QUIET);
         when(follows.result(task.id().toString(), resolved.id(), resolved.summaryLine())).thenReturn(Optional.of(quiet));
-        assertThat(service.alerts()).isEmpty();
+        assertThat(service.alerts()).singleElement().satisfies(alert ->
+                assertThat(alert.delivery()).isEqualTo(AssistantReport.Delivery.PASSIVE));
     }
 
     @ParameterizedTest
@@ -470,7 +485,8 @@ class TestAppNoticeService
         AssistantAssessment quiet = new AssistantAssessment("carried-assessment", Optional.empty(), task.id().toString(), "fingerprint", NOW,
                 carried.summaryLine(), report, "Review changes to my lines", true, false, AssistantAssessment.State.QUIET);
         when(follows.result(task.id().toString(), carried.id(), carried.summaryLine())).thenReturn(Optional.of(quiet));
-        assertThat(service.alerts()).isEmpty();
+        assertThat(service.alerts()).singleElement().satisfies(alert ->
+                assertThat(alert.delivery()).isEqualTo(AssistantReport.Delivery.PASSIVE));
 
         show(task, turnAt(NOW.plusSeconds(20)).finish(TurnState.COMPLETED, AgentMetrics.empty(), Optional.empty(), NOW.plusSeconds(30)));
         assertThat(service.current()).singleElement().satisfies(notice -> {
@@ -478,7 +494,8 @@ class TestAppNoticeService
             assertThat(notice.summaryLine()).isEqualTo(carried.summaryLine());
             assertThat(notice.occurredAt()).isEqualTo(carried.occurredAt());
         });
-        assertThat(service.alerts()).isEmpty();
+        assertThat(service.alerts()).singleElement().satisfies(alert ->
+                assertThat(alert.delivery()).isEqualTo(AssistantReport.Delivery.PASSIVE));
 
         ReviewRun explanation = new ReviewRun("explanation", review.id(), 2, ReviewRun.Scope.FULL, "main", "base", "base", "new-head", Optional.empty(), Optional.empty(),
                 ImmutableList.of(), ImmutableList.of(), ImmutableList.of(), ReviewRun.State.ACCEPTED, Optional.empty(), Optional.empty(), Optional.empty(),

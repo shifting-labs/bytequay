@@ -59,6 +59,8 @@ public record AgentTurn(
     /** Startup recovery ends every turn it finds still active with a reason starting with this, whatever it then learns about the provider. */
     public static final String RESTART_REASON = "Backend restarted while the turn was active";
 
+    public static final String ASSISTANT_CONTINUATION_PREFIX = "assistant-continuation:";
+
     public AgentTurn(
             TurnId id,
             TaskId taskId,

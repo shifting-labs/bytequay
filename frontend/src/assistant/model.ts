@@ -295,3 +295,21 @@ export function endedTurns(items: AssistantItemDto[]): ReadonlySet<string> {
   }
   return ended;
 }
+
+/** Routine reports update one work card. Earlier outcomes stay in its Activity; live decisions remain independently answerable. */
+export function reportActivity(items: AssistantItemDto[], notices: AppNotice[]): Map<string, AssistantItemDto[]> {
+  const pending = new Set(notices.filter(isDecision).map(notice => notice.id));
+  const groups = new Map<string, AssistantItemDto[]>();
+  for (const item of items) {
+    const report = item.report;
+    if (report === null || pending.has(report.noticeId)) continue;
+    const target = report.target;
+    const key = JSON.stringify(target.id === null ? [target.kind, target.workspaceId, target.repo, target.number] : [target.kind, target.workspaceId, target.id]);
+    groups.set(key, [...groups.get(key) ?? [], item]);
+  }
+  return new Map([...groups.values()].flatMap(group => {
+    const ordered = group.toSorted((left, right) => Date.parse(left.at) - Date.parse(right.at));
+    const latest = ordered.at(-1);
+    return latest === undefined ? [] : [[latest.id, ordered.slice(0, -1)]];
+  }));
+}

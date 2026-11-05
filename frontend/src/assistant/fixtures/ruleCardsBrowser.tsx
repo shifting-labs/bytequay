@@ -13,20 +13,23 @@
  */
 import { flushSync } from 'react-dom';
 import { createFixtureRoot } from '../../fixtures/reactFixture';
-import { assert, button, runScenarios, settle } from '../../fixtures/harness';
+import { assert, button, changeInput, element, runScenarios, settle } from '../../fixtures/harness';
 import type { AppNotice } from '../../notices/contracts';
-import type { Bridge } from '../../types';
-import { NoticeCard, ResultCard } from '../Cards';
+import type { AssistantReportDto, Bridge } from '../../types';
+import { DurableReportCard, NoticeCard, ResultCard } from '../Cards';
+import type { TaskDiscussionDto } from '../../agents/discussions/contracts';
+import '../../index.css';
+import '../../css/assistant.css';
 
 const RULE = '6f1c9a52-3d0e-4b8a-9a1d-2b7c4e5f6a70';
 
-const MOVE_UP: AppNotice = {
+const MOVE_UP: AppNotice = { delivery: 'INTERRUPT', deliveryReason: 'A decision needs your attention.', report: null,
   id: `rule:${RULE}:1793001600000`, kind: 'QUESTION', taskId: `rule:${RULE}`, workspaceId: 'rules', turnId: null, reviewId: null,
   title: 'Review PRs that need me', pullRequest: null, pullRequestTitle: null, changes: null,
   message: 'Agreed 10 of 12 times. Move it to Suggest?', repository: 'Rules', laneId: 'rules', occurredAt: '2026-11-04T09:00:00Z',
 };
 
-const RESULT: AppNotice = {
+const RESULT: AppNotice = { delivery: 'INTERRUPT', deliveryReason: 'A decision needs your attention.', report: null,
   id: `rule-result:${RULE}:pr:4530:requested:0`, kind: 'QUESTION', taskId: 'task-1', workspaceId: 'ws1', turnId: 'turn-1', reviewId: 'review-1',
   title: 'Review acme/warehouse#4530', pullRequest: 'acme/warehouse#4530', pullRequestTitle: 'Cache block reads', changes: null,
   message: 'Review PRs that need me · drafted its findings; nothing is posted until you publish them', repository: 'acme/warehouse', laneId: 'claude',
@@ -59,8 +62,52 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
     dismissAgentRuleRun: async (id: string, key: string) => { calls.push(`dismiss ${id} ${key}`); return []; },
   } as unknown as Bridge;
   return runScenarios([
+    ['asks privately about the exact result without starting or replying to the task', async () => {
+      const fixture = createFixtureRoot();
+      const asked: unknown[][] = [];
+      const report = quietReport();
+      let discussion: TaskDiscussionDto | null = null;
+      const previous = window.bridge;
+      window.bridge = { ...previous,
+        listTaskDiscussions: async () => discussion === null ? [] : [discussion],
+        askAssistantResult: async (...args: unknown[]) => {
+          asked.push(args);
+          discussion = { id: 'discussion-1', taskId: 'task-1', turnId: 'source-turn', quote: 'The saved task result explains the cache invalidation change.',
+            occurrence: 0, resolved: false, pending: false, providerLane: 'codex', version: 1, createdAt: RESULT.occurredAt, updatedAt: RESULT.occurredAt,
+            comment: null, replyDraft: null, replyDraftError: null, messages: [
+              { id: 'question', author: 'USER', body: String(args[2]), createdAt: RESULT.occurredAt, error: null },
+              { id: 'answer', author: 'AGENT', body: 'The focused checks cover invalidation after a write.', createdAt: RESULT.occurredAt, error: null },
+            ] };
+          return discussion;
+        },
+        replyFromAssistant: async () => { throw new Error('Reading a result must not execute a task turn'); },
+      } as Bridge;
+      try {
+        flushSync(() => fixture.root.render(<DurableReportCard report={report} text="Cache invalidation updated" onOpen={() => {}} />));
+        button('Ask about this', fixture.host).click(); await settle();
+        changeInput(element<HTMLTextAreaElement>('textarea', fixture.host), 'What do the checks cover?'); await settle();
+        button('Ask', fixture.host).click(); await settle();
+        assert(asked.length === 1 && JSON.stringify(asked[0]) === JSON.stringify([report.target, report.sourceTurnId, 'What do the checks cover?']),
+          'Ask sends the immutable result identity and question, without sending a generated quote or task input');
+        assert(fixture.host.textContent?.includes('The focused checks cover invalidation after a write.'), 'The private answer appears directly under the result');
+        assert(fixture.host.querySelector('.agt-disc-card__source')?.textContent?.includes('The saved task result'), 'The retained source passage is inspectable');
+        assert(!fixture.host.querySelector('.assistant-result-question'), 'An existing discussion takes further questions');
+      }
+      finally { fixture.dispose(); window.bridge = previous; }
+    }],
+    ['shows pending interpretation passively and keeps its source openable', async () => {
+      const report = { ...quietReport(), state: 'PROGRESS' as const, assessment: null };
+      const card = render({ ...RESULT, id: 'finished:source-turn', kind: 'TURN_FINISHED', message: 'Reviewing the result in the background', delivery: 'PASSIVE', deliveryReason: report.deliveryReason, report }, true);
+      try {
+        assert(card.host.querySelector('[data-state="PROGRESS"]') !== null, 'Pending interpretation is Progress rather than a stale ready result');
+        assert(card.host.textContent?.includes('Reviewing the result') && !card.host.textContent.includes('Ask about this'), 'Pending summary says what is happening and does not ask about an unfinished assessment');
+        button('Open work', card.host).click(); await settle();
+        assert(card.reviewed() === 1, 'The underlying result remains accessible during background interpretation');
+      }
+      finally { card.dispose(); }
+    }],
     ['moves a rule up or keeps it observing from its card, and says why a move was refused', async () => {
-      const card = render(MOVE_UP);
+      const card = render({ ...MOVE_UP, delivery: 'PASSIVE' }, true);
       try {
         const text = card.host.textContent ?? '';
         assert(text.includes('Review PRs that need me') && text.includes('Agreed 10 of 12 times. Move it to Suggest?') && text.includes('Move up?'),
@@ -140,4 +187,29 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
       }
     }],
   ]);
+}
+
+
+function quietReport(): AssistantReportDto {
+  return { state: 'RESULT_READY', delivery: 'PASSIVE', deliveryReason: 'The requested checks passed. No decision is needed.',
+    noticeId: 'finished:source-turn', target: { kind: 'TASK', id: 'task-1', workspaceId: 'ws1', repo: 'owner/repository', number: null, connectionId: null, cloudId: null },
+    sourceTurnId: 'source-turn', assessment: 'The cache now invalidates after a write. Focused checks passed; the changes are ready for review.', outcome: null,
+    evidence: ['Focused cache checks passed', 'Three files changed'], ruleActions: [{ ruleId: 'build-access', ruleName: 'Build access', ruleVersion: 2,
+      outcome: 'ALLOWED', detail: 'Read dependencies from packages.example.test' }] };
+}
+
+let preview: { dispose: () => void } | null = null;
+export async function showQuietPreview(): Promise<void> {
+  preview?.dispose();
+  const fixture = createFixtureRoot();
+  preview = fixture;
+  document.body.style.background = 'var(--bg)';
+  fixture.host.className = 'assistant-home';
+  fixture.host.style.cssText = 'padding:32px;max-width:640px;margin:auto';
+  flushSync(() => fixture.root.render(<div className="assistant-work-report">
+    <p style={{ color: 'var(--fg-muted)' }}>Assistant · Results</p>
+    <DurableReportCard report={quietReport()} text="Cache invalidation updated" onOpen={() => {}} />
+    <DurableReportCard report={{ ...quietReport(), state: 'PROGRESS', assessment: 'Reviewing the next result in the background. You can keep chatting.' }} text="Reviewing a pull request" onOpen={() => {}} />
+  </div>));
+  await settle();
 }

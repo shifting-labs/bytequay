@@ -24,6 +24,7 @@ import com.bytequay.agent.core.TaskId;
 import com.bytequay.agent.core.TaskSummary;
 import com.bytequay.agent.core.TaskWorktree;
 import com.bytequay.agent.core.TitleSource;
+import com.bytequay.agent.core.store.AgentTurnStore;
 import com.bytequay.agent.core.store.TaskLogStore;
 import com.bytequay.agent.spi.AgentDriverRegistry;
 import com.bytequay.agent.spi.AgentLaneId;
@@ -72,8 +73,9 @@ class TestTaskDiscussionService
     private final TaskLogStore logStore = mock(TaskLogStore.class);
 
     private final TaskDiscussionService service = new TaskDiscussionService(
-            store, tasks, resources, drivers, logStore, Clock.fixed(NOW, ZoneOffset.UTC), mock(TaskPullRequestOwnership.class), mock(PullRequestService.class),
-            new ReviewCommentReader(mock(PullRequestStore.class), mock(PrDetailStore.class)), mock(BetterWordsService.class), mock(AgentReviewStore.class));
+            store, tasks, resources, drivers, logStore, mock(AgentTurnStore.class), Clock.fixed(NOW, ZoneOffset.UTC), mock(TaskPullRequestOwnership.class),
+            mock(PullRequestService.class), new ReviewCommentReader(mock(PullRequestStore.class), mock(PrDetailStore.class)),
+            mock(BetterWordsService.class), mock(AgentReviewStore.class));
 
     @Test
     void refusesAskingOnceTheWorktreeIsReleasedAfterCompletion()

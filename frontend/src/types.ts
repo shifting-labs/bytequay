@@ -1647,6 +1647,8 @@ export type AssistantItemDto = {
 export type AssistantReportState = 'APPROVAL_REQUIRED' | 'ANSWER_REQUIRED' | 'PROPOSAL' | 'RESULT_READY' | 'COMPLETED' | 'ATTENTION' | 'PROGRESS';
 export type AssistantRuleActionDto = { ruleId: string; ruleName: string; ruleVersion: number; outcome: string; detail: string };
 export type AssistantReportDto = {
+  delivery: 'PASSIVE' | 'INTERRUPT';
+  deliveryReason: string;
   state: AssistantReportState;
   noticeId: string;
   target: AgendaTargetDto;
@@ -2233,6 +2235,7 @@ export type Bridge = LabBridge & WorkItemBridge & JiraBridge & GoogleBridge & Ar
   /** Keeps the receipt for a draft the user created with its own button. */
   recordAssistantDraft: (conversationId: string, itemId: string) => Promise<void>;
   /** Sends the user's words straight to the task a report named, with no model between; the conversation keeps the receipt. */
+  askAssistantResult: (target: AgendaTargetDto, sourceTurnId: string, question: string) => Promise<TaskDiscussionDto>;
   replyFromAssistant: (conversationId: string, itemId: string, text: string, key: string) => Promise<{ itemId: string }>;
   getAssistantPermissions: () => Promise<AssistantPermissionsDto>;
   saveAssistantPermissions: (permissions: AssistantPermissionsDto) => Promise<AssistantPermissionsDto>;

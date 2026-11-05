@@ -33,10 +33,10 @@ import { errorMessage } from '../errorMessage';
 import { settingsRoute, type SettingsSection } from '../settings/routes';
 import type { AgendaTargetDto, AssistantItemDto, AssistantReceiptDto, AssistantRowDto, AssistantSummaryDto } from '../types';
 import AssistantList from './AssistantList';
-import { ApprovalCard, DurableReportCard, NoticeCard, ReportEvidence, ResultCard, RunningCard, RunningFold, StopButton } from './Cards';
+import { ApprovalCard, DurableReportCard, NoticeCard, ReportActivity, ResultCard, RunningCard, RunningFold, StopButton } from './Cards';
 import DraftCard from './DraftCard';
 import {
-  SUGGESTION, arrivedOpen, createdDrafts, decisionOrder, endedTurns, inAnswerOrder, isRulesCommand, linkRefs, pageRoute, refFromHref, refLabel, takesSuggestion, type AssistantRequest,
+  SUGGESTION, arrivedOpen, createdDrafts, decisionOrder, endedTurns, inAnswerOrder, isRulesCommand, linkRefs, pageRoute, reportActivity, refFromHref, refLabel, takesSuggestion, type AssistantRequest,
   type AssistantView, type Pill, type WaitingCard,
 } from './model';
 import AssistantPills, { useWaiting } from './Pills';
@@ -237,7 +237,9 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
   const startNew = () => choose(crypto.randomUUID());
   const openSettings = (section: SettingsSection) => leave(() => onPage(settingsRoute(section)));
   // Messages sent during a reply read right above their own answers.
-  const shown = inAnswerOrder(items);
+  const activity = reportActivity(items, waiting);
+  const historical = new Set([...activity.values()].flat().map(item => item.id));
+  const shown = inAnswerOrder(items.filter(item => !historical.has(item.id)));
   // A receipt a card's button left after a failed reply, or a task's report, does not end that exchange, so Retry stays on the failure.
   const lastExchange = shown.findLast(item => item.kind !== 'RECEIPT' && item.kind !== 'REPORT')?.id;
   // A refusal in the exchange being answered points down at a card's buttons, so the decisions show under the conversation.
@@ -284,7 +286,7 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
   const clearNotice = (id: string) => noticeAction(window.bridge.removeAppNotice(id), 'Unable to clear this notice.');
   // Only a task's latest report takes a reply; the earlier ones are its history.
   const latestReports = new Map<string, string>();
-  for (const item of items) {
+  for (const item of items.toSorted((left, right) => Date.parse(left.at) - Date.parse(right.at))) {
     const task = item.report?.target.id;
     if (task != null) latestReports.set(task, item.id);
   }
@@ -303,7 +305,7 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
     // Not while the task waits on an approval, which its card's buttons answer.
     const replyable = item.report?.target.kind === 'TASK' && latestReports.get(item.report?.target.id ?? '') === item.id && notice?.id.startsWith(APPROVAL_NOTICE) !== true;
     return <Report key={item.id} item={item} notice={notice} conversation={conversation} onAnswered={answeredNotice} onOpenNotice={openNotice}
-      onClearNotice={clearNotice} onShow={show} onReply={replyable ? replyOnReport(item.id) : undefined} />;
+      onClearNotice={clearNotice} onShow={show} activity={activity.get(item.id) ?? []} onReply={replyable ? replyOnReport(item.id) : undefined} />;
   };
   const pick = (pill: Pill) => {
     setHistory(false);
@@ -606,8 +608,9 @@ function Entry({ item, waiting, rows, drafts, model, retryable, onRetry, onSetti
  * What a task the conversation started or sent words to raised: while its notice lasts, that notice's own card, answered or opened in
  * place; after, the durable result and its evidence remain. A task's latest report takes a reply.
  */
-function Report({ item, notice, conversation, onAnswered, onOpenNotice, onClearNotice, onShow, onReply }: {
+function Report({ item, notice, conversation, onAnswered, onOpenNotice, onClearNotice, onShow, onReply, activity }: {
   item: AssistantItemDto;
+  activity: AssistantItemDto[];
   notice: AppNotice | undefined;
   conversation: string;
   onAnswered: (id: string) => void;
@@ -628,17 +631,19 @@ function Report({ item, notice, conversation, onAnswered, onOpenNotice, onClearN
         ? <ApprovalCard notice={notice} focused={false} conversation={conversation} onAnswered={() => onAnswered(notice.id)} onOpen={open} onClear={clear} />
         : report.state === 'PROPOSAL' || report.state === 'ATTENTION' || pending
           ? <NoticeCard notice={notice} focused={false} onOpen={open} onClear={clear} />
-          : report.state === 'COMPLETED' || report.state === 'PROGRESS'
-            ? <DurableReportCard report={report} text={item.text} onOpen={() => onShow(report.target)} />
+          : report.state === 'COMPLETED' || report.state === 'PROGRESS' || report.state === 'RESULT_READY'
+            ? <DurableReportCard report={report} activity={activity} text={item.text} onOpen={() => onShow(report.target)} />
             : <ResultCard notice={notice} onShow={onShow} onOpen={open} onClear={clear} />}
-      {report.state !== 'COMPLETED' && report.state !== 'PROGRESS' && <div className="assistant-report-details">
+      {report.state !== 'COMPLETED' && report.state !== 'PROGRESS' && report.state !== 'RESULT_READY' && <div className="assistant-report-details">
         {report.assessment !== null && <div className="assistant-card__assessment">{report.assessment}</div>}
-        <ReportEvidence report={report} />
+        <ReportActivity report={report} history={activity} />
       </div>}
     </>;
   }
-  else entry = <DurableReportCard report={report} text={item.text} onOpen={() => onShow(report.target)} />;
-  return <>{entry}{onReply !== undefined && <ReplyToTask onSend={onReply} />}</>;
+  else entry = <DurableReportCard report={report} activity={activity} text={item.text} onOpen={() => onShow(report.target)} />;
+  return <div className="assistant-work-report">{entry}
+    {onReply !== undefined && <ReplyToTask onSend={onReply} />}
+  </div>;
 }
 
 /** A reply on a task's report, which goes to the task itself: Enter sends, Escape puts it away. */
@@ -651,7 +656,7 @@ function ReplyToTask({ onSend }: { onSend: (text: string, key: string) => Promis
   const input = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (open) input.current?.focus(); }, [open]);
   if (!open) {
-    return <div className="assistant-reply-to"><button type="button" className="assistant-link" onClick={() => setOpen(true)}>Reply to the task</button></div>;
+    return <div className="assistant-reply-to"><button type="button" className="assistant-link" onClick={() => setOpen(true)}>Continue this work</button></div>;
   }
   const send = () => {
     const words = text.trim();
@@ -667,7 +672,7 @@ function ReplyToTask({ onSend }: { onSend: (text: string, key: string) => Promis
   };
   return (
     <div className="assistant-reply-to">
-      <textarea ref={input} className="assistant-reply-to__text" aria-label="Reply to the task" placeholder="Reply to the task" rows={1} maxLength={16 * 1024}
+      <textarea ref={input} className="assistant-reply-to__text" aria-label="Continue this work" placeholder="Describe the next change" rows={1} maxLength={16 * 1024}
         value={text} disabled={sending} onChange={event => setText(event.target.value)}
         onKeyDown={event => {
           if (event.key === 'Escape') {

@@ -46,7 +46,7 @@ vi.mock('electron', async () => {
     },
   };
 });
-const notice: AppNotice = { id: 'approval:one', kind: 'APPROVAL', taskId: 'task', workspaceId: 'workspace', turnId: 'turn', reviewId: null, title: 'Build',
+const notice: AppNotice = { delivery: 'INTERRUPT', deliveryReason: 'A decision needs your attention.', report: null, id: 'approval:one', kind: 'APPROVAL', taskId: 'task', workspaceId: 'workspace', turnId: 'turn', reviewId: null, title: 'Build',
   pullRequest: null, pullRequestTitle: null, changes: null, message: 'Permission needed', repository: 'owner/repo', laneId: 'codex', occurredAt: '2026-09-27T10:00:00Z' };
 let directory: string;
 function setup() {
@@ -502,14 +502,14 @@ it.each(['refused', 'failed'] as const)('pauses macOS alerts until restart once 
   host.stop();
 });
 
-it('counts on the Dock what Decision counts: neither a result nor a failed turn', async () => {
+it('counts only interruptions on the Dock, including serious failures', async () => {
   const { host, read } = setup();
-  const finished: AppNotice = { ...notice, id: 'finished:turn', kind: 'TURN_FINISHED', taskId: 'done-task', occurredAt: new Date().toISOString() };
+  const finished: AppNotice = { ...notice, delivery: 'PASSIVE', id: 'finished:turn', kind: 'TURN_FINISHED', taskId: 'done-task', occurredAt: new Date().toISOString() };
   const failed: AppNotice = { ...notice, id: 'failed:turn', kind: 'FAILURE', taskId: 'failed-task', occurredAt: new Date().toISOString() };
   await host.refresh();
   expect(desktop.badge).toHaveBeenLastCalledWith(0);
   read.mockResolvedValue([notice, finished, failed]); await host.refresh();
-  expect(desktop.badge).toHaveBeenLastCalledWith(1);
+  expect(desktop.badge).toHaveBeenLastCalledWith(2);
   const calls = desktop.badge.mock.calls.length;
   await host.refresh();
   expect(desktop.badge).toHaveBeenCalledTimes(calls);
@@ -539,5 +539,33 @@ it('opens the task that has waited longest, then the next on each press, and bee
   read.mockResolvedValue([]);
   await host.next();
   expect(desktop.beep).toHaveBeenCalledTimes(2);
+  host.stop();
+});
+
+
+it('keeps passive results readable without native notifications, overlays or a Dock badge', async () => {
+  const { host, read, window } = setup();
+  vi.spyOn(window, 'isFocused').mockReturnValue(false);
+  await host.refresh();
+  const result: AppNotice = { ...notice, id: 'finished:quiet', kind: 'TURN_FINISHED', delivery: 'PASSIVE',
+    deliveryReason: 'The requested work finished.', occurredAt: new Date().toISOString() };
+  read.mockResolvedValue([result]); await host.refresh();
+  expect(desktop.notifications).toEqual([]);
+  expect(desktop.views).toEqual([]);
+  expect(desktop.badge).toHaveBeenLastCalledWith(0);
+  const owner = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+  expect(desktop.handlers.get('notices:read')?.(owner)).toMatchObject({ notices: [result], popupIds: [] });
+  host.stop();
+});
+
+
+it.each(['rule:optional', 'rule-result:optional:run'])('keeps the passive suggestion %s after opening it until it is answered', async id => {
+  const { host, read, window } = setup();
+  const suggestion: AppNotice = { ...notice, id, kind: 'QUESTION', delivery: 'PASSIVE', deliveryReason: 'This suggestion is optional.' };
+  read.mockResolvedValue([suggestion]); await host.refresh();
+  const owner = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+  await desktop.handlers.get('notices:open')?.(owner, id);
+  expect(desktop.handlers.get('notices:read')?.(owner)).toMatchObject({ notices: [suggestion], popupIds: [] });
+  expect(desktop.notifications).toEqual([]);
   host.stop();
 });

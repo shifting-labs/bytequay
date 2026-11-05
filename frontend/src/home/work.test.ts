@@ -112,7 +112,7 @@ describe('My work', () => {
     const local = waiting('task-1', null, []);
     const reviewed = waiting('task-2', 7, [QUESTION_TOOL]);
     const stuck = waiting('task-3', null, []);
-    const notice = (taskId: string, kind: AppNotice['kind']): AppNotice => ({ id: `${kind}:${taskId}`, kind, taskId, workspaceId: 'ws1', turnId: null, reviewId: null,
+    const notice = (taskId: string, kind: AppNotice['kind']): AppNotice => ({ delivery: 'INTERRUPT', deliveryReason: 'A decision needs your attention.', report: null, id: `${kind}:${taskId}`, kind, taskId, workspaceId: 'ws1', turnId: null, reviewId: null,
       title: taskId, pullRequest: null, pullRequestTitle: null, changes: null, message: '', repository: 'owner/repository', laneId: 'claude', occurredAt: '2026-08-15T00:00:00Z' });
     const build = (notices: AppNotice[]) => myWorkItems({ candidates: [mine(7, { requestedReviewers: ['ana'] })],
       tasks: [local, reviewed, stuck].map(({ task }) => ({ task, workspace })), work: [], viewerLogin: 'me', decisions: decisionMarks(notices),

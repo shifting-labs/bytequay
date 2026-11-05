@@ -16,16 +16,22 @@ package com.bytequay.persistence.sqlite.entity;
 import com.bytequay.core.domain.AssistantItem;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import lombok.Getter;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+import java.util.Optional;
+
 /** One entry of an assistant conversation. A message and the failure right after it can share a millisecond, so the ordinal orders them. */
 @Entity
 @Table(name = "assistant_conversation_item",
+        indexes = @Index(name = "ix_assistant_item_delivery", columnList = "delivery, conversation_id, ordinal"),
         uniqueConstraints = @UniqueConstraint(name = "uq_assistant_conversation_item_ordinal", columnNames = {"conversation_id", "ordinal"}))
 public class AssistantItemEntity
         extends AssignedIdEntity<String>
@@ -44,6 +50,14 @@ public class AssistantItemEntity
     @JdbcTypeCode(SqlTypes.JSON)
     private AssistantItem value;
 
+    @Enumerated(EnumType.STRING)
+    private Delivery delivery;
+
+    public enum Delivery
+    {
+        QUEUED, RUNNING
+    }
+
     protected AssistantItemEntity() {}
 
     public AssistantItemEntity(AssistantItem item, long ordinal)
@@ -57,5 +71,15 @@ public class AssistantItemEntity
     public AssistantItem toDomain()
     {
         return value;
+    }
+
+    public Optional<Delivery> delivery()
+    {
+        return Optional.ofNullable(delivery);
+    }
+
+    public void delivery(Optional<Delivery> value)
+    {
+        delivery = value.orElse(null);
     }
 }

@@ -41,6 +41,13 @@ public interface AgentTurnService
      */
     AgentTurn start(StartAgentTurnCommand command);
 
+    /**
+     * Continues unfinished local work once, using the original request and its frozen settings. The observed latest turn
+     * and task version must still match. Failed, cancelled, held, queued or uncertain work cannot be resumed this way.
+     * A repeated source returns its durable acceptance, including after restart, without resending provider work.
+     */
+    AgentTurn continueDevelopment(TaskId taskId, long expectedTaskVersion, TurnId observedTurnId);
+
     /** Starts one bounded internal follow-up using its source user turn's immutable settings. */
     CompletionStage<DevelopmentTurnCompletion> startGeneratedTurn(TaskId taskId, DevelopmentTurnOrigin origin, String message);
 

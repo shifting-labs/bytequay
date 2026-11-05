@@ -82,19 +82,30 @@
             </p>
             <ol>
               <li>
-                Press <strong>⌘J</strong> and ask what needs you, or about the
-                item on screen.
+                Press <strong>⌘J</strong>, or type in the composer under My work
+                on Home, and ask what needs you, or about the item on screen.
               </li>
               <li>
-                Browse <strong>Decision</strong>, <strong>Running</strong>,
-                <strong>Results</strong>, and <strong>Today</strong> cards.
-                Answer approvals and questions right on them.
+                The pills under the composer open one view each: <strong>All</strong>,
+                <strong>Decision</strong>, <strong>Running</strong>, <strong>Results</strong>,
+                <strong>Today</strong>, and <strong>My work</strong>. Click the open pill
+                again to go back to the conversation. Answer approvals and questions
+                right on Decision's cards; a failed turn shows under Results with why.
+                A finished task with a pull request shows where it stands, such as a
+                draft PR or failing checks, and <strong>Review</strong> opens it.
+                A result you open leaves Results.
               </li>
               <li>
-                Ask it to find work or open a page. Pull request cards can
+                Ask it to find work or open a page, such as a repository's Tasks.
+                A page with a message box, such as a task, opens with the cursor
+                in it. Pull request cards can
                 <strong>Approve</strong>, <strong>Merge</strong>,
                 <strong>Comment</strong>, and, on your own PRs,
                 <strong>Close</strong>.
+              </li>
+              <li>
+                Ask it for today's agenda. It reads the one on Home, or makes it
+                when you ask, as <strong>Make again</strong> does.
               </li>
               <li>
                 Ask for a new Epic issue. Nothing is created until you click
@@ -106,46 +117,85 @@
                 one. Go back to an earlier one from the clock button to keep
                 going.
               </li>
+              <li>
+                Keep typing while it answers: messages in the same conversation
+                wait in order. Tasks and result reviews run in the background,
+                so you can keep chatting with the same Assistant.
+                <strong>Stop this reply</strong> stops only its current reply and
+                its waiting messages; <strong>Stop work…</strong> on a task asks
+                before stopping that task’s current turn.
+              </li>
             </ol>
-            <p>
-              Keep chatting while tasks and result reviews run in the background.
-              Messages in the same conversation wait in order.
-              <strong>Stop this reply</strong> stops only the current reply;
-              <strong>Stop work…</strong> on a task asks before stopping its
-              current turn. Its saved changes stay.
-            </p>
             <p>The card’s label tells you what happens next:</p>
             <ul>
               <li><strong>Approval required</strong> — allow or deny a specific action with the task’s buttons.</li>
               <li><strong>Answer needed</strong> — answer a question before the work can continue.</li>
               <li><strong>Proposal</strong> — review a suggestion before adopting it or creating anything.</li>
-              <li><strong>Result ready</strong> — inspect the work; a finished turn still needs your review.</li>
+              <li><strong>Result ready</strong> — the result is available; open it when useful. A finished turn alone does not prove the whole goal is complete.</li>
               <li><strong>Completed</strong> — the work’s completion condition has been verified.</li>
               <li><strong>Needs attention</strong> — inspect a blocker, failure, or uncertain outcome.</li>
               <li><strong>Progress</strong> — work is continuing; open it for details or stop its current turn.</li>
             </ul>
             <p>
-              Reports keep their findings and evidence after a notice is cleared.
-              An <strong>Allowed</strong> receipt does not mean the work is
-              completed. Expand <strong>Evidence</strong> or a rule receipt to
-              inspect its supporting records. Type <strong>@rules</strong> on
+              Reports keep their findings and evidence in the conversation after
+              a notice is cleared. A permission receipt says <strong>Allowed</strong>,
+              <strong>Denied</strong>, or <strong>Answered</strong>; it does not
+              mean the work is completed. Each work card updates in place.
+              <strong>Activity</strong> keeps earlier reports, evidence, rule
+              receipts, and why the result stayed quiet or needed attention.
+              <strong>Ask about this</strong> opens a private, read-only discussion
+              of the saved result; it does not restart the task. Type <strong>@rules</strong> on
               its own, or choose <strong>Rules</strong> in the composer, to
               <a href="guide-agents.html#rules">inspect and activate your rules</a>.
             </p>
             <p>
               When an active rule finishes a private PR review, the Assistant
               reads its saved findings in the background and decides whether
-              the result is useful to show. The <strong>Result ready</strong>
+              you need an interruption. The <strong>Result ready</strong>
               card includes a short summary, the rule that started it, and
-              <strong>Read full review</strong>. Results with no useful change
-              can stay quiet; the review remains available from the PR.
-              Approval requests, questions, and failures appear immediately.
+              <strong>Read full review</strong>. Routine results stay visible
+              without a popup, native notification, unread dot, or Dock badge.
+              A serious issue or notification requested by your rule can alert you.
+              While the summary is being prepared, a quiet Progress card keeps
+              the saved review accessible. Approval requests, questions, and failures appear immediately.
               If the Assistant is disabled or cannot assess the result, the
               card still links to the full review.
             </p>
             <p>
-              <strong>⇧⌘J</strong> opens the task that has waited longest. Task
-              alerts also show as macOS notifications.
+              Messages waiting in a chat survive an app restart. A reply that had
+              already started is marked interrupted instead of repeating an action
+              with an uncertain outcome. Independent tasks, result reviews, and
+              private result discussions can run while you keep using the Assistant.
+              For a directly requested development task, the Assistant may make
+              one additional local verification or repair attempt within the
+              original request. It respects Stop, newer input, existing permissions,
+              and delivery checks; unresolved questions and uncertain external
+              actions remain visible.
+            </p>
+            <p>
+              <strong>⇧⌘J</strong> opens the task that has waited longest on your
+              decision. The Dock counts items that need attention; only those
+              items can show as macOS notifications. An approval or question waits
+              five minutes for your answer: its card shows the time left, and its
+              alert comes back once in the last minute. With no answer by then,
+              the turn stops and Results shows <strong>No answer within 5 minutes</strong>.
+              A CI Autofix request alerts on its development task, whose page
+              answers it. Memory's spec checks and learning runs don't alert:
+              one that asks stops after five minutes, or sooner with <strong>Stop</strong>.
+            </p>
+            <p>
+              A running task that goes quiet for 10 minutes, with no command running
+              and nothing waiting on you, or whose command runs far longer than
+              that program usually takes, moves to <strong>Decision</strong> as
+              <strong>Looks stuck</strong>, with why. Open it or choose
+              <strong>Stop work…</strong>; nothing is stopped for you.
+            </p>
+            <p>
+              <strong>⌥Space</strong> opens the same Assistant from any app, even
+              over a full-screen window, with voice, cards and replies. What you
+              open from it shows in ByteQuay. Escape puts it away and keeps what
+              you typed. If another app, such as Claude, already uses ⌥Space,
+              quit it or change its shortcut, then restart ByteQuay.
             </p>
           </section>
           <section id="assistant-actions">
@@ -158,7 +208,7 @@
             <p>
               Ask it to work on one of your own pull requests and it uses that
               PR's development task, as the PR's
-              <strong>Development task</strong> button does, and sends your words
+              <strong>Development</strong> button does, and sends your words
               there. A task started some other way can't be linked to a PR later.
             </p>
             <p>
@@ -174,8 +224,9 @@
             </p>
             <p>
               A task it starts or sends your words to reports back into the same
-              conversation, with buttons for unresolved approvals and questions.
-              The Assistant can review results in the background; these reviews
+              conversation: each unresolved approval or question, with its buttons,
+              then its result or why it stopped. The Assistant can review results
+              in the background; these reviews
               use your model allowance. <strong>Reply to the task</strong> under
               its latest report sends your words straight to that task.
             </p>

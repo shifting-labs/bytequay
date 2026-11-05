@@ -22,6 +22,7 @@ import com.bytequay.agent.core.AgentResourceService;
 import com.bytequay.agent.core.AgentTask;
 import com.bytequay.agent.core.AgentTaskDefaults;
 import com.bytequay.agent.core.AgentTaskService;
+import com.bytequay.agent.core.AgentTurn;
 import com.bytequay.agent.core.EventId;
 import com.bytequay.agent.core.RepositoryIdentity;
 import com.bytequay.agent.core.TaskId;
@@ -30,6 +31,8 @@ import com.bytequay.agent.core.TaskSummary;
 import com.bytequay.agent.core.TaskWorktree;
 import com.bytequay.agent.core.TitleSource;
 import com.bytequay.agent.core.TurnId;
+import com.bytequay.agent.core.TurnState;
+import com.bytequay.agent.core.store.AgentTurnStore;
 import com.bytequay.agent.core.store.TaskLogStore;
 import com.bytequay.agent.spi.AgentCapabilities;
 import com.bytequay.agent.spi.AgentDriver;
@@ -61,6 +64,7 @@ import com.bytequay.core.discussion.DiscussionSession;
 import com.bytequay.core.discussion.ReviewCommentAnchor;
 import com.bytequay.core.discussion.TaskDiscussion;
 import com.bytequay.core.discussion.TaskDiscussionStore;
+import com.bytequay.core.domain.AgendaTarget;
 import com.bytequay.core.domain.PrRawDetail;
 import com.bytequay.core.domain.PrTimelineComment;
 import com.bytequay.core.domain.PrTimelineEvent;
@@ -71,6 +75,7 @@ import com.bytequay.core.review.AgentReview;
 import com.bytequay.core.review.AgentReviewStore;
 import com.bytequay.core.review.ReviewFinding;
 import com.bytequay.core.review.ReviewNotFoundException;
+import com.bytequay.core.review.ReviewRun;
 import com.bytequay.core.store.PrDetailStore;
 import com.bytequay.core.store.PullRequestStore;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -155,6 +160,7 @@ class TestTaskDiscussionAnswers
     private final PullRequestService pullRequests = mock(PullRequestService.class);
     private final BetterWordsService writer = mock(BetterWordsService.class);
     private final AgentReviewStore reviews = mock(AgentReviewStore.class);
+    private final AgentTurnStore turns = mock(AgentTurnStore.class);
     private boolean hold;
     private boolean answerDuringList;
     private final TaskDiscussionService service = service();
@@ -168,6 +174,92 @@ class TestTaskDiscussionAnswers
         catch (Exception failure) {
             throw new AssertionError(failure);
         }
+    }
+
+    @Test
+    void resultQuestionsUseTheSavedAnswerInASeparateReadOnlyDiscussion()
+    {
+        TurnId turn = TurnId.random();
+        String answer = "The saved answer explains the fix. ".repeat(40);
+        answered(turn, answer);
+        completedTurn(turn, TASK);
+        AgendaTarget target = AgendaTarget.of(AgendaTarget.Kind.TASK, "w1", TASK.toString());
+
+        TaskDiscussionView openedResult = service.openResult(target, turn.toString(), "Why is this correct?");
+
+        assertThat(openedResult.turnId()).isEqualTo(turn.toString());
+        assertThat(openedResult.quote()).isEqualTo(DiscussionQuotes.normalize(answer).substring(0, 600));
+        assertThat(savedContext("history")).contains(answer.strip());
+        assertThat(driver.lastContext.access()).isEqualTo(SessionAccess.READ_ONLY);
+        assertThat(driver.lastContext.sessionTools()).isEmpty();
+        assertThat(events).hasSize(2);
+        assertThat(service.openResult(target, turn.toString(), "What are the limitations?").id()).isEqualTo(openedResult.id());
+        assertThat(rows).hasSize(1);
+        verifyNoInteractions(ownership, writer);
+    }
+
+    @Test
+    void resultQuestionsRefuseAnotherTasksTurnAndMissingSourceEvidence()
+    {
+        TurnId turn = TurnId.random();
+        answered(turn, "The saved answer belongs to another task.");
+        completedTurn(turn, REVIEW_TASK);
+        AgendaTarget target = AgendaTarget.of(AgendaTarget.Kind.TASK, "w1", TASK.toString());
+
+        assertThatThrownBy(() -> service.openResult(target, turn.toString(), "Explain this"))
+                .isInstanceOf(AgentConflictException.class).hasMessageContaining("does not belong");
+        completedTurn(turn, TASK);
+        events.clear();
+        assertThatThrownBy(() -> service.openResult(target, turn.toString(), "Explain this"))
+                .isInstanceOf(AgentUnavailableException.class).hasMessageContaining("no recorded answer");
+        assertThat(rows).isEmpty();
+        assertThat(opened).isEmpty();
+        assertThat(service.isAnswering(TASK)).isFalse();
+    }
+
+    @Test
+    void reviewResultQuestionsRequireTheAcceptedSourceAndItsWorkspace()
+    {
+        TurnId turn = TurnId.random();
+        AgentReview review = review(AgentReview.State.OPEN, OptionalInt.of(12), Optional.empty()).withLatestCompletedRun("accepted-run", NOW);
+        hostReview(review);
+        ReviewRun run = mock(ReviewRun.class, withSettings().mockMaker(MockMakers.INLINE));
+        when(run.reviewId()).thenReturn(REVIEW);
+        when(run.state()).thenReturn(ReviewRun.State.ACCEPTED);
+        when(run.headSha()).thenReturn("a".repeat(40));
+        when(run.turnIds()).thenReturn(ImmutableList.of(turn.toString()));
+        when(reviews.findRun("accepted-run")).thenReturn(Optional.of(run));
+        completedTurn(turn, REVIEW_TASK);
+        events.add(new AgentEventEnvelope(AgentEventEnvelope.CURRENT_SCHEMA_VERSION, EventId.random(), 1, REVIEW_TASK, Optional.of(turn), AgentEventSource.root(), NOW,
+                new AgentEventPayload.AssistantMessage(MessageKind.ANSWER, MessagePhase.FINAL, "The review's saved final answer.")));
+        AgendaTarget target = AgendaTarget.of(AgendaTarget.Kind.REVIEW, "w1", REVIEW);
+
+        assertThatThrownBy(() -> service.openResult(AgendaTarget.of(AgendaTarget.Kind.REVIEW, "other-workspace", REVIEW), turn.toString(), "Explain this"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("another workspace");
+        when(run.state()).thenReturn(ReviewRun.State.INCOMPLETE);
+        assertThatThrownBy(() -> service.openResult(target, turn.toString(), "Explain this"))
+                .isInstanceOf(AgentConflictException.class).hasMessageContaining("result changed");
+        when(run.state()).thenReturn(ReviewRun.State.ACCEPTED);
+        hostReview(review.withObservedHead("b".repeat(40), NOW));
+        assertThatThrownBy(() -> service.openResult(target, turn.toString(), "Explain this"))
+                .isInstanceOf(AgentConflictException.class).hasMessageContaining("result changed");
+        hostReview(review);
+
+        TaskDiscussionView discussion = service.openResult(target, turn.toString(), "Why does this matter?");
+
+        assertThat(discussion.quote()).isEqualTo("The review's saved final answer.");
+        assertThat(discussion.turnId()).isEqualTo(turn.toString());
+        assertThat(driver.lastContext.taskId()).isEqualTo(REVIEW_TASK.toString());
+        assertThat(driver.lastContext.access()).isEqualTo(SessionAccess.READ_ONLY);
+        verify(tasks, never()).getInteractive(any(), eq(REVIEW_TASK));
+    }
+
+    private void completedTurn(TurnId id, TaskId task)
+    {
+        AgentTurn turn = mock(AgentTurn.class, withSettings().mockMaker(MockMakers.INLINE));
+        when(turn.taskId()).thenReturn(task);
+        when(turn.state()).thenReturn(TurnState.COMPLETED);
+        when(turns.find(id)).thenReturn(Optional.of(turn));
     }
 
     @Test
@@ -838,7 +930,7 @@ class TestTaskDiscussionAnswers
         when(pullRequests.findWorkspaceStored("w1", REPO, 12)).thenReturn(Optional.of(pullRequest));
         PrDetailStore details = mock(PrDetailStore.class);
         when(details.find(12L)).thenReturn(Optional.of(detail()));
-        return new TaskDiscussionService(store, tasks, resources, drivers, logStore, Clock.fixed(NOW, ZoneOffset.UTC), ownership, pullRequests,
+        return new TaskDiscussionService(store, tasks, resources, drivers, logStore, turns, Clock.fixed(NOW, ZoneOffset.UTC), ownership, pullRequests,
                 new ReviewCommentReader(mock(PullRequestStore.class), details), writer, reviews, executor);
     }
 

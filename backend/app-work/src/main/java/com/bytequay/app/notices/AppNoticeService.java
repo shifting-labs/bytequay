@@ -37,9 +37,11 @@ import com.bytequay.app.utils.ContextText;
 import com.bytequay.app.workspace.TaskPullRequestOwnership;
 import com.bytequay.core.ci.CiAutofixRun;
 import com.bytequay.core.ci.CiAutofixStore;
+import com.bytequay.core.domain.AgendaTarget;
 import com.bytequay.core.domain.Artifact;
 import com.bytequay.core.domain.AssistantAssessment;
 import com.bytequay.core.domain.AssistantFollow;
+import com.bytequay.core.domain.AssistantReport;
 import com.bytequay.core.domain.PullRequest;
 import com.bytequay.core.domain.PullRequestDetail;
 import com.bytequay.core.domain.RuleRun;
@@ -159,7 +161,8 @@ public class AppNoticeService
             alerts.add(new AppNotice(RULE_NOTICE + rule.id() + ":" + rule.keptObserving().orElse(rule.recordSince()).toEpochMilli(), AppNotice.Kind.QUESTION,
                     RULE_NOTICE + rule.id(), RULES, Optional.empty(), Optional.empty(), clip(rule.rule().name(), 160), Optional.empty(), Optional.empty(), Optional.empty(),
                     Optional.empty(), "Agreed " + rule.agreed() + " of " + rule.answered() + " times. Move it to Suggest?", "Rules", RULES, Optional.empty(),
-                    rules.record(rule.id()).stream().findFirst().map(RuleRun::occurredAt).orElse(rule.recordSince()), Optional.empty()));
+                    rules.record(rule.id()).stream().findFirst().map(RuleRun::occurredAt).orElse(rule.recordSince()), Optional.empty())
+                    .delivered(AssistantReport.Delivery.PASSIVE, "Rule suggestions are optional; work is not blocked."));
         }
         for (Artifact artifact : artifacts.missed()) {
             Artifact.MissedQuestion missed = artifact.missed().orElseThrow();
@@ -168,7 +171,9 @@ public class AppNoticeService
                     Optional.empty(), Optional.empty(), clip("Timed out: " + question(missed.detail()), 280), workspace.monitoredRepository().fullName(),
                     missed.laneId(), Optional.empty(), missed.at(), Optional.empty())));
         }
-        return alerts.build();
+        return alerts.build().stream().map(notice -> notice.report().isPresent() || notice.turnId().isEmpty() && notice.reviewId().isEmpty()
+                        ? notice : notice.withReport(report(notice)))
+                .collect(ImmutableList.toImmutableList());
     }
 
     private Optional<AppNotice> resultNotice(AppNotice notice)
@@ -178,12 +183,28 @@ public class AppNoticeService
         }
         String sourceLine = notice.summaryLine();
         Optional<AssistantAssessment> result = follows.result(notice.taskId(), notice.id(), sourceLine);
-        if (result.isPresent()) {
-            return result.filter(job -> job.state() == AssistantAssessment.State.PUBLISHED)
-                    .map(job -> notice.withMessage(ContextText.excerpt(job.report().assessment().orElse(notice.message()), 1000)));
+        if (result.filter(job -> job.state() == AssistantAssessment.State.PUBLISHED || job.state() == AssistantAssessment.State.QUIET).isPresent()) {
+            AssistantReport report = result.orElseThrow().report();
+            return Optional.of(notice.withMessage(ContextText.excerpt(report.assessment().orElse(notice.message()), 1000)).withReport(report));
         }
         boolean automaticReview = notice.reviewId().isPresent() && notice.ruleRun().flatMap(RuleRun::authorization).isPresent();
-        return follows.followsTask(notice.taskId()) || automaticReview ? Optional.empty() : Optional.of(notice);
+        if (follows.followsTask(notice.taskId()) || automaticReview) {
+            AssistantReport source = report(notice);
+            AssistantReport pending = new AssistantReport(AssistantReport.State.PROGRESS, source.noticeId(), source.target(), source.sourceTurnId(), Optional.empty(),
+                    source.evidence(), source.ruleActions(), Optional.empty())
+                    .delivered(AssistantReport.Delivery.PASSIVE, "The result is saved while the Assistant prepares its summary.");
+            return Optional.of(notice.withMessage("Reviewing the result in the background").withReport(pending));
+        }
+        return Optional.of(notice.withReport(report(notice)));
+    }
+
+    private static AssistantReport report(AppNotice notice)
+    {
+        AgendaTarget target = notice.reviewId().map(id -> AgendaTarget.of(AgendaTarget.Kind.REVIEW, notice.workspaceId(), id))
+                .orElseGet(() -> AgendaTarget.of(AgendaTarget.Kind.TASK, notice.workspaceId(), notice.taskId()));
+        return new AssistantReport(AppNotice.state(notice.kind()), notice.id(), target, notice.turnId(), Optional.empty(),
+                ImmutableList.of("task:" + notice.taskId()), ImmutableList.of(), Optional.empty())
+                .delivered(notice.delivery(), notice.deliveryReason());
     }
 
     private static AppNotice automaticResult(AppNotice notice, RuleRun run)

@@ -560,6 +560,11 @@ The Assistant panel keeps a conversation for each topic, each with its own
 tools-only session and folder, resumed when the user goes back to it from the
 history. Each conversation serializes its own foreground replies; another
 conversation can answer concurrently, and Stop addresses only that conversation.
+Each saved user message has a durable queued/running delivery marker. Admission
+saves both together; completion appends the answer and settles delivery together.
+Restart resumes messages that never started, while an abandoned running message
+gets an interruption receipt and is never blindly replayed. Stop cancels that chat’s
+waiting messages as well as its current reply; pending chats survive retention.
 The panel names a new conversation itself, so a message sent twice still begins
 it once. A session has no shell, file or web tools, only
 `assistant_context`, which reads the agenda's stored data plus what runs now,
@@ -612,10 +617,14 @@ replay an action. The worker reads a bounded selection of retained messages,
 command outcomes and lifecycle events, without copying task logs or blobs into
 another transcript. It checks source freshness before publishing. Changed
 sources supersede the old job; missing or invalid model output keeps the
-app-owned result without an interpretation. Automatic interpretations can
-remain quiet when they add nothing useful; explicitly requested interpretations
-are delivered. For followed tasks, routine global result alerts wait for the same
-durable decision and use its saved summary. Quiet results do not alert. Activated
+app-owned result without an interpretation. Every accepted interpretation remains readable. The report separately records
+passive or interrupt delivery and its reason. Directly requested completion is
+passive by default; real blockers and serious risks interrupt. A rule’s explicit
+notification intent can also request an interruption. Pending summaries appear as
+passive Progress, then update the same source card. Quiet assessments remain in
+the originating chat and Results without popup, native alert, unread urgency, or
+Dock badge. The current server snapshot invalidates superseded results, including
+while a replacement is being assessed. Activated
 rule reviews save an inbox follow with their accepted rule revision before the
 start receipt is finalized; no chat is fabricated. The same worker reads the
 accepted review's durable summary, coverage, and current findings, using the
@@ -623,8 +632,23 @@ review's account and frozen model settings. It checks the accepted run, PR head,
 and finding revisions before publishing a short card summary with the full review
 link. Review records remain readable after task-log retention. An open review
 retains its rule provenance independently of bounded rule history. Unfollowed
-tasks retain their existing alerts. Approval requests, questions, failures and
-recovery never wait for that judgment.
+tasks also keep routine completion passive. Approval requests, questions, failures
+and recovery never wait for that judgment. Rule suggestions are optional and passive.
+
+The read-only assessor can recommend one routine local completion attempt.
+AssistantContinuation validates the still-followed request, then the existing task
+executor rechecks source turn, task version, queue, stop state, readiness, and settled
+delivery under the task lock. It uses the original saved user message and frozen
+settings, never model-generated commands. A durable turn key prevents duplicate
+continuation and a continuation cannot continue itself. Existing development
+automation still owns authorized delivery and CI repair. Uncertain external actions
+are not replayed. Reports retain continuation outcomes; delivery and continuation
+decisions are logged by task/result ID for interruption and recovery analysis.
+
+The panel folds earlier reports into the current work card’s Activity while keeping
+live decisions independently answerable. Ask about this resolves the selected
+source turn server-side and opens the existing read-only discussion service from
+its saved answer. It does not submit task input or restart work.
 
 Reports use seven app-owned card kinds: approval required, answer required,
 proposal, result ready, completed work, attention, and progress. Resolved

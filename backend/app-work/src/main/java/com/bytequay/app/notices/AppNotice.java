@@ -14,6 +14,7 @@
 package com.bytequay.app.notices;
 
 import com.bytequay.app.utils.ContextText;
+import com.bytequay.core.domain.AssistantReport;
 import com.bytequay.core.domain.RuleRun;
 
 import java.time.Instant;
@@ -44,8 +45,19 @@ public record AppNotice(
         Optional<String> workItemId,
         Instant occurredAt,
         Optional<Instant> expiresAt,
-        Optional<RuleRun> ruleRun)
+        Optional<RuleRun> ruleRun,
+        AssistantReport.Delivery delivery,
+        String deliveryReason,
+        Optional<AssistantReport> report)
 {
+    public AppNotice(String id, Kind kind, String taskId, String workspaceId, Optional<String> turnId, Optional<String> reviewId, String title,
+            Optional<String> pullRequest, Optional<String> pullRequestTitle, Optional<String> branch, Optional<Changes> changes, String message,
+            String repository, String laneId, Optional<String> workItemId, Instant occurredAt, Optional<Instant> expiresAt, Optional<RuleRun> ruleRun)
+    {
+        this(id, kind, taskId, workspaceId, turnId, reviewId, title, pullRequest, pullRequestTitle, branch, changes, message, repository, laneId, workItemId,
+                occurredAt, expiresAt, ruleRun, AssistantReport.deliveryFor(state(kind)), AssistantReport.reasonFor(state(kind)), Optional.empty());
+    }
+
     public AppNotice(String id, Kind kind, String taskId, String workspaceId, Optional<String> turnId, Optional<String> reviewId, String title,
             Optional<String> pullRequest, Optional<String> pullRequestTitle, Optional<String> branch, Optional<Changes> changes, String message,
             String repository, String laneId, Optional<String> workItemId, Instant occurredAt, Optional<Instant> expiresAt)
@@ -62,13 +74,36 @@ public record AppNotice(
     public AppNotice withRuleRun(RuleRun run)
     {
         return new AppNotice(id, kind, taskId, workspaceId, turnId, reviewId, title, pullRequest, pullRequestTitle, branch, changes, message, repository, laneId,
-                workItemId, occurredAt, expiresAt, Optional.of(run));
+                workItemId, occurredAt, expiresAt, Optional.of(run), delivery, deliveryReason, report);
     }
 
     public AppNotice withMessage(String summary)
     {
         return new AppNotice(id, kind, taskId, workspaceId, turnId, reviewId, title, pullRequest, pullRequestTitle, branch, changes, summary, repository, laneId,
-                workItemId, occurredAt, expiresAt, ruleRun);
+                workItemId, occurredAt, expiresAt, ruleRun, delivery, deliveryReason, report);
+    }
+
+    public AppNotice withReport(AssistantReport value)
+    {
+        return new AppNotice(id, kind, taskId, workspaceId, turnId, reviewId, title, pullRequest, pullRequestTitle, branch, changes, message, repository, laneId,
+                workItemId, occurredAt, expiresAt, ruleRun, value.delivery(), value.deliveryReason(), Optional.of(value));
+    }
+
+    public AppNotice delivered(AssistantReport.Delivery value, String reason)
+    {
+        return new AppNotice(id, kind, taskId, workspaceId, turnId, reviewId, title, pullRequest, pullRequestTitle, branch, changes, message, repository, laneId,
+                workItemId, occurredAt, expiresAt, ruleRun, value, reason, report.map(item -> item.delivered(value, reason)));
+    }
+
+    public static AssistantReport.State state(Kind kind)
+    {
+        return switch (kind) {
+            case TURN_FINISHED -> AssistantReport.State.RESULT_READY;
+            case QUESTION -> AssistantReport.State.ANSWER_REQUIRED;
+            case APPROVAL -> AssistantReport.State.APPROVAL_REQUIRED;
+            case NEXT_WORK -> AssistantReport.State.PROPOSAL;
+            case FAILURE, RECOVERY, STUCK, QUEUE_PAUSED, CI_ATTENTION -> AssistantReport.State.ATTENTION;
+        };
     }
 
     public enum Kind

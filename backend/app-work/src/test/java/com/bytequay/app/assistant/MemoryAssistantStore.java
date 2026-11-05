@@ -36,6 +36,7 @@ final class MemoryAssistantStore
     final Map<String, AssistantConversation> conversations = new HashMap<>();
     private final List<AssistantItem> items = new ArrayList<>();
     private final List<AssistantAction> actions = new ArrayList<>();
+    private final Map<String, Boolean> deliveries = new HashMap<>();
 
     @Override
     public synchronized Optional<AssistantConversation> find(String conversationId)
@@ -76,6 +77,45 @@ final class MemoryAssistantStore
     }
 
     @Override
+    public synchronized void enqueue(AssistantItem message)
+    {
+        add(message);
+        deliveries.putIfAbsent(message.id(), false);
+    }
+
+    @Override
+    public synchronized List<AssistantItem> queued()
+    {
+        return items.stream().filter(item -> Boolean.FALSE.equals(deliveries.get(item.id()))).collect(toImmutableList());
+    }
+
+    @Override
+    public synchronized List<AssistantItem> interrupted()
+    {
+        return items.stream().filter(item -> Boolean.TRUE.equals(deliveries.get(item.id()))).collect(toImmutableList());
+    }
+
+    @Override
+    public synchronized boolean begin(String itemId)
+    {
+        return deliveries.replace(itemId, false, true);
+    }
+
+    @Override
+    public synchronized void complete(String itemId, AssistantItem outcome)
+    {
+        if (deliveries.remove(itemId, true)) {
+            add(outcome);
+        }
+    }
+
+    @Override
+    public synchronized void cancelQueued(String conversationId)
+    {
+        queued().stream().filter(item -> item.conversationId().equals(conversationId)).forEach(item -> deliveries.remove(item.id()));
+    }
+
+    @Override
     public synchronized List<AssistantAction> actions(String itemId)
     {
         return actions.stream().filter(action -> action.itemId().equals(itemId)).collect(toImmutableList());
@@ -84,7 +124,8 @@ final class MemoryAssistantStore
     @Override
     public synchronized void deleteBefore(Instant updatedBefore, LocalDate actionsBefore)
     {
-        conversations.values().removeIf(conversation -> conversation.updatedAt().isBefore(updatedBefore));
+        conversations.values().removeIf(conversation -> conversation.updatedAt().isBefore(updatedBefore)
+                && items(conversation.id()).stream().noneMatch(item -> deliveries.containsKey(item.id())));
         items.removeIf(item -> !conversations.containsKey(item.conversationId()));
         actions.removeIf(action -> action.day().isBefore(actionsBefore));
     }

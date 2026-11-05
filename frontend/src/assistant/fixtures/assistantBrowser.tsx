@@ -95,7 +95,7 @@ const listView = (style: AssistantListStyle, extra: AssistantRowDto[] = []): Ass
   return { ...VIEW, items: [VIEW.items[0], list], rows: { ...ROWS, ...Object.fromEntries(extra.map(each => [each.ref, each])) } };
 };
 
-const notice = (id: string, kind: AppNotice['kind'], taskId: string, title: string): AppNotice => ({
+const notice = (id: string, kind: AppNotice['kind'], taskId: string, title: string): AppNotice => ({ delivery: 'INTERRUPT', deliveryReason: 'A decision needs your attention.', report: null,
   id, kind, taskId, workspaceId: 'ws1', turnId: `turn-${taskId}`, reviewId: null, title, pullRequest: null, pullRequestTitle: null, changes: null,
   message: 'Permission needed', repository: 'owner/repository', laneId: 'claude', occurredAt: '2026-10-16T07:10:00Z',
 });
@@ -1114,7 +1114,7 @@ async function keepsAConversationForEachTopic(): Promise<void> {
 
 const report = (id: string, state: AssistantReportDto['state'], noticeId: string, text: string, task: string): AssistantItemDto => ({
   id, conversationId: 'c0', at: '2026-10-16T07:12:00Z', kind: 'REPORT', text, targets: {}, notReady: false, receipt: null, list: null, draft: null,
-  report: { state, noticeId, sourceTurnId: null, assessment: null, outcome: null, evidence: [], ruleActions: [], target: target('TASK', { id: task }) },
+  report: { delivery: 'PASSIVE', deliveryReason: 'Saved without interrupting you.', state, noticeId, sourceTurnId: null, assessment: null, outcome: null, evidence: [], ruleActions: [], target: target('TASK', { id: task }) },
 });
 
 async function reportsWhatItsTasksRaised(): Promise<void> {
@@ -1130,8 +1130,13 @@ async function reportsWhatItsTasksRaised(): Promise<void> {
     const talk = element<HTMLElement>('.assistant-talk', view.host, 'The conversation shows');
     const line = (text: string) => [...talk.querySelectorAll<HTMLElement>('.assistant-receipt')].find(each => each.textContent?.includes(text) === true);
     assert(line('Started “Expose snapshot id')?.textContent?.includes('Stop work…') === false, 'Once its turn ended, a receipt offers no Stop');
-    assert([...talk.querySelectorAll('.assistant-card[data-state="ATTENTION"]')].some(card => card.textContent?.includes('looks stuck')),
-      'A stuck report remains Needs attention after its notice is gone');
+    assert(talk.querySelectorAll('.assistant-card[data-state="ATTENTION"]').length === 0,
+      'A later result supersedes old failure and stuck cards');
+    const activity = element<HTMLDetailsElement>('.assistant-card[data-state="RESULT_READY"] .assistant-report-activity', talk, 'Earlier outcomes stay in Activity');
+    assert(!activity.open && activity.textContent?.includes('looks stuck') && activity.textContent.includes('failed'), 'History remains available without repeating the obsolete cards');
+    activity.querySelector('summary')?.click();
+    await settle();
+    assert(activity.open, 'Earlier source outcomes can be expanded');
     const replies = () => [...talk.querySelectorAll<HTMLButtonElement>('.assistant-reply-to .assistant-link')];
     assert(replies().length === 1, `Only a task's latest report takes a reply, and not while it waits on an approval: ${replies().length}`);
     replies()[0].click();
@@ -1227,10 +1232,12 @@ async function keepsRuleReceiptsSeparateFromCompletion(): Promise<void> {
     assert(ready.textContent?.includes('The focused tests passed.') && ready.textContent.includes('Result ready'), 'Assessment does not turn a finished turn into completed work');
     assert(ready.querySelector('.assistant-card__meta')?.textContent === 'owner/project', 'The default card metadata shows the repository without execution identifiers');
     assert(talk.querySelectorAll('.assistant-card[data-state="COMPLETED"]').length === 1, 'Only verified completed work uses Completed');
-    assert(talk.querySelector('.assistant-card[data-state="APPROVAL_REQUIRED"]') === null && talk.querySelector('.assistant-receipt')?.textContent?.includes('Allowed'),
+    assert(talk.querySelector('.assistant-card[data-state="APPROVAL_REQUIRED"]') === null && talk.querySelector('.assistant-report-activity')?.textContent?.includes('allowed'),
       'A rule-resolved permission is a receipt without another approval card');
     const details = element<HTMLDetailsElement>('.assistant-rule-receipt', ready, 'Rule actions are retained');
     assert(!details.open && details.querySelector('summary')?.textContent?.includes('Allowed 3 requests under Build access'), 'Rule actions collapse to a factual count and attribution');
+    const activity = details.parentElement?.closest('details');
+    if (activity instanceof HTMLDetailsElement) activity.querySelector('summary')?.click();
     details.querySelector('summary')?.click();
     await settle();
     assert(details.open && details.querySelectorAll('li').length === 3, 'Every actual request can be inspected');

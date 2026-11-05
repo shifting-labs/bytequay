@@ -319,6 +319,72 @@ public final class DefaultAgentTurnService
     }
 
     @Override
+    public AgentTurn continueDevelopment(TaskId taskId, long expectedTaskVersion, TurnId observedTurnId)
+    {
+        requireNonNull(taskId, "taskId is null");
+        requireNonNull(observedTurnId, "observedTurnId is null");
+        checkArgument(expectedTaskVersion >= 0, "expectedTaskVersion is negative");
+        TurnAcceptance acceptance;
+        synchronized (runtimeRegistry.taskLock(taskId)) {
+            AgentTurn observed = turnStore.require(observedTurnId);
+            checkArgument(observed.taskId().equals(taskId), "Result belongs to another task");
+            AgentTurn source = turnStore.require(observed.developmentOrigin().map(DevelopmentTurnOrigin::parentUserTurnId).orElse(observedTurnId));
+            checkArgument(!source.idempotencyKey().startsWith(AgentTurn.ASSISTANT_CONTINUATION_PREFIX), "Automatic completion already used its one attempt");
+            String key = AgentTurn.ASSISTANT_CONTINUATION_PREFIX + source.id();
+            Optional<AgentTurn> repeated = turnStore.findByIdempotencyKey(taskId, key);
+            if (repeated.isPresent()) {
+                return repeated.orElseThrow();
+            }
+            AgentTask task = taskStore.require(taskId);
+            if (task.version() != expectedTaskVersion || runtimeRegistry.developmentStopped(taskId)
+                    || task.developmentDeliveryPending() || task.archivedAt().isPresent()) {
+                throw new AgentConflictException("The task changed or its delivery is held");
+            }
+            checkArgument(task.interactive() && task.ownsWorktree() && developmentTurnEligible(task, source), "Only requested development work can continue");
+            List<AgentTurn> history = turnStore.list(taskId);
+            if (history.isEmpty() || !history.getLast().id().equals(observedTurnId)
+                    || queueStore.listQueued(taskId).stream().anyMatch(input -> !input.state().historical())) {
+                throw new AgentConflictException("Newer work superseded this result");
+            }
+            requireContinuationReady(taskId, source.id());
+            boolean settled = logStore.findLatest(taskId, event -> event.payload() instanceof AgentEventPayload.Lifecycle lifecycle
+                            && lifecycle.phase() == AgentEventPayload.LifecyclePhase.DEVELOPMENT_AUTOMATION_UPDATED, 10_000)
+                    .filter(event -> ((AgentEventPayload.Lifecycle) event.payload()).message().equals("Development automation settled")).isPresent();
+            if (!settled) {
+                throw new AgentConflictException("Development delivery did not settle successfully");
+            }
+            task = requireStartableTaskWithoutReadiness(taskId);
+            AgentTurnSettings settings = source.settings().orElseThrow();
+            task = requireReady(task, settings);
+            // Source text is evidence already admitted by the user, never instructions invented by the result reader.
+            String request = logStore.findLatest(taskId, event -> event.turnId().filter(source.id()::equals).isPresent()
+                            && event.payload() instanceof AgentEventPayload.UserMessage message
+                            && message.deliveryKind() != AgentEventPayload.DeliveryKind.STEER, 10_000)
+                    .map(event -> ((AgentEventPayload.UserMessage) event.payload()).text())
+                    .orElseThrow(() -> new AgentConflictException("The original request is unavailable"));
+            List<AgentAttachment> attachments = settings.attachments().stream()
+                    .map(reference -> resourceService.readAttachment(taskId, reference.id()).input())
+                    .collect(toImmutableList());
+            String message = """
+                    ByteQuay · Complete the original request
+                    The Assistant found routine local work still needed to meet the original request below.
+                    This is the one automatic completion attempt for that request. Inspect the existing result, finish only
+                    missing local implementation or verification within that request, and report the observed outcome.
+                    If the request is already satisfied, finish without extra work. Preserve later user steering and accepted
+                    criteria from this conversation. Existing permissions, active rules and frozen delivery settings still apply.
+                    Do not expand scope, infer an approval, bypass a refusal, or retry an uncertain external operation.
+                    A missing material decision, security risk, held publication or uncertain outcome needs the user's attention.
+                    ByteQuay owns delivery through the existing accepted automation; do not perform new remote actions yourself.
+
+                    Original accepted request:
+                    %s
+                    """.formatted(request);
+            acceptance = acceptTurnLocked(task, key, message, attachments, settings, Optional.empty());
+        }
+        return launchAccepted(acceptance);
+    }
+
+    @Override
     public AgentTask claimLocalRun(TaskId taskId, String runId)
     {
         requireNonNull(taskId, "taskId is null");
@@ -1799,6 +1865,16 @@ public final class DefaultAgentTurnService
                 }
                 development = taskStore.require(taskId).developmentContinuationUnfinished();
                 pending = development ? runtimeRegistry.stopDevelopment(taskId) : ImmutableList.of();
+                if (!development && active.isEmpty() && task.interactive()) {
+                    // An idle result reader may still be deciding to continue; Stop revokes that pending decision durably.
+                    unitOfWork.execute(() -> {
+                        Instant now = Instant.now(clock);
+                        taskStore.update(task.withDevelopmentContinuation(false, now));
+                        outboxStore.insert(pendingLifecycle(EventId.random(), taskId, Optional.empty(), AgentEventPayload.LifecyclePhase.DEVELOPMENT_AUTOMATION_UPDATED,
+                                "Automation stopped. Send another message to continue.", now));
+                        return null;
+                    });
+                }
                 active.ifPresent(turn -> {
                     AgentTurn cancellation = turn.requestCancellation(Instant.now(clock));
                     if (cancellation != turn) {
@@ -1826,6 +1902,7 @@ public final class DefaultAgentTurnService
                 releaseStaleTurnClaim(taskStore.require(taskId));
                 stopped = taskStore.require(taskId);
             }
+            drainPending(outboxStore, eventService, taskId);
             return stopped;
         }
     }

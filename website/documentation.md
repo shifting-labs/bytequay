@@ -234,34 +234,46 @@ allowance.
 7. Keep typing while it answers: messages in the same conversation wait in
    order. Tasks and result reviews run in the background, so you can keep
    chatting with the same Assistant. **Stop this reply** stops only its current
-   reply; **Stop work…** on a task asks before stopping that task’s current turn.
+   reply and its waiting messages; **Stop work…** on a task asks before stopping that task’s current turn.
 
 The card’s label tells you what happens next:
 
 - **Approval required** — allow or deny a specific action with the task’s buttons.
 - **Answer needed** — answer a question before the work can continue.
 - **Proposal** — review a suggestion before adopting it or creating anything.
-- **Result ready** — inspect the work; a finished turn still needs your review.
+- **Result ready** — the result is available; open it when useful. A finished turn alone does not prove the whole goal is complete.
 - **Completed** — the work’s completion condition has been verified.
 - **Needs attention** — inspect a blocker, failure, or uncertain outcome.
 - **Progress** — work is continuing; open it for details or stop its current turn.
 
 Reports keep their findings and evidence in the conversation after a notice is
 cleared. A permission receipt says **Allowed**, **Denied**, or **Answered**;
-it does not mean the work is completed. **Evidence** and rule receipts expand
-to show the supporting records. Type **@rules** on its own, or choose **Rules**
+it does not mean the work is completed. Each work card updates in place. **Activity**
+keeps earlier reports, evidence, rule receipts, and why the result stayed quiet or
+needed attention. **Ask about this** opens a private, read-only discussion of the
+saved result; it does not restart the task. Type **@rules** on its own, or choose **Rules**
 in the composer, to inspect and activate your rules.
 
 When an active rule finishes a private PR review, the Assistant reads its saved
-findings in the background and decides whether the result is useful to show.
+findings in the background and decides whether you need an interruption.
 The **Result ready** card includes a short summary, the rule that started it,
-and **Read full review**. Results with no useful change can stay quiet; the full
-review remains available from the PR. Approval requests, questions, and failures
+and **Read full review**. Routine results stay visible without a popup, native
+notification, unread dot, or Dock badge. A serious issue or notification requested
+by your rule can alert you. While the summary is being prepared, a quiet Progress
+card keeps the saved review accessible. Approval requests, questions, and failures
 appear immediately. If the Assistant is disabled or cannot assess the result,
 the card still links to the full review.
 
-**⇧⌘J** opens the task that has waited longest on your decision, and the Dock
-counts what Decision counts. Task alerts also show as macOS notifications. An
+Messages waiting in a chat survive an app restart. A reply that had already started
+is marked interrupted instead of repeating an action with an uncertain outcome.
+Independent tasks, result reviews, and private result discussions can run while
+you keep using the Assistant. For a directly requested development task, the
+Assistant may make one additional local verification or repair attempt within the
+original request. It respects Stop, newer input, existing permissions, and delivery
+checks; unresolved questions and uncertain external actions remain visible.
+
+**⇧⌘J** opens the task that has waited longest on your decision. The Dock counts
+items that need attention; only those items can show as macOS notifications. An
 approval or question waits five minutes for your answer: its card shows the
 time left, and its alert comes back once in the last minute. With no answer by
 then, the turn stops and Results shows **No answer within 5 minutes**.

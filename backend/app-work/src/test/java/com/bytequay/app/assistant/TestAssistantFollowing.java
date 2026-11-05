@@ -45,8 +45,6 @@ import com.bytequay.agent.spi.RunningTurn;
 import com.bytequay.agent.spi.SessionAccess;
 import com.bytequay.app.notices.AppNotice;
 import com.bytequay.app.notices.AppNoticeService;
-import com.bytequay.app.service.settings.AgentModelSetting;
-import com.bytequay.app.service.settings.AgentModelType;
 import com.bytequay.app.service.settings.SetupPreferences;
 import com.bytequay.app.service.settings.SetupSettingsService;
 import com.bytequay.core.domain.AssistantAssessment;
@@ -117,6 +115,7 @@ class TestAssistantFollowing
     private final WorkItemStore workItems = mock(WorkItemStore.class);
     private final AgentApprovalStore approvals = mock(AgentApprovalStore.class);
     private final AgentReviewStore reviews = mock(AgentReviewStore.class);
+    private final AssistantContinuation continuation = mock(AssistantContinuation.class);
     private final AppNoticeService notices = mock(AppNoticeService.class);
     private final SetupSettingsService setup = mock(SetupSettingsService.class);
     private final AgentDriverRegistry drivers = mock(AgentDriverRegistry.class);
@@ -138,6 +137,8 @@ class TestAssistantFollowing
             throws Exception
     {
         when(task.id()).thenReturn(TASK);
+        when(task.laneId()).thenReturn(new AgentLaneId("claude"));
+        when(task.defaults()).thenReturn(new AgentTaskDefaults(Optional.of("sonnet"), Optional.empty(), AgentPermissionPolicy.AUTO));
         when(task.workspaceId()).thenReturn(Optional.of("workspace"));
         when(task.title()).thenReturn("Fix the test");
         when(task.state()).thenReturn(TaskState.OPEN);
@@ -152,7 +153,6 @@ class TestAssistantFollowing
         SetupPreferences preferences = mock(SetupPreferences.class, withSettings().mockMaker(INLINE));
         when(preferences.assistantEnabled()).thenReturn(true);
         when(setup.preferences()).thenReturn(preferences);
-        when(setup.requireUsableDevelopmentAgent()).thenReturn(new AgentModelSetting(AgentModelType.DEVELOPMENT, true, "claude", "Claude", "sonnet", "Sonnet", Optional.empty()));
         when(drivers.require(any())).thenReturn(driver);
         when(resources.allocate(any())).thenAnswer(call -> {
             Path scratch = Files.createDirectories(directory.resolve(call.getArgument(0).toString()));
@@ -170,8 +170,8 @@ class TestAssistantFollowing
 
     private AssistantFollowing create()
     {
-        return new AssistantFollowing(follows, conversations, tasks, turns, logs, workItems, approvals, reviews, new ObjectMapper(), notices, setup, drivers, resources,
-                Clock.fixed(NOW, ZoneOffset.UTC), executor);
+        return new AssistantFollowing(follows, conversations, tasks, turns, logs, workItems, approvals, reviews, continuation, new ObjectMapper(), notices, setup,
+                drivers, resources, Clock.fixed(NOW, ZoneOffset.UTC), executor);
     }
 
     @Test
@@ -269,17 +269,18 @@ class TestAssistantFollowing
     }
 
     @Test
-    void anAutomaticUnhelpfulResultCanStayQuietButAnExplicitResultRequestIsAnswered()
+    void directCompletionIsVisibleWithoutAnInterruptionAndExplicitQuestionsAreAnswered()
     {
         when(running.completion()).thenReturn(CompletableFuture.completedFuture(answer("No useful change", false)));
         following.poll(conversations::add);
         queued.removeFirst().run();
-        assertThat(conversations.items(CONVERSATION)).isEmpty();
+        assertThat(conversations.items(CONVERSATION)).singleElement().satisfies(item ->
+                assertThat(item.report().orElseThrow().delivery()).isEqualTo(AssistantReport.Delivery.PASSIVE));
         assertThat(follows.jobs.values()).singleElement().extracting(AssistantAssessment::state).isEqualTo(AssistantAssessment.State.QUIET);
 
         following.request(CONVERSATION, "task:" + TASK, "Explain the result", conversations::add);
         queued.removeFirst().run();
-        assertThat(conversations.items(CONVERSATION)).hasSize(1);
+        assertThat(conversations.items(CONVERSATION)).hasSize(2);
         assertThat(conversations.items(CONVERSATION).getFirst().report().orElseThrow().assessment()).contains("No useful change");
     }
 
@@ -432,6 +433,87 @@ class TestAssistantFollowing
         assertThat(conversations.items(CONVERSATION)).isEmpty();
         create().poll(conversations::add);
         assertThat(queued).isEmpty();
+        assertThat(follows.follows()).hasSize(1);
+    }
+
+    @Test
+    void ordinaryDirectResultsStayPassiveEvenWhenAReaderRequestsARuleNotification()
+    {
+        following.poll(conversations::add);
+        queued.removeFirst().run();
+        assertThat(conversations.items(CONVERSATION)).singleElement().satisfies(item -> {
+            assertThat(item.report().orElseThrow().delivery()).isEqualTo(AssistantReport.Delivery.PASSIVE);
+            assertThat(item.report().orElseThrow().assessment()).contains("The observed checks passed.");
+        });
+        verify(continuation, never()).continueWork(any());
+    }
+
+    @Test
+    void seriousResultsInterruptAndNeverAutomaticallyContinue()
+    {
+        when(running.completion()).thenReturn(CompletableFuture.completedFuture(interpretation("Publication outcome is uncertain", "RISK", "SAFE_CONTINUE")));
+        following.poll(conversations::add);
+        queued.removeFirst().run();
+        assertThat(conversations.items(CONVERSATION)).singleElement().satisfies(item ->
+                assertThat(item.report().orElseThrow().delivery()).isEqualTo(AssistantReport.Delivery.INTERRUPT));
+        verify(continuation, never()).continueWork(any());
+    }
+
+    @Test
+    void routineUnfinishedWorkContinuesQuietlyAndExhaustedRecoveryNeedsAttention()
+    {
+        when(running.completion()).thenReturn(CompletableFuture.completedFuture(interpretation("The requested regression check is still missing", "NONE", "SAFE_CONTINUE")));
+        when(continuation.continueWork(any())).thenAnswer(_ -> {
+            assertThat(Thread.holdsLock(following)).isFalse();
+            return AssistantContinuation.Outcome.STARTED;
+        });
+        following.poll(conversations::add);
+        queued.removeFirst().run();
+        assertThat(conversations.items(CONVERSATION)).singleElement().satisfies(item -> {
+            assertThat(item.report().orElseThrow().state()).isEqualTo(AssistantReport.State.PROGRESS);
+            assertThat(item.report().orElseThrow().delivery()).isEqualTo(AssistantReport.Delivery.PASSIVE);
+            assertThat(item.report().orElseThrow().outcome()).contains("CONTINUED");
+        });
+        assertThat(follows.jobs.values()).singleElement().extracting(AssistantAssessment::state).isEqualTo(AssistantAssessment.State.SUPERSEDED);
+        when(turn.version()).thenReturn(2L);
+        when(continuation.continueWork(any())).thenReturn(AssistantContinuation.Outcome.LIMIT_REACHED);
+        following.poll(conversations::add);
+        queued.removeFirst().run();
+        AssistantReport latest = conversations.items(CONVERSATION).getLast().report().orElseThrow();
+        assertThat(latest.state()).isEqualTo(AssistantReport.State.ATTENTION);
+        assertThat(latest.delivery()).isEqualTo(AssistantReport.Delivery.INTERRUPT);
+        assertThat(latest.outcome()).contains("RECOVERY_LIMIT");
+    }
+
+    @Test
+    void disablingAssistantDuringAssessmentPreventsContinuation()
+    {
+        when(running.completion()).thenAnswer(_ -> {
+            when(setup.preferences().assistantEnabled()).thenReturn(false);
+            return CompletableFuture.completedFuture(interpretation("A regression check remains", "NONE", "SAFE_CONTINUE"));
+        });
+        following.poll(conversations::add);
+        queued.removeFirst().run();
+        verify(continuation, never()).continueWork(any());
+        assertThat(conversations.items(CONVERSATION)).singleElement().satisfies(item ->
+                assertThat(item.report().orElseThrow().assessment()).contains("A regression check remains"));
+    }
+
+    @Test
+    void aTerminalTaskKeepsTheInboxSourceIdentityWhileLinkedWorkRemainsOpen()
+    {
+        when(task.state()).thenReturn(TaskState.COMPLETED);
+        WorkItem work = mock(WorkItem.class, withSettings().mockMaker(INLINE));
+        when(work.state()).thenReturn(WorkItem.State.WORKING);
+        when(workItems.findByIdentity(any())).thenReturn(Optional.of(work));
+        AppNotice notice = notices.current(ImmutableList.of(TASK)).getFirst();
+        following.poll(conversations::add);
+        queued.removeFirst().run();
+        assertThat(follows.jobs.values()).singleElement().satisfies(job -> {
+            assertThat(job.report().noticeId()).isEqualTo(notice.id());
+            assertThat(job.sourceLine()).isEqualTo(notice.summaryLine());
+            assertThat(job.report().assessment()).contains("The observed checks passed.");
+        });
         assertThat(follows.follows()).hasSize(1);
     }
 
@@ -626,9 +708,16 @@ class TestAssistantFollowing
         assertThat(conversations.items(CONVERSATION)).hasSize(1);
     }
 
+    private static AgentTurnResult interpretation(String text, String attention, String nextStep)
+    {
+        return new AgentTurnResult(AgentTurnResult.State.COMPLETED, Optional.of("{\"summary\":\"" + text + "\",\"attention\":\"" + attention
+                + "\",\"reason\":\"Delivery reflects the observed outcome.\",\"nextStep\":\"" + nextStep + "\"}"), Optional.empty(), Duration.ofSeconds(1), true);
+    }
+
     private static AgentTurnResult answer(String text, boolean notifyUser)
     {
-        return new AgentTurnResult(AgentTurnResult.State.COMPLETED, Optional.of("{\"summary\":\"" + text + "\",\"notifyUser\":" + notifyUser + "}"), Optional.empty(),
+        return new AgentTurnResult(AgentTurnResult.State.COMPLETED, Optional.of("{\"summary\":\"" + text + "\",\"attention\":\""
+                + (notifyUser ? "REQUESTED_NOTIFICATION" : "NONE") + "\",\"reason\":\"Result delivery follows the request.\",\"nextStep\":\"NONE\"}"), Optional.empty(),
                 Duration.ofSeconds(1), true);
     }
 

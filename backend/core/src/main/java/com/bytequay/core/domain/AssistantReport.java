@@ -24,8 +24,10 @@ import static java.util.Objects.requireNonNull;
 
 /** App-owned card facts with an optional read-only interpretation. Interpretation never changes the card's state or authority. */
 public record AssistantReport(State state, String noticeId, AgendaTarget target, Optional<String> sourceTurnId, Optional<String> assessment,
-        List<String> evidence, List<AssistantRuleAction> ruleActions, Optional<String> outcome)
+        List<String> evidence, List<AssistantRuleAction> ruleActions, Optional<String> outcome, Delivery delivery, String deliveryReason)
 {
+    public enum Delivery { PASSIVE, INTERRUPT }
+
     public enum State
     {
         APPROVAL_REQUIRED, ANSWER_REQUIRED, PROPOSAL, RESULT_READY, COMPLETED, ATTENTION, PROGRESS
@@ -39,8 +41,16 @@ public record AssistantReport(State state, String noticeId, AgendaTarget target,
         checkOptionalText(sourceTurnId, "sourceTurnId");
         checkOptionalText(assessment, "assessment", 4000);
         checkOptionalText(outcome, "outcome");
+        requireNonNull(delivery, "delivery is null");
+        checkText(deliveryReason, "deliveryReason", 500);
         evidence = ImmutableList.copyOf(evidence);
         ruleActions = ImmutableList.copyOf(ruleActions);
+    }
+
+    public AssistantReport(State state, String noticeId, AgendaTarget target, Optional<String> sourceTurnId, Optional<String> assessment,
+            List<String> evidence, List<AssistantRuleAction> ruleActions, Optional<String> outcome)
+    {
+        this(state, noticeId, target, sourceTurnId, assessment, evidence, ruleActions, outcome, deliveryFor(state), reasonFor(state));
     }
 
     public AssistantReport(State state, String noticeId, AgendaTarget target)
@@ -50,6 +60,31 @@ public record AssistantReport(State state, String noticeId, AgendaTarget target,
 
     public AssistantReport assessed(String text)
     {
-        return new AssistantReport(state, noticeId, target, sourceTurnId, Optional.of(text), evidence, ruleActions, outcome);
+        return new AssistantReport(state, noticeId, target, sourceTurnId, Optional.of(text), evidence, ruleActions, outcome, delivery, deliveryReason);
+    }
+
+    public AssistantReport delivered(Delivery value, String reason)
+    {
+        return new AssistantReport(state, noticeId, target, sourceTurnId, assessment, evidence, ruleActions, outcome, value, reason);
+    }
+
+    public static Delivery deliveryFor(State state)
+    {
+        return switch (state) {
+            case APPROVAL_REQUIRED, ANSWER_REQUIRED, ATTENTION -> Delivery.INTERRUPT;
+            case PROPOSAL, RESULT_READY, COMPLETED, PROGRESS -> Delivery.PASSIVE;
+        };
+    }
+
+    public static String reasonFor(State state)
+    {
+        return switch (state) {
+            case APPROVAL_REQUIRED -> "Your permission is needed to continue.";
+            case ANSWER_REQUIRED -> "Your answer is needed to continue.";
+            case ATTENTION -> "Work needs attention before it can continue safely.";
+            case PROPOSAL -> "An optional next step is available.";
+            case RESULT_READY, COMPLETED -> "The result is available; no decision is required.";
+            case PROGRESS -> "Work is continuing within the existing request.";
+        };
     }
 }

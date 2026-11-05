@@ -123,6 +123,44 @@ class TestSqliteAssistantStore
     }
 
     @Test
+    void reloadKeepsQueuedAndUncertainDeliveriesAndCompletionIsIdempotent()
+    {
+        store.save(AssistantConversation.start(CONVERSATION, "first", AT));
+        store.save(AssistantConversation.start(OTHER, "other", AT));
+        AssistantItem first = AssistantItem.user(CONVERSATION, AT, "start the task", ImmutableList.of("work:w1"), Optional.of("ws:workspace"), "first-key");
+        AssistantItem waiting = AssistantItem.user(CONVERSATION, AT, "then read its status", ImmutableList.of("task:t1"), Optional.empty(), "waiting-key");
+        AssistantItem other = AssistantItem.user(OTHER, AT, "another question", ImmutableList.of(), Optional.empty(), "other-key");
+        store.enqueue(first);
+        store.enqueue(first);
+        store.enqueue(waiting);
+        store.enqueue(other);
+        assertThat(store.begin(first.id())).isTrue();
+        assertThat(store.begin(first.id())).isFalse();
+        entities.flush();
+        entities.clear();
+
+        assertThat(store.interrupted()).containsExactly(first);
+        assertThat(store.queued()).containsExactly(waiting, other);
+        store.deleteBefore(AT.plus(Duration.ofDays(40)), LocalDate.ofInstant(AT, ZoneId.of("UTC")));
+        assertThat(store.find(CONVERSATION)).isPresent();
+        assertThat(store.find(OTHER)).isPresent();
+        AssistantItem outcome = AssistantItem.failure(CONVERSATION, AT, "Check the existing action before asking again", false);
+        store.complete(first.id(), outcome);
+        store.complete(first.id(), AssistantItem.failure(CONVERSATION, AT, "Duplicate outcome", false));
+        store.cancelQueued(CONVERSATION);
+        entities.flush();
+        entities.clear();
+
+        assertThat(store.items(CONVERSATION)).containsExactly(first, waiting, outcome);
+        assertThat(store.interrupted()).isEmpty();
+        assertThat(store.queued()).containsExactly(other);
+        assertThat(store.begin(waiting.id())).isFalse();
+        store.deleteBefore(AT.plus(Duration.ofDays(40)), LocalDate.ofInstant(AT, ZoneId.of("UTC")));
+        assertThat(store.find(CONVERSATION)).isEmpty();
+        assertThat(store.find(OTHER)).isPresent();
+    }
+
+    @Test
     void listsItemsInTheOrderTheyWereAddedEvenWithinOneMillisecond()
     {
         AssistantItem message = AssistantItem.user(CONVERSATION, AT, "what's waiting on me?", ImmutableList.of("approval:a1"), Optional.of("pr:owner/repository#31402"), "key-1");
@@ -142,6 +180,8 @@ class TestSqliteAssistantStore
         entities.clear();
 
         assertThat(store.items(CONVERSATION)).containsExactly(message, failure, reply, receipt, opened);
+        assertThat(store.queued()).isEmpty();
+        assertThat(store.interrupted()).isEmpty();
     }
 
     @Test

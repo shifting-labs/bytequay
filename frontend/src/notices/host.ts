@@ -13,7 +13,7 @@
  */
 import { app, ipcMain, Notification, shell, WebContentsView, type BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import path from 'node:path';
-import { APPROVAL_NOTICE, NOTICE_WIDTH, RULE_NOTICE, isDecision, noticeLabel, parseNotices, type AppNotice, type NoticeSnapshot } from './contracts';
+import { APPROVAL_NOTICE, NOTICE_WIDTH, RULE_NOTICE, RULE_RESULT_NOTICE, interrupts, isDecision, noticeLabel, parseNotices, type AppNotice, type NoticeSnapshot } from './contracts';
 import { NoticeStore } from './store';
 
 /** One trusted app surface above native browser/editor views; its bridge cannot execute task actions. */
@@ -160,7 +160,7 @@ export class NoticeHost {
     }
     else await this.openNotice(notice);
     // An opened result has been seen, so it leaves Finished; a decision stays until it is answered.
-    if (isDecision(notice)) this.store.markViewed(id);
+    if (isDecision(notice) || notice.id.startsWith(RULE_NOTICE) || notice.id.startsWith(RULE_RESULT_NOTICE)) this.store.markViewed(id);
     else this.store.remove(id);
     this.publish();
   }
@@ -178,13 +178,13 @@ export class NoticeHost {
     const window = this.window();
     const away = !window || window.isDestroyed() || !window.isFocused();
     for (const notice of notices) {
-      if (popupIds.includes(notice.id) && !this.announced.has(notice.id)) this.announced.set(notice.id, away ? this.notify(notice) : null);
+      if (interrupts(notice) && popupIds.includes(notice.id) && !this.announced.has(notice.id)) this.announced.set(notice.id, away ? this.notify(notice) : null);
     }
   }
 
   private notify(notice: AppNotice): Notification | null {
     // Platform support does not imply permission: unsigned macOS builds also pass isSupported() and then fail.
-    if (this.nativeDisabled || !Notification.isSupported()) return null;
+    if (!interrupts(notice) || this.nativeDisabled || !Notification.isSupported()) return null;
     // A notification stays in Notification Center, so it names when the wait ends rather than a count that goes stale.
     const until = notice.expiresAt === undefined ? null : new Date(notice.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     try {
@@ -219,8 +219,8 @@ export class NoticeHost {
   }
 
   private publish(): void {
-    // The Dock counts what the Assistant's Decision pill counts, with or without a window.
-    const waiting = this.store.snapshot(false).notices.filter(isDecision).length;
+    // Only work that must interrupt the user contributes urgency, including serious failures.
+    const waiting = this.store.snapshot(false).notices.filter(interrupts).length;
     if (waiting !== this.badge) { this.badge = waiting; app.setBadgeCount(waiting); }
     const window = this.window();
     if (!window || window.isDestroyed()) return;

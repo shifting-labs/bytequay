@@ -442,6 +442,22 @@ class TestAssistantConversation
     }
 
     @Test
+    void aFailedResumedResultIsNotReplayedInAFreshSession()
+    {
+        store.save(conversation(C1, "claude", "kept"));
+        results.add(CompletableFuture.completedFuture(new AgentTurnResult(AgentTurnResult.State.FAILED, Optional.empty(),
+                Optional.of("Connection lost after acting"), Duration.ofSeconds(1), true)));
+
+        assistant.send(C1, "start the task", ImmutableList.of(), Optional.empty(), "key-1");
+        waitForReply();
+
+        assertThat(opened).hasSize(1);
+        assertThat(store.items(C1)).extracting(AssistantItem::kind).containsExactly(USER, FAILURE);
+        assertThat(store.items(C1).getLast().text()).isEqualTo("Connection lost after acting");
+        assertThat(store.interrupted()).isEmpty();
+    }
+
+    @Test
     void keepsWhyARunFailedAndRetriesTheSameMessage()
     {
         when(driver.probe()).thenReturn(new AgentProviderStatus(LANE, AgentProviderStatus.Readiness.AUTHENTICATION_REQUIRED, Optional.empty(),
@@ -555,7 +571,7 @@ class TestAssistantConversation
     }
 
     @Test
-    void stopCancelsOnlyTheRunningTurnAndTheNextMessageInLineIsAnswered()
+    void stopDurablyCancelsThisConversationsQueuedMessages()
     {
         CompletableFuture<AgentTurnResult> slow = new CompletableFuture<>();
         results.add(slow);
@@ -571,7 +587,64 @@ class TestAssistantConversation
 
         verify(turn, atLeastOnce()).cancel();
         assertThat(store.items(C1)).extracting(AssistantItem::text)
-                .containsExactly("what's waiting on me?", "and the reviews?", "Claude turn was cancelled", "Answer task:t1 first.");
+                .containsExactly("what's waiting on me?", "and the reviews?", "Claude turn was cancelled");
+        assertThat(store.queued()).isEmpty();
+        assistant.resumeQueued();
+        assertThat(prompts).hasSize(1);
+        assistant.send(C2, "another topic", ImmutableList.of(), Optional.empty(), "other-key");
+        waitForReply();
+        assertThat(store.items(C2)).extracting(AssistantItem::kind).containsExactly(USER, REPLY);
+    }
+
+    @Test
+    void restartResumesOnlyUnstartedMessagesAndNeverReplaysAnUncertainAction()
+    {
+        store.save(conversation(C1, "claude", "interrupted-session"));
+        store.save(AssistantConversation.start(C2, "another topic", now.get()));
+        AssistantItem started = AssistantItem.user(C1, now.get(), "start that task", ImmutableList.of("work:w1"), Optional.empty(), "started-key");
+        AssistantItem waiting = AssistantItem.user(C1, now.get(), "what is its status?", ImmutableList.of("task:t1"), Optional.of("task:t1"), "waiting-key");
+        AssistantItem independent = AssistantItem.user(C2, now.get(), "another topic", ImmutableList.of(), Optional.empty(), "other-key");
+        store.enqueue(started);
+        assertThat(store.begin(started.id())).isTrue();
+        store.add(AssistantItem.receipt(C1, now.get(), "Started the task", AssistantReceipt.done(AssistantReceipt.Operation.START_TASK, Optional.of(TASK))));
+        store.enqueue(waiting);
+        store.enqueue(independent);
+
+        assistant.resumeQueued();
+        waitForReply();
+        assistant.resumeQueued();
+
+        assertThat(prompts).hasSize(2).anySatisfy(prompt -> assertThat(prompt)
+                .contains("The app stopped before this reply finished", "Started the task", "On screen: task:t1", "Cards on screen:\n- task:t1")
+                .endsWith("The user's message:\nwhat is its status?"));
+        assertThat(opened).allSatisfy(context -> assertThat(context.sessionReference()).isEmpty());
+        verify(actions, never()).tool(eq(started), any(), any());
+        verify(actions).tool(eq(waiting), any(), any());
+        verify(actions).tool(eq(independent), any(), any());
+        assertThat(store.items(C1)).filteredOn(item -> item.kind() == FAILURE).hasSize(1);
+        assertThat(store.queued()).isEmpty();
+        assertThat(store.interrupted()).isEmpty();
+        assertThat(assistant.send(C1, waiting.text(), waiting.visible(), waiting.onScreen(), "waiting-key")).isEqualTo(waiting.id());
+        assertThat(prompts).hasSize(2);
+    }
+
+    @Test
+    void disabledAssistantRetainsQueuedMessagesUntilItIsEnabled()
+    {
+        store.save(AssistantConversation.start(C1, "saved question", now.get()));
+        AssistantItem waiting = AssistantItem.user(C1, now.get(), "saved question", ImmutableList.of(), Optional.empty(), "waiting-key");
+        store.enqueue(waiting);
+        setup.save(new SetupPreferences(SetupPreferences.Step.COMPLETE, false));
+
+        assistant.resumeQueued();
+
+        assertThat(opened).isEmpty();
+        assertThat(assistant.conversation(C1).waiting()).containsExactly(waiting.id());
+        setup.save(new SetupPreferences(SetupPreferences.Step.COMPLETE, true));
+        assistant.resumeQueued();
+        waitForReply();
+        assertThat(prompts).hasSize(1);
+        assertThat(store.queued()).isEmpty();
     }
 
     @Test

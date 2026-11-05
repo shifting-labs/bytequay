@@ -22,7 +22,7 @@ import type { Bridge } from '../../types';
 import '../../index.css';
 import '../quick.css';
 
-const FINISHED: AppNotice = {
+const FINISHED: AppNotice = { delivery: 'INTERRUPT', deliveryReason: 'A decision needs your attention.', report: null,
   id: 'finished:turn-2', kind: 'TURN_FINISHED', taskId: 'task-2', workspaceId: 'ws1', turnId: 'turn-2', reviewId: null, title: 'Retry commit on conflict',
   pullRequest: null, pullRequestTitle: null, changes: null, message: 'Done', repository: 'owner/repository', laneId: 'claude', occurredAt: '2026-10-16T07:10:00Z',
 };

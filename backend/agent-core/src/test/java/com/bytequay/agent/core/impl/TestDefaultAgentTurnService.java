@@ -2013,6 +2013,142 @@ class TestDefaultAgentTurnService
     }
 
     @Test
+    void assistantCompletionKeepsOriginalRequestAndAuthorityAndHasOneDurableAttempt()
+    {
+        enableDevelopment(ignored -> {});
+        AgentTurn source = service.start(command("Fix the parser and verify the boundary cases", "completion-source"));
+        reportReady(source);
+        driver.complete("Implemented");
+        service.finishDevelopmentContinuation(task.id(), source.id());
+        AgentTask settled = taskService.get(task.id());
+        taskService.updateDefaults(new UpdateAgentTaskDefaultsCommand(task.id(), settled.version(),
+                new AgentTaskDefaults(Optional.of("model-b"), Optional.of("high"), AgentPermissionPolicy.AUTO,
+                        Optional.empty(), Optional.of(new DevelopmentAutomation(true, AutomationLevel.MERGE, Optional.empty())))));
+
+        AgentTurn continuation = service.continueDevelopment(task.id(), taskService.get(task.id()).version(), source.id());
+
+        assertThat(continuation.settings()).isEqualTo(source.settings());
+        assertThat(driver.commands().getLast().message()).contains("Fix the parser and verify the boundary cases", "one automatic completion attempt",
+                "Do not expand scope", "retry an uncertain external operation");
+        assertThat(service.continueDevelopment(task.id(), settled.version(), source.id()).id()).isEqualTo(continuation.id());
+        reportReady(continuation);
+        driver.complete("Verified");
+        service.finishDevelopmentContinuation(task.id(), continuation.id());
+        assertThatThrownBy(() -> service.continueDevelopment(task.id(), taskService.get(task.id()).version(), continuation.id()))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("one attempt");
+
+        DefaultAgentTurnService restarted = service(driver, new AgentRuntimeRegistry(stores, ignored -> {}, ignored -> false, true));
+        assertThat(restarted.continueDevelopment(task.id(), settled.version(), source.id()).id()).isEqualTo(continuation.id());
+        assertThat(driver.commands()).hasSize(2);
+    }
+
+    @Test
+    void assistantCompletionRefusesChangedTaskOrNewerRequest()
+    {
+        enableDevelopment(ignored -> {});
+        AgentTurn source = service.start(command("Fix the parser", "completion-stale"));
+        reportReady(source);
+        driver.complete("Implemented");
+        service.finishDevelopmentContinuation(task.id(), source.id());
+        long version = taskService.get(task.id()).version();
+        assertThatThrownBy(() -> service.continueDevelopment(task.id(), version - 1, source.id()))
+                .isInstanceOf(AgentConflictException.class).hasMessageContaining("changed");
+
+        AgentTurn newer = service.start(command("Only explain the implementation now", "completion-newer"));
+        reportReady(newer);
+        driver.complete("Explanation");
+        service.finishDevelopmentContinuation(task.id(), newer.id());
+        assertThatThrownBy(() -> service.continueDevelopment(task.id(), taskService.get(task.id()).version(), source.id()))
+                .isInstanceOf(AgentConflictException.class).hasMessageContaining("superseded");
+        assertThat(driver.commands()).hasSize(2);
+    }
+
+    @Test
+    void assistantCompletionDoesNotReleaseAQuestionOrMissingReadinessReport()
+    {
+        enableDevelopment(ignored -> {});
+        AgentTurn source = service.start(command("Fix the parser", "completion-question"));
+        driver.emit(developmentReport(source, "question", new DevelopmentResultReport(false, Optional.of("Which behavior should change?")), Optional.empty()));
+        driver.complete("Which behavior should change?");
+        service.finishDevelopmentContinuation(task.id(), source.id());
+        assertThatThrownBy(() -> service.continueDevelopment(task.id(), taskService.get(task.id()).version(), source.id()))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("user answer");
+
+        AgentTurn missing = service.start(command("Keep existing behavior", "completion-missing-report"));
+        driver.complete("Done");
+        service.finishDevelopmentContinuation(task.id(), missing.id());
+        assertThatThrownBy(() -> service.continueDevelopment(task.id(), taskService.get(task.id()).version(), missing.id()))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("readiness report");
+        assertThat(driver.commands()).hasSize(2);
+    }
+
+    @Test
+    void assistantCompletionCannotResumeStoppedDeliveryAfterRestart()
+    {
+        enableDevelopment(ignored -> {});
+        AgentTurn source = service.start(command("Fix the parser", "completion-stop"));
+        reportReady(source);
+        driver.complete("Implemented");
+        service.stopRuntime(task.id(), service.stopImpact(task.id()).generation());
+
+        assertThatThrownBy(() -> service.continueDevelopment(task.id(), taskService.get(task.id()).version(), source.id()))
+                .isInstanceOf(AgentConflictException.class);
+        DefaultAgentTurnService restarted = service(driver, new AgentRuntimeRegistry(stores, ignored -> {}, ignored -> false, true));
+        assertThatThrownBy(() -> restarted.continueDevelopment(task.id(), taskService.get(task.id()).version(), source.id()))
+                .isInstanceOf(AgentConflictException.class).hasMessageContaining("did not settle");
+        assertThat(driver.commands()).hasSize(1);
+    }
+
+    @Test
+    void stoppingAnIdleResultRevokesPendingAssistantCompletionAcrossRestart()
+    {
+        enableDevelopment(ignored -> {});
+        AgentTurn source = service.start(command("Fix the parser", "completion-idle-stop"));
+        reportReady(source);
+        driver.complete("Implemented");
+        service.finishDevelopmentContinuation(task.id(), source.id());
+        long assessedVersion = taskService.get(task.id()).version();
+        service.stopRuntime(task.id(), service.stopImpact(task.id()).generation());
+
+        assertThat(taskService.get(task.id()).version()).isGreaterThan(assessedVersion);
+        assertThatThrownBy(() -> service.continueDevelopment(task.id(), assessedVersion, source.id())).isInstanceOf(AgentConflictException.class);
+        DefaultAgentTurnService restarted = service(driver, new AgentRuntimeRegistry(stores, ignored -> {}, ignored -> false, true));
+        assertThatThrownBy(() -> restarted.continueDevelopment(task.id(), taskService.get(task.id()).version(), source.id()))
+                .isInstanceOf(AgentConflictException.class).hasMessageContaining("did not settle");
+        assertThat(driver.commands()).hasSize(1);
+    }
+
+    @Test
+    void assistantCompletionCannotRetryAnUncertainPublication()
+    {
+        enableDevelopment(ignored -> {});
+        AgentTurn source = service.start(command("Fix the parser", "completion-uncertain"));
+        reportReady(source);
+        driver.complete("Implemented");
+        service.failDevelopmentContinuation(task.id(), source.id(), "Remote publication outcome is uncertain");
+
+        assertThatThrownBy(() -> service.continueDevelopment(task.id(), taskService.get(task.id()).version(), source.id()))
+                .isInstanceOf(AgentConflictException.class).hasMessageContaining("delivery is held");
+        assertThat(driver.commands()).hasSize(1);
+    }
+
+    @Test
+    void assistantCompletionLeavesQueuedInputInControl()
+    {
+        enableDevelopment(ignored -> {});
+        AgentTurn source = service.start(command("Fix the parser", "completion-queue"));
+        service.enqueue(new QueueAgentInputCommand(task.id(), taskService.get(task.id()).version(), "Keep these changes local",
+                ImmutableList.of(), "completion-queued-user", Optional.empty()));
+        reportReady(source);
+        driver.complete("Implemented");
+        service.finishDevelopmentContinuation(task.id(), source.id());
+
+        assertThatThrownBy(() -> service.continueDevelopment(task.id(), taskService.get(task.id()).version(), source.id()))
+                .isInstanceOf(AgentConflictException.class).hasMessageContaining("superseded");
+        assertThat(driver.commands()).hasSize(1);
+    }
+
+    @Test
     void generatedTurnsKeepTheWholeSourceSnapshotAndTheirQuestionBlocksFurtherWork()
     {
         List<DevelopmentTurnCompletion> completed = new ArrayList<>();

@@ -22,6 +22,8 @@ import com.bytequay.agent.core.AgentTaskService;
 import com.bytequay.agent.core.OneShotSession;
 import com.bytequay.agent.core.TaskId;
 import com.bytequay.agent.core.TurnId;
+import com.bytequay.agent.core.TurnState;
+import com.bytequay.agent.core.store.AgentTurnStore;
 import com.bytequay.agent.core.store.TaskLogStore;
 import com.bytequay.agent.spi.AgentDriverRegistry;
 import com.bytequay.agent.spi.AgentPermissionPolicy;
@@ -43,9 +45,11 @@ import com.bytequay.core.discussion.DiscussionSession;
 import com.bytequay.core.discussion.ReviewCommentAnchor;
 import com.bytequay.core.discussion.TaskDiscussion;
 import com.bytequay.core.discussion.TaskDiscussionStore;
+import com.bytequay.core.domain.AgendaTarget;
 import com.bytequay.core.review.AgentReview;
 import com.bytequay.core.review.AgentReviewStore;
 import com.bytequay.core.review.ReviewNotFoundException;
+import com.bytequay.core.review.ReviewRun;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -115,6 +119,7 @@ public class TaskDiscussionService
     private final AgentResourceService resources;
     private final AgentDriverRegistry drivers;
     private final TaskLogStore logStore;
+    private final AgentTurnStore turns;
     private final Clock clock;
     private final TaskPullRequestOwnership ownership;
     private final PullRequestService pullRequests;
@@ -134,6 +139,7 @@ public class TaskDiscussionService
             AgentResourceService resources,
             AgentDriverRegistry drivers,
             TaskLogStore logStore,
+            AgentTurnStore turns,
             Clock clock,
             TaskPullRequestOwnership ownership,
             PullRequestService pullRequests,
@@ -141,7 +147,7 @@ public class TaskDiscussionService
             BetterWordsService writer,
             AgentReviewStore reviews)
     {
-        this(store, tasks, resources, drivers, logStore, clock, ownership, pullRequests, comments, writer, reviews, Executors.newVirtualThreadPerTaskExecutor());
+        this(store, tasks, resources, drivers, logStore, turns, clock, ownership, pullRequests, comments, writer, reviews, Executors.newVirtualThreadPerTaskExecutor());
     }
 
     /** Lets a test run the answer on the calling thread rather than waiting on a virtual one. */
@@ -151,6 +157,7 @@ public class TaskDiscussionService
             AgentResourceService resources,
             AgentDriverRegistry drivers,
             TaskLogStore logStore,
+            AgentTurnStore turns,
             Clock clock,
             TaskPullRequestOwnership ownership,
             PullRequestService pullRequests,
@@ -165,6 +172,7 @@ public class TaskDiscussionService
         this.resources = requireNonNull(resources, "resources is null");
         this.drivers = requireNonNull(drivers, "drivers is null");
         this.logStore = requireNonNull(logStore, "logStore is null");
+        this.turns = requireNonNull(turns, "turns is null");
         this.clock = requireNonNull(clock, "clock is null");
         this.ownership = requireNonNull(ownership, "ownership is null");
         this.pullRequests = requireNonNull(pullRequests, "pullRequests is null");
@@ -193,6 +201,40 @@ public class TaskDiscussionService
         return open(askableTask(command.workspaceId(), command.taskId()), command);
     }
 
+    /** Discusses the card's saved result through the existing read-only discussion, never by sending work to its task. */
+    public TaskDiscussionView openResult(AgendaTarget target, String sourceTurnId, String question)
+    {
+        requireNonNull(target, "target is null");
+        TurnId turnId = TurnId.valueOf(sourceTurnId);
+        AgentTask task = switch (target.kind()) {
+            case TASK -> askableTask(target.workspaceId().orElseThrow(), target.id().orElseThrow());
+            case REVIEW -> {
+                AgentReview review = requireReview(target.id().orElseThrow());
+                checkArgument(target.workspaceId().filter(review.workspaceId()::equals).isPresent(), "The review belongs to another workspace");
+                reviews.findRun(review.latestCompletedRunId().orElseThrow(() -> new AgentConflictException("This review has no accepted result")))
+                        .filter(run -> run.reviewId().equals(review.id()) && run.state() == ReviewRun.State.ACCEPTED)
+                        .filter(run -> !run.turnIds().isEmpty() && run.turnIds().getLast().equals(sourceTurnId))
+                        .filter(run -> review.observedHeadSha().filter(head -> !head.equals(run.headSha())).isEmpty())
+                        .orElseThrow(() -> new AgentConflictException("The review result changed; open its current result"));
+                yield askableReviewDiscussionTask(review);
+            }
+            default -> throw new IllegalArgumentException("Only task and review results can be discussed");
+        };
+        checkArgument(task.workspaceId().equals(target.workspaceId()), "The result belongs to another workspace");
+        turns.find(turnId).filter(turn -> turn.taskId().equals(task.id()) && turn.state() == TurnState.COMPLETED)
+                .orElseThrow(() -> new AgentConflictException("That completed result does not belong to this task"));
+        return claimed(task, slot -> {
+            Seeded seeded = seed(task.id(), Optional.of(turnId));
+            String answer = DiscussionQuotes.normalize(seeded.answer());
+            checkArgument(answer.length() >= DiscussionQuotes.MINIMUM_QUOTE_CHARACTERS, "That result has no passage to discuss");
+            String quote = answer.substring(0, Math.min(answer.length(), 600));
+            OpenDiscussionCommand command = new OpenDiscussionCommand(target.workspaceId().orElseThrow(), task.id().toString(), sourceTurnId, quote, 1, question);
+            String hash = DiscussionQuotes.hash(quote, 1);
+            TaskDiscussion discussion = store.findByAnchor(task.id().toString(), sourceTurnId, hash).orElseGet(() -> create(task, command, hash, () -> seeded));
+            return submit(task, discussion, question, slot, Optional.empty());
+        });
+    }
+
     private TaskDiscussionView open(AgentTask task, OpenDiscussionCommand command)
     {
         String normalized = DiscussionQuotes.normalize(command.quote());
@@ -200,7 +242,8 @@ public class TaskDiscussionService
 
         String hash = DiscussionQuotes.hash(command.quote(), command.occurrence());
         return claimed(task, slot -> {
-            TaskDiscussion discussion = store.findByAnchor(task.id().toString(), command.turnId(), hash).orElseGet(() -> create(task, command, hash));
+            TaskDiscussion discussion = store.findByAnchor(task.id().toString(), command.turnId(), hash)
+                    .orElseGet(() -> create(task, command, hash, () -> seed(task.id(), Optional.of(TurnId.valueOf(command.turnId())))));
             return submit(task, discussion, command.question(), slot, Optional.empty());
         });
     }
@@ -531,12 +574,12 @@ public class TaskDiscussionService
         return answering.getOrDefault(discussion.taskId(), ImmutableSet.of()).contains(discussion.id());
     }
 
-    private TaskDiscussion create(AgentTask task, OpenDiscussionCommand command, String hash)
+    private TaskDiscussion create(AgentTask task, OpenDiscussionCommand command, String hash, Supplier<Seeded> source)
     {
         if (store.listByTask(task.id().toString()).stream().filter(discussion -> discussion.comment().isEmpty()).count() >= MAXIMUM_DISCUSSIONS_PER_TASK) {
             throw new AgentConflictException("This task already holds the most discussions it can");
         }
-        Seeded seeded = seed(task.id(), Optional.of(TurnId.valueOf(command.turnId())));
+        Seeded seeded = source.get();
         checkArgument(DiscussionQuotes.occursIn(command.quote(), seeded.answer()), "That passage is not in the answer being discussed");
         Instant now = clock.instant();
         return store.insertOrGet(new TaskDiscussion(

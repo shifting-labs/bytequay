@@ -109,7 +109,12 @@ from stopping the work it describes.
 
 Follow-up belongs to a durable relationship between a chat and its work. History
 provides evidence; explicit follow state determines what needs attention. The
-Assistant can explain a result or stay quiet when nothing useful changed. Source
+Assistant keeps useful results readable without demanding attention. Routine success,
+progress, and rule approvals stay quiet. An unresolved decision, serious risk, or
+notification explicitly requested by a rule can interrupt the user. Card state and
+notification delivery are separate: a result can be ready without requiring action.
+One work card shows the latest result; Activity preserves earlier reports, evidence,
+and permission receipts. Asking about a saved result opens a read-only discussion. Source
 state determines whether approval or an answer is still needed, a result is ready,
 or a work item is complete. The seven card families are Approval required, Answer
 required, Proposal, Result ready, Completed, Attention, and Progress. A permission
@@ -118,7 +123,9 @@ approval is a receipt for that operation, never proof that the whole task succee
 Rules share that same execution and reporting path. Observation and suggestions
 do not grant automatic authority. Activating a displayed rule revision grants
 its explicit scope; edits require activation again, and pause revokes future
-actions. Supported exact permissions can then proceed without another approval
+actions. Routine local completion can continue once per original user turn, within
+the task’s accepted scope and frozen settings. New input, Stop, uncertain delivery,
+or a missing readiness report prevents automatic continuation. Supported exact permissions can then proceed without another approval
 card. The result retains the rule's name and revision so the user can understand
 what was done on their behalf. Actions whose remote outcome is uncertain remain
 visible and are not silently retried.

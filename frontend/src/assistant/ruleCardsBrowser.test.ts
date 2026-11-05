@@ -16,7 +16,16 @@ import { testBrowserScenarios } from '../fixtures/browserScenarios';
 testBrowserScenarios([
   {
     name: "answers a rule's move-up card and its finished work from the Assistant in Chromium",
-    expected: 4, timeout: 30_000,
-    fixture: { prefix: 'bytequay-rule-cards-', entry: 'src/assistant/fixtures/ruleCardsBrowser.tsx', global: 'RuleCardsTests' },
+    expected: 6, timeout: 30_000,
+    fixture: { prefix: 'bytequay-rule-cards-', entry: 'src/assistant/fixtures/ruleCardsBrowser.tsx', global: 'RuleCardsTests', styles: true, width: 860, height: 680,
+      body: `
+        const results = await window.webContents.executeJavaScript('RuleCardsTests.run()');
+        if (process.env.BYTEQUAY_RULE_SCREENSHOT) {
+          const { writeFile } = require('node:fs/promises');
+          await window.webContents.executeJavaScript('RuleCardsTests.showQuietPreview()');
+          await writeFile(process.env.BYTEQUAY_RULE_SCREENSHOT, (await window.webContents.capturePage()).toPNG());
+        }
+      `,
+    },
   },
 ]);

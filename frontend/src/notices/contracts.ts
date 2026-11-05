@@ -11,13 +11,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import type { AgentRuleRunDto } from '../types';
+import type { AgentRuleRunDto, AssistantReportDto } from '../types';
 import { parseAgentRuleRuns } from '../agents/contracts';
 
 export const NOTICE_KINDS = ['TURN_FINISHED', 'QUESTION', 'APPROVAL', 'FAILURE', 'RECOVERY', 'STUCK', 'QUEUE_PAUSED', 'CI_ATTENTION', 'NEXT_WORK'] as const;
 export const NOTICE_WIDTH = 340;
 export type NoticeKind = typeof NOTICE_KINDS[number];
 export type AppNotice = {
+  delivery: 'PASSIVE' | 'INTERRUPT';
+  deliveryReason: string;
+  report: AssistantReportDto | null;
   ruleRun?: AgentRuleRunDto | null;
   id: string; kind: NoticeKind; taskId: string; workspaceId: string; turnId: string | null; reviewId: string | null;
   title: string; pullRequest: string | null; pullRequestTitle: string | null; changes: NoticeChanges | null;
@@ -48,12 +51,12 @@ export const ARTIFACT_NOTICE = 'artifact:';
 export const RULE_NOTICE = 'rule:';
 /** A rule's finished work, asked about in place of its task's own result; its id goes on with the rule's id and the run's key. */
 export const RULE_RESULT_NOTICE = 'rule-result:';
+export const interrupts = (notice: AppNotice): boolean => notice.delivery === 'INTERRUPT';
 export const needsAction = (notice: AppNotice): boolean => notice.kind !== 'TURN_FINISHED' && notice.kind !== 'NEXT_WORK';
 /**
- * The one rule for what waits on the user's decision, which the Decision pill, the Dock badge and My work's marks all count. A failed
- * turn needs the user too, but as a result that says why, so it is Finished.
+ * A focused decision belongs in Decision and My work's marks. Serious failures remain under Results with their interruption policy.
  */
-export const isDecision = (notice: AppNotice): boolean => needsAction(notice) && notice.kind !== 'FAILURE';
+export const isDecision = (notice: AppNotice): boolean => interrupts(notice) && needsAction(notice) && notice.kind !== 'FAILURE';
 /** A decision's label says what waits on the user, as its card's own state does, rather than naming the task's internal state. */
 export const NOTICE_LABELS: Record<NoticeKind, string> = {
   TURN_FINISHED: 'Turn finished', QUESTION: 'Answer question', APPROVAL: 'Approval needed',
@@ -96,10 +99,10 @@ export function parseNotices(value: unknown): AppNotice[] {
   return value.map(raw => {
     if (raw === null || typeof raw !== 'object') throw new Error('Invalid notice');
     const item = raw as Record<string, unknown>;
-    for (const key of ['id', 'kind', 'title', 'message', 'occurredAt', 'taskId', 'workspaceId', 'repository', 'laneId']) {
+    for (const key of ['id', 'kind', 'title', 'message', 'occurredAt', 'taskId', 'workspaceId', 'repository', 'laneId', 'deliveryReason']) {
       if (typeof item[key] !== 'string' || !(item[key] as string).trim() || (item[key] as string).length > 1000) throw new Error('Invalid notice field');
     }
-    if (!NOTICE_KINDS.includes(item.kind as NoticeKind) || !Number.isFinite(Date.parse(item.occurredAt as string))
+    if ((item.delivery !== 'PASSIVE' && item.delivery !== 'INTERRUPT') || !NOTICE_KINDS.includes(item.kind as NoticeKind) || !Number.isFinite(Date.parse(item.occurredAt as string))
       || ids.has(item.id as string)) throw new Error('Invalid notice identity');
     ids.add(item.id as string);
     for (const key of ['turnId', 'reviewId']) {
@@ -114,7 +117,7 @@ export function parseNotices(value: unknown): AppNotice[] {
     if (branch !== null && (typeof branch !== 'string' || !branch.trim() || branch.length > 1000)) throw new Error('Invalid notice context');
     const expiresAt = item.expiresAt ?? null;
     if (expiresAt !== null && (typeof expiresAt !== 'string' || !Number.isFinite(Date.parse(expiresAt)))) throw new Error('Invalid notice context');
-    return { id: item.id, kind: item.kind, taskId: item.taskId, workspaceId: item.workspaceId, turnId: item.turnId, reviewId: item.reviewId,
+    return { delivery: item.delivery, deliveryReason: item.deliveryReason, report: parseReport(item.report), id: item.id, kind: item.kind, taskId: item.taskId, workspaceId: item.workspaceId, turnId: item.turnId, reviewId: item.reviewId,
       title: item.title, pullRequest: item.pullRequest, pullRequestTitle: item.pullRequestTitle, changes: parseChanges(item.changes),
       message: item.message, repository: item.repository, laneId: item.laneId, occurredAt: item.occurredAt,
       ...(item.ruleRun == null ? {} : { ruleRun: parseAgentRuleRuns([item.ruleRun])[0] }),
@@ -131,3 +134,31 @@ function parseChanges(raw: unknown): NoticeChanges | null {
 }
 
 declare global { interface Window { noticeBridge: NoticeBridge } }
+
+function parseReport(value: unknown): AssistantReportDto | null {
+  if (value === null) return null;
+  if (value === undefined || typeof value !== 'object') throw new Error('Invalid notice report');
+  const row = value as Record<string, unknown>;
+  const states = ['APPROVAL_REQUIRED', 'ANSWER_REQUIRED', 'PROPOSAL', 'RESULT_READY', 'COMPLETED', 'ATTENTION', 'PROGRESS'];
+  if (!states.includes(String(row.state)) || row.delivery !== 'PASSIVE' && row.delivery !== 'INTERRUPT'
+    || typeof row.deliveryReason !== 'string' || !row.deliveryReason.trim()
+    || typeof row.noticeId !== 'string' || !row.noticeId.trim()) throw new Error('Invalid notice report');
+  for (const field of ['sourceTurnId', 'assessment', 'outcome']) {
+    if (row[field] !== null && typeof row[field] !== 'string') throw new Error('Invalid notice report');
+  }
+  if (!Array.isArray(row.evidence) || row.evidence.some(entry => typeof entry !== 'string') || !Array.isArray(row.ruleActions)) throw new Error('Invalid notice report');
+  for (const action of row.ruleActions) {
+    if (action === null || typeof action !== 'object') throw new Error('Invalid notice rule receipt');
+    const record = action as Record<string, unknown>;
+    if (['ruleId', 'ruleName', 'outcome', 'detail'].some(field => typeof record[field] !== 'string')
+      || !Number.isSafeInteger(record.ruleVersion) || Number(record.ruleVersion) < 1) throw new Error('Invalid notice rule receipt');
+  }
+  if (row.target === null || typeof row.target !== 'object') throw new Error('Invalid notice report target');
+  const target = row.target as Record<string, unknown>;
+  if (!['TASK', 'REVIEW', 'WORK', 'PULL', 'ISSUE', 'JIRA'].includes(String(target.kind))) throw new Error('Invalid notice report target');
+  for (const field of ['id', 'workspaceId', 'repo', 'connectionId', 'cloudId']) {
+    if (target[field] !== null && typeof target[field] !== 'string') throw new Error('Invalid notice report target');
+  }
+  if (target.number !== null && (!Number.isSafeInteger(target.number) || Number(target.number) < 1)) throw new Error('Invalid notice report target');
+  return row as AssistantReportDto;
+}

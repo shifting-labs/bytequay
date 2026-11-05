@@ -19,7 +19,7 @@ import { NOTICE_KINDS, approvalTimeLeft, parseNotices, shownAlert, type AppNotic
 import { NoticeStore } from './store';
 
 const now = Date.parse('2026-09-27T10:00:00Z');
-const notice = (id: string, kind: AppNotice['kind'] = 'TURN_FINISHED', taskId = 'task'): AppNotice => ({
+const notice = (id: string, kind: AppNotice['kind'] = 'TURN_FINISHED', taskId = 'task'): AppNotice => ({ delivery: 'INTERRUPT', deliveryReason: 'A decision needs your attention.', report: null,
   id, kind, taskId, workspaceId: 'workspace', turnId: 'turn', reviewId: null, title: 'Fix recovery', pullRequest: null, pullRequestTitle: null, changes: null,
   message: 'Ready', repository: 'owner/repo', laneId: 'codex', occurredAt: new Date(now).toISOString(),
 });
@@ -51,7 +51,7 @@ it('shows development and review completions on the first successful refresh and
   const store = new NoticeStore(() => file);
   const development = { ...notice('development'), occurredAt: new Date(now - 4 * 3_600_000).toISOString() };
   const review = { ...notice('review', 'TURN_FINISHED', 'review-task'), reviewId: 'review' };
-  const expired = { ...notice('expired', 'TURN_FINISHED', 'old-task'), occurredAt: new Date(now - 86_400_001).toISOString() };
+  const expired: AppNotice = { ...notice('expired', 'TURN_FINISHED', 'old-task'), delivery: 'PASSIVE', occurredAt: new Date(now - 86_400_001).toISOString() };
   store.update(parseNotices([development, review, expired]), now);
   expect(store.snapshot(true)).toMatchObject({ notices: [review, development], popupIds: [] });
   store.update([development, review, expired], now + 5000);
@@ -166,13 +166,13 @@ it('waits for shutdown to remain blocked, without replaying startup or transient
 it('bounds recent completions, retains actionable requests, and keeps background popups pending', () => {
   const store = new NoticeStore(() => file); store.update([], now);
   const waiting = notice('approval', 'APPROVAL');
-  store.update([waiting, ...Array.from({ length: 70 }, (_, i) => notice(`done-${i}`, 'TURN_FINISHED', `t-${i}`))], now);
+  store.update([waiting, ...Array.from({ length: 70 }, (_, i) => ({ ...notice(`done-${i}`, 'TURN_FINISHED', `t-${i}`), delivery: 'PASSIVE' as const }))], now);
   expect(store.snapshot(false).notices).toHaveLength(51);
   expect(store.snapshot(false).active).toBe(false);
   expect(store.snapshot(true).popupIds).toContain('approval');
   store.update([waiting], now + 86_400_001);
   expect(store.snapshot(true).notices).toEqual([waiting]);
-  store.update([waiting, notice('unseen-old-completion')], now + 86_400_001);
+  store.update([waiting, { ...notice('unseen-old-completion'), delivery: 'PASSIVE' }], now + 86_400_001);
   expect(store.snapshot(true).notices).toEqual([waiting]);
 });
 
@@ -254,4 +254,76 @@ it('keeps rule authorization and the verified action outcome across the desktop 
   const result = { ...notice('rule-action:merge:pr:42'), taskId: 'rule:merge', ruleRun };
   expect(parseNotices([result])).toEqual([result]);
   expect(() => parseNotices([{ ...result, ruleRun: { ...ruleRun, authorization: { ...ruleRun.authorization, ruleVersion: '2' } } }])).toThrow();
+});
+
+
+it('retains passive results without popups and removes absent superseded results immediately', () => {
+  const store = new NoticeStore(() => file);
+  store.update([], now);
+  const passive: AppNotice = { ...notice('finished:quiet'), delivery: 'PASSIVE', deliveryReason: 'Nothing needs your decision.' };
+  store.update([passive], now);
+  expect(store.snapshot(true)).toMatchObject({ notices: [passive], popupIds: [], viewedIds: [passive.id] });
+  store.update([], now + 1);
+  expect(store.snapshot(true).notices).toEqual([]);
+  const replacement = { ...passive, id: 'finished:next' };
+  store.update([replacement], now + 2);
+  expect(store.snapshot(true)).toMatchObject({ notices: [replacement], popupIds: [] });
+});
+
+it('promotes a passive source to an interruption once and retracts its popup when it becomes passive', () => {
+  const store = new NoticeStore(() => file);
+  store.update([], now);
+  const passive: AppNotice = { ...notice('result'), delivery: 'PASSIVE', deliveryReason: 'Reviewing the result.' };
+  store.update([passive], now);
+  const urgent: AppNotice = { ...passive, delivery: 'INTERRUPT', deliveryReason: 'A serious blocker needs your decision.' };
+  store.update([urgent], now + 1);
+  expect(store.snapshot(false)).toMatchObject({ popupIds: [urgent.id], viewedIds: [] });
+  store.dismiss(urgent.id); store.update([urgent], now + 2);
+  expect(store.snapshot(false).popupIds).toEqual([]);
+  store.update([passive], now + 3);
+  expect(store.snapshot(false)).toMatchObject({ notices: [passive], popupIds: [], viewedIds: [passive.id] });
+});
+
+it('preserves independent live decisions on the same task', () => {
+  const store = new NoticeStore(() => file);
+  store.update([], now);
+  const requests = [notice('approval:a', 'APPROVAL'), notice('approval:b', 'QUESTION')];
+  store.update(requests, now);
+  expect(store.snapshot(false).notices).toEqual(requests);
+});
+
+it('validates delivery and report contracts before applying a notice snapshot', () => {
+  for (const delivery of [null, undefined, 'SILENT', true]) expect(() => parseNotices([{ ...notice('one'), delivery }])).toThrow();
+  for (const report of [undefined, {}, { state: 'PROGRESS' }]) expect(() => parseNotices([{ ...notice('one'), report }])).toThrow();
+  const report = { delivery: 'PASSIVE', deliveryReason: 'Reviewing the result.', state: 'PROGRESS', noticeId: 'one', sourceTurnId: 'turn', assessment: null,
+    outcome: null, evidence: [], ruleActions: [], target: { kind: 'TASK', id: 'task', workspaceId: 'workspace', repo: 'owner/repository', number: null, connectionId: null, cloudId: null } };
+  expect(parseNotices([{ ...notice('one'), report }])[0].report).toEqual(report);
+  expect(() => parseNotices([{ ...notice('one'), report: { ...report, ruleActions: [{ ruleVersion: -1 }] } }])).toThrow();
+});
+
+
+it('restores a temporarily absent result quietly without forgetting a serious result after a day', () => {
+  const store = new NoticeStore(() => file);
+  store.update([], now);
+  const result = notice('finished:review');
+  store.update([result], now); store.dismiss(result.id);
+  store.update([], now + 1); store.update([result], now + 2);
+  expect(store.snapshot(false)).toMatchObject({ notices: [result], popupIds: [] });
+  store.update([result], now + 86_400_001);
+  expect(store.snapshot(false).notices).toEqual([result]);
+});
+
+it('clearing a passive assessment cannot suppress its later serious finding, including after restart', () => {
+  const store = new NoticeStore(() => file);
+  store.update([], now);
+  const pending: AppNotice = { ...notice('finished:review'), delivery: 'PASSIVE', deliveryReason: 'Reviewing the result.' };
+  store.update([pending], now); store.remove(pending.id);
+  store.update([pending], now + 1);
+  expect(store.snapshot(false).notices).toEqual([]);
+  const serious: AppNotice = { ...pending, delivery: 'INTERRUPT', deliveryReason: 'A serious finding requires review.' };
+  store.update([serious], now + 2);
+  expect(store.snapshot(false)).toMatchObject({ notices: [serious], popupIds: [serious.id], viewedIds: [] });
+  const restarted = new NoticeStore(() => file);
+  restarted.update([serious], now + 3);
+  expect(restarted.snapshot(false).notices).toEqual([serious]);
 });

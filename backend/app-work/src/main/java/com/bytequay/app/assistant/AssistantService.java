@@ -61,8 +61,6 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayDeque;
-import java.util.Deque;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -151,7 +149,6 @@ public class AssistantService
     // A provider session has one owner. Different conversations and read-only assessments never share that session.
     private final Object slot = new Object();
     private final Map<String, Run> running = new ConcurrentHashMap<>();
-    private final Deque<AssistantItem> waiting = new ArrayDeque<>();
 
     AssistantService(AssistantStore store, AssistantReader reader, AssistantActions actions, AssistantShow show, AssistantRows rows, AssistantWork work,
             AssistantFollowing following, AgentRuleService rules, SetupSettingsService setup, AgentDriverRegistry drivers, AgentResourceService resources,
@@ -210,6 +207,7 @@ public class AssistantService
         requireNonNull(text, "text is null");
         requireNonNull(key, "key is null");
         synchronized (slot) {
+            resumeQueued();
             Optional<AssistantItem> sent = store.items(conversationId).stream().filter(item -> item.key().filter(key::equals).isPresent()).findFirst();
             if (sent.isPresent()) {
                 return sent.orElseThrow().id();
@@ -217,7 +215,7 @@ public class AssistantService
             return start(conversationId, true, () -> {
                 boolean fresh = store.find(conversationId).isEmpty();
                 AssistantItem message = AssistantItem.user(conversationId, clock.instant(), text, visible, onScreen, key);
-                append(message);
+                append(message, true);
                 if (fresh) {
                     retain();
                 }
@@ -234,6 +232,7 @@ public class AssistantService
      */
     public String retry(String conversationId)
     {
+        resumeQueued();
         // Not in line: the failed message is the conversation's last only until a message sent meanwhile is answered.
         return start(conversationId, false, () -> {
             // A card answered with its button meanwhile leaves a receipt after the failure, and a task may report; neither ends the exchange.
@@ -242,15 +241,18 @@ public class AssistantService
             if (items.isEmpty() || items.getLast().kind() != AssistantItem.Kind.FAILURE) {
                 throw new AgentConflictException("There is no failed reply to retry");
             }
-            return items.reversed().stream().filter(item -> item.kind() == AssistantItem.Kind.USER).findFirst()
+            AssistantItem message = items.reversed().stream().filter(item -> item.kind() == AssistantItem.Kind.USER).findFirst()
                     .orElseThrow(() -> new AgentConflictException("There is no failed reply to retry"));
+            store.enqueue(message);
+            return message;
         });
     }
 
-    /** Stops the reply being written; it ends as a failure the user may retry, and the next message in line is answered. */
+    /** Stops this conversation's reply and durably cancels its messages that have not started. Other conversations continue. */
     public void stop(String conversationId)
     {
         synchronized (slot) {
+            store.cancelQueued(conversationId);
             Optional.ofNullable(running.get(conversationId)).ifPresent(Run::stop);
         }
     }
@@ -311,8 +313,13 @@ public class AssistantService
     }
 
     /** Adds the item, beginning its conversation with it when it is the first; the user's own message moves the conversation up the history. */
+    private void append(AssistantItem item)
+    {
+        append(item, false);
+    }
+
     // ponytail: one lock for every item written, by the run or by a button's receipt, since the next ordinal is the conversation's count.
-    private synchronized void append(AssistantItem item)
+    private synchronized void append(AssistantItem item, boolean queued)
     {
         Optional<AssistantConversation> stored = store.find(item.conversationId());
         if (stored.isEmpty()) {
@@ -321,7 +328,45 @@ public class AssistantService
         else if (item.kind() == AssistantItem.Kind.USER) {
             store.save(touched(stored.orElseThrow(), item.at()));
         }
-        store.add(item);
+        if (queued) {
+            store.enqueue(item);
+        }
+        else {
+            store.add(item);
+        }
+    }
+
+    private synchronized void complete(AssistantItem message, AssistantItem outcome)
+    {
+        store.complete(message.id(), outcome);
+    }
+
+    /** Resumes only messages never started. A claimed message may have acted before shutdown, so retain that uncertainty without replay. */
+    @Scheduled(initialDelayString = "PT1S", fixedDelayString = "PT5S", scheduler = "workflowScheduler")
+    public void resumeQueued()
+    {
+        synchronized (slot) {
+            for (AssistantItem message : store.interrupted()) {
+                if (!running.containsKey(message.conversationId())) {
+                    forgetSession(message.conversationId());
+                    complete(message, AssistantItem.failure(message.conversationId(), clock.instant(),
+                            "The app stopped before this reply finished. Any action already taken may still be running; check its receipt before asking again.", false));
+                }
+            }
+            if (setup.preferences().assistantEnabled()) {
+                for (AssistantItem message : store.queued()) {
+                    if (!running.containsKey(message.conversationId())) {
+                        launch(message);
+                    }
+                }
+            }
+        }
+    }
+
+    private synchronized void forgetSession(String id)
+    {
+        store.find(id).ifPresent(value -> store.save(new AssistantConversation(id, value.title(), value.laneId(), value.model(), Optional.empty(), value.served(),
+                value.createdAt(), clock.instant(), value.reportCursor())));
     }
 
     /** Delivers source facts and starts independent read-only interpretations without taking a foreground slot. */
@@ -347,7 +392,9 @@ public class AssistantService
     private List<String> waitingIds(String conversationId)
     {
         synchronized (slot) {
-            return waiting.stream().filter(message -> message.conversationId().equals(conversationId)).map(AssistantItem::id).collect(toImmutableList());
+            return store.queued().stream().filter(message -> message.conversationId().equals(conversationId))
+                    .filter(message -> Optional.ofNullable(running.get(conversationId)).map(run -> !run.messageId.equals(message.id())).orElse(true))
+                    .map(AssistantItem::id).collect(toImmutableList());
         }
     }
 
@@ -374,9 +421,6 @@ public class AssistantService
             if (!running.containsKey(conversationId)) {
                 launch(message);
             }
-            else {
-                waiting.add(message);
-            }
             return message.id();
         }
     }
@@ -384,11 +428,16 @@ public class AssistantService
     /** Takes the slot, which the caller holds the lock for, and answers the message on a virtual thread that hands the slot on when it ends. */
     private void launch(AssistantItem message)
     {
-        Run run = new Run(message.conversationId());
+        Run run = new Run(message.id());
         running.put(message.conversationId(), run);
         try {
             executor.execute(() -> {
                 try {
+                    synchronized (slot) {
+                        if (!store.begin(message.id())) {
+                            return;
+                        }
+                    }
                     reply(run, message);
                 }
                 catch (RuntimeException failure) {
@@ -410,19 +459,16 @@ public class AssistantService
     {
         synchronized (slot) {
             running.remove(conversationId);
-            AssistantItem message = waiting.stream().filter(value -> value.conversationId().equals(conversationId)).findFirst().orElse(null);
-            if (message != null) {
-                waiting.remove(message);
-            }
-            if (message == null) {
+            Optional<AssistantItem> message = store.queued().stream().filter(value -> value.conversationId().equals(conversationId)).findFirst();
+            if (message.isEmpty() || !setup.preferences().assistantEnabled()) {
                 return;
             }
             try {
-                launch(message);
+                launch(message.orElseThrow());
             }
             catch (RuntimeException failure) {
-                // Only a stopping executor refuses; the message stays in its conversation, and the next one sent starts the line again.
-                log.warn("The assistant could not answer a waiting message in {}", message.conversationId(), failure);
+                // A stopping executor leaves the message queued for the next startup.
+                log.warn("The assistant could not answer a waiting message in {}", conversationId, failure);
             }
         }
     }
@@ -435,7 +481,7 @@ public class AssistantService
             model = setup.requireUsableDevelopmentAgent();
         }
         catch (RuntimeException notReady) {
-            append(AssistantItem.failure(id, clock.instant(), reason(notReady), true));
+            complete(message, AssistantItem.failure(id, clock.instant(), reason(notReady), true));
             return;
         }
         String lane = model.configId();
@@ -456,14 +502,14 @@ public class AssistantService
             Prompt fresh = resumed.isEmpty() ? prompt(message, true, stored.reportCursor()) : request;
             OneShotSession.Answer answer = resumed.orElseGet(() -> converse(run, message, model, context, Optional.empty(), fresh.text()));
             session = Optional.of(new DiscussionSession(answer.reference().contractVersion(), answer.reference().providerValue()));
-            append(item(id, answer.result(), context.served()));
+            complete(message, item(id, answer.result(), context.served()));
             if (answer.result().state() == AgentTurnResult.State.COMPLETED) {
                 consumed = fresh.reportCursor();
             }
         }
         catch (RuntimeException failure) {
             log.warn("The assistant could not answer a message in {}", id, failure);
-            append(AssistantItem.failure(id, clock.instant(), reason(failure), false));
+            complete(message, AssistantItem.failure(id, clock.instant(), reason(failure), false));
         }
         saveSession(id, lane, model.modelLabel(), session, context.served(), consumed);
     }
@@ -483,11 +529,14 @@ public class AssistantService
     {
         try {
             OneShotSession.Answer answer = converse(run, message, model, context, Optional.of(session), prompt);
-            return answer.result().state() == AgentTurnResult.State.FAILED ? Optional.empty() : Optional.of(answer);
+            boolean missingSession = answer.result().state() == AgentTurnResult.State.FAILED
+                    && answer.result().terminalReason().filter(reason -> reason.startsWith("No conversation found with session ID:")).isPresent();
+            return missingSession ? Optional.empty() : Optional.of(answer);
         }
         catch (RuntimeException failure) {
-            if (run.began()) {
-                // The turn ran and failed on its own, which is this reply's failure rather than a lost conversation.
+            if (run.began() || !Optional.ofNullable(failure.getMessage()).filter(reason -> reason.startsWith("Codex App Server thread/resume failed: no rollout found"))
+                    .isPresent()) {
+                // A failed start can have sent the turn before losing its acknowledgement. Retry only a known missing conversation.
                 throw failure;
             }
             return Optional.empty();
@@ -496,6 +545,9 @@ public class AssistantService
 
     private OneShotSession.Answer converse(Run run, AssistantItem message, AgentModelSetting model, AssistantContext context, Optional<DiscussionSession> resume, String prompt)
     {
+        if (run.stopped) {
+            throw new AgentConflictException("The assistant reply was stopped");
+        }
         AgentLaneId lane = new AgentLaneId(model.configId());
         return OneShotSession.run(resources, drivers.require(lane), (scratchId, scratch) -> new AgentSessionContext(
                         scratchId.toString(), folder(message.conversationId()), scratch.runtimeDirectory(), scratch.providerDirectory(), AgentPermissionPolicy.AUTO,
@@ -624,13 +676,13 @@ public class AssistantService
     /** The one reply being written, in one conversation. Stop cancels its turn, or the turn as soon as it starts. */
     private static final class Run
     {
-        private final String conversationId;
+        private final String messageId;
         private volatile Optional<RunningTurn> turn = Optional.empty();
         private volatile boolean stopped;
 
-        Run(String conversationId)
+        Run(String messageId)
         {
-            this.conversationId = requireNonNull(conversationId, "conversationId is null");
+            this.messageId = requireNonNull(messageId, "messageId is null");
         }
 
         void started(RunningTurn started)

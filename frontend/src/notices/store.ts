@@ -12,7 +12,7 @@
  * limitations under the License.
  */
 import fs from 'node:fs';
-import { APPROVAL_NUDGE_MS, needsAction, type AppNotice, type NoticeSnapshot } from './contracts';
+import { APPROVAL_NUDGE_MS, interrupts, needsAction, type AppNotice, type NoticeSnapshot } from './contracts';
 
 const RECENT_COMPLETION_MS = 24 * 60 * 60 * 1000;
 
@@ -20,7 +20,7 @@ const RECENT_COMPLETION_MS = 24 * 60 * 60 * 1000;
 export class NoticeStore {
   private initialized = false;
   private restored = false;
-  private readonly seen = new Set<string>();
+  private readonly seen = new Map<string, AppNotice['delivery']>();
   private readonly removed = new Set<string>();
   private readonly notices = new Map<string, AppNotice>();
   private readonly popups = new Set<string>();
@@ -35,7 +35,7 @@ export class NoticeStore {
     this.restore();
     const current = new Set(incoming.map(notice => notice.id));
     for (const [id, notice] of this.notices) {
-      if ((!current.has(id) && needsAction(notice)) || (!needsAction(notice) && now - Date.parse(notice.occurredAt) > RECENT_COMPLETION_MS)) {
+      if (!current.has(id) || (!needsAction(notice) && !interrupts(notice) && now - Date.parse(notice.occurredAt) > RECENT_COMPLETION_MS)) {
         this.notices.delete(id); this.popups.delete(id);
       }
     }
@@ -43,34 +43,35 @@ export class NoticeStore {
     for (const id of this.nudged) if (!current.has(id)) this.nudged.delete(id);
     const nudges: string[] = [];
     for (const notice of incoming) {
-      if (this.removed.has(notice.id)) continue;
+      if (this.removed.has(notice.id) || !interrupts(notice) && this.removed.has(`passive:${notice.id}`)) continue;
       const known = this.seen.has(notice.id);
-      if (!needsAction(notice) && now - Date.parse(notice.occurredAt) > RECENT_COMPLETION_MS) { this.remember(notice.id); continue; }
+      const promoted = this.seen.get(notice.id) === 'PASSIVE' && interrupts(notice);
+      if (!needsAction(notice) && !interrupts(notice) && now - Date.parse(notice.occurredAt) > RECENT_COMPLETION_MS) { this.remember(notice); continue; }
       // Let ordinary turn finalization release its worktree before calling it blocked.
       if (notice.kind === 'RECOVERY' && !known) {
         const pending = this.settling.get(notice.id);
         if (pending === undefined) { this.settling.set(notice.id, { since: now, popup: this.initialized }); continue; }
         if (now - pending.since < 10_000) continue;
       }
-      if (!known || needsAction(notice) || this.notices.has(notice.id)) {
-        for (const [id, prior] of this.notices) {
-          if (id !== notice.id && prior.taskId === notice.taskId) { this.notices.delete(id); this.popups.delete(id); }
-        }
-        this.notices.set(notice.id, notice);
-        if (!known && this.initialized && (this.settling.get(notice.id)?.popup ?? true)) this.popups.add(notice.id);
-        // Notices already waiting at startup are old news: no alert and no unread dot.
-        if (!known && !this.initialized) this.viewed.add(notice.id);
-        const left = notice.expiresAt === undefined ? Number.NaN : Date.parse(notice.expiresAt) - now;
-        // Once, even after the alert was closed: in real use, one approval in five expired unanswered. A deadline already past
-        // still counts while the approval is listed: the backend's wait does not count time the Mac sleeps.
-        if (left <= APPROVAL_NUDGE_MS && !this.nudged.has(notice.id)) {
-          this.nudged.add(notice.id); this.popups.add(notice.id); this.viewed.delete(notice.id); nudges.push(notice.id);
-        }
+      for (const [id, prior] of this.notices) {
+        if (id !== notice.id && prior.taskId === notice.taskId && !(needsAction(prior) && current.has(id) && needsAction(notice))) { this.notices.delete(id); this.popups.delete(id); }
       }
-      this.remember(notice.id);
+      this.notices.set(notice.id, notice);
+      if (interrupts(notice) && (!known || promoted) && this.initialized && (this.settling.get(notice.id)?.popup ?? true)) this.popups.add(notice.id);
+      if (promoted) this.viewed.delete(notice.id);
+      // Passive results and notices already waiting at startup do not demand attention.
+      if (!interrupts(notice)) this.popups.delete(notice.id);
+      if (!interrupts(notice) || !known && !this.initialized) this.viewed.add(notice.id);
+      const left = notice.expiresAt === undefined ? Number.NaN : Date.parse(notice.expiresAt) - now;
+      // Once, even after the alert was closed: in real use, one approval in five expired unanswered. A deadline already past
+      // still counts while the approval is listed: the backend's wait does not count time the Mac sleeps.
+      if (interrupts(notice) && left <= APPROVAL_NUDGE_MS && !this.nudged.has(notice.id)) {
+        this.nudged.add(notice.id); this.popups.add(notice.id); this.viewed.delete(notice.id); nudges.push(notice.id);
+      }
+      this.remember(notice);
     }
     this.initialized = true;
-    const recent = [...this.notices.values()].filter(notice => !needsAction(notice)).sort(newest);
+    const recent = [...this.notices.values()].filter(notice => !needsAction(notice) && !interrupts(notice)).sort(newest);
     for (const notice of recent.slice(50)) { this.notices.delete(notice.id); this.popups.delete(notice.id); }
     for (const id of this.viewed) if (!this.notices.has(id)) this.viewed.delete(id);
     return nudges;
@@ -79,12 +80,15 @@ export class NoticeStore {
   dismiss(id: string): void { this.popups.delete(id); }
 
   remove(id: string): void {
-    if (!this.notices.has(id)) return;
+    const notice = this.notices.get(id);
+    if (notice === undefined) return;
+    // Reading a pending/passive source must not suppress a later serious finding on that same source.
+    const key = interrupts(notice) ? id : `passive:${id}`;
     const file = this.storagePath();
-    fs.writeFileSync(`${file}.tmp`, JSON.stringify([...this.removed, id]), { mode: 0o600 });
+    fs.writeFileSync(`${file}.tmp`, JSON.stringify([...this.removed, key]), { mode: 0o600 });
     fs.renameSync(`${file}.tmp`, file);
     this.notices.delete(id);
-    this.removed.add(id); this.popups.delete(id); this.viewed.delete(id); this.settling.delete(id);
+    this.removed.add(key); this.popups.delete(id); this.viewed.delete(id); this.settling.delete(id);
   }
 
   markViewed(id: string): void { this.viewed.add(id); this.dismiss(id); }
@@ -99,7 +103,7 @@ export class NoticeStore {
     if (this.restored) return;
     try {
       const saved: unknown = JSON.parse(fs.readFileSync(this.storagePath(), 'utf8'));
-      if (!Array.isArray(saved) || saved.some(id => typeof id !== 'string' || !id.trim() || id.length > 1000)) throw new Error('Invalid dismissed notices');
+      if (!Array.isArray(saved) || saved.some(id => typeof id !== 'string' || !id.trim() || id.length > (id.startsWith('passive:') ? 1008 : 1000))) throw new Error('Invalid dismissed notices');
       for (const id of saved) this.removed.add(id);
     }
     catch (error) {
@@ -108,10 +112,10 @@ export class NoticeStore {
     this.restored = true;
   }
 
-  private remember(id: string): void {
-    this.seen.add(id);
+  private remember(notice: AppNotice): void {
+    this.seen.set(notice.id, notice.delivery);
     if (this.seen.size > 4096) {
-      const removable = [...this.seen].find(key => !this.notices.has(key));
+      const removable = [...this.seen.keys()].find(key => !this.notices.has(key));
       if (removable !== undefined) this.seen.delete(removable);
     }
   }
