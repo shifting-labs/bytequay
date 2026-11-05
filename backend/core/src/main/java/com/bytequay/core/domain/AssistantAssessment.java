@@ -13,40 +13,68 @@
  */
 package com.bytequay.core.domain;
 
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+
+import java.time.Instant;
+import java.util.Optional;
+
 import static com.bytequay.core.domain.Checks.checkText;
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
-/** A recoverable, read-only assessment. Its item ID is also the publication key, so a crash cannot duplicate a report. */
-public record AssistantAssessment(String id, String conversationId, String taskId, String fingerprint, AssistantItem item, String context,
-        boolean interpret, boolean requested, State state)
+/** A recoverable, read-only assessment for a chat or the Assistant inbox. Its ID is the idempotent publication key. */
+public record AssistantAssessment(String id, Optional<String> conversationId, String taskId, String fingerprint, Instant at, String sourceLine,
+        AssistantReport report, String context, boolean interpret, boolean requested, State state)
 {
     public enum State { QUEUED, PUBLISHED, QUIET, SUPERSEDED }
 
     public AssistantAssessment
     {
         checkText(id, "id");
-        checkText(conversationId, "conversationId");
+        requireNonNull(conversationId, "conversationId is null");
+        conversationId.ifPresent(value -> checkText(value, "conversationId"));
         checkText(taskId, "taskId");
         checkText(fingerprint, "fingerprint");
-        requireNonNull(item, "item is null");
-        checkArgument(item.id().equals(id) && item.conversationId().equals(conversationId) && item.kind() == AssistantItem.Kind.REPORT, "assessment item does not match");
+        requireNonNull(at, "at is null");
+        requireNonNull(sourceLine, "sourceLine is null");
+        requireNonNull(report, "report is null");
         requireNonNull(context, "context is null");
         requireNonNull(state, "state is null");
     }
 
-    public AssistantAssessment ended(State result)
+    public AssistantAssessment(String id, String conversationId, String taskId, String fingerprint, AssistantItem item, String context,
+            boolean interpret, boolean requested, State state)
     {
-        return new AssistantAssessment(id, conversationId, taskId, fingerprint, item, context, interpret, requested, result);
+        this(id, Optional.of(conversationId), taskId, fingerprint, item.at(), item.text(), item.report().orElseThrow(), context, interpret, requested, state);
+        checkArgument(item.id().equals(id) && item.conversationId().equals(conversationId) && item.kind() == AssistantItem.Kind.REPORT, "assessment item does not match");
     }
 
-    public AssistantAssessment published(AssistantItem report)
+    /** Only an explicitly followed chat receives a conversation item; inbox results have no synthetic conversation. */
+    public AssistantItem item()
     {
-        return new AssistantAssessment(id, conversationId, taskId, fingerprint, report, context, interpret, requested, State.PUBLISHED);
+        return new AssistantItem(id, conversationId.orElseThrow(), at, AssistantItem.Kind.REPORT, sourceLine, ImmutableList.of(), Optional.empty(), Optional.empty(),
+                ImmutableMap.of(), false, Optional.empty(), Optional.empty(), Optional.empty(), Optional.of(report));
+    }
+
+    public AssistantAssessment ended(State result)
+    {
+        return assessed(report, result);
+    }
+
+    public AssistantAssessment published(AssistantItem item)
+    {
+        checkArgument(item.id().equals(id) && conversationId.equals(Optional.of(item.conversationId())), "assessment item does not match");
+        return assessed(item.report().orElseThrow(), State.PUBLISHED);
+    }
+
+    public AssistantAssessment assessed(AssistantReport result, State resultState)
+    {
+        return new AssistantAssessment(id, conversationId, taskId, fingerprint, at, sourceLine, result, context, interpret, requested, resultState);
     }
 
     public boolean ruleReceipt()
     {
-        return fingerprint.startsWith("event:") && !item.report().orElseThrow().ruleActions().isEmpty();
+        return fingerprint.startsWith("event:") && !report.ruleActions().isEmpty();
     }
 }

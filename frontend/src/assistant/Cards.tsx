@@ -150,7 +150,7 @@ function RuleActionResult({ notice, onShow, onOpen, onClear }: {
     else onShow({ kind: 'PULL', repo: pull.repo, number: pull.number, workspaceId: notice.workspaceId, id: null, connectionId: null, cloudId: null });
   };
   return <CardRow state={state} icon={CARD_STATES[state].icon} title={heading(notice)} meta={where(notice)}
-    right={<button type="button" className="assistant-button" onClick={open}>{notice.reviewId !== null ? 'Review result' : pull === null ? 'Open' : 'Open pull request'}</button>}
+    right={<button type="button" className="assistant-button" onClick={open}>{notice.reviewId !== null ? 'Read full review' : pull === null ? 'Open' : 'Open pull request'}</button>}
     body={<>
       <div className="assistant-card__assessment">{notice.message}</div>
       {run.authorization !== null && <ReportEvidence report={{ evidence: [], ruleActions: [{ ruleId: run.authorization.ruleId,

@@ -133,6 +133,17 @@
               <a href="guide-agents.html#rules">inspect and activate your rules</a>.
             </p>
             <p>
+              When an active rule finishes a private PR review, the Assistant
+              reads its saved findings in the background and decides whether
+              the result is useful to show. The <strong>Result ready</strong>
+              card includes a short summary, the rule that started it, and
+              <strong>Read full review</strong>. Results with no useful change
+              can stay quiet; the review remains available from the PR.
+              Approval requests, questions, and failures appear immediately.
+              If the Assistant is disabled or cannot assess the result, the
+              card still links to the full review.
+            </p>
+            <p>
               <strong>⇧⌘J</strong> opens the task that has waited longest. Task
               alerts also show as macOS notifications.
             </p>

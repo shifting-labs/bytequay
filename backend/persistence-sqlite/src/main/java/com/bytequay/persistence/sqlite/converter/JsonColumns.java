@@ -13,6 +13,7 @@
  */
 package com.bytequay.persistence.sqlite.converter;
 
+import com.bytequay.core.domain.AssistantAssessment;
 import com.bytequay.core.domain.AssistantReport;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.module.SimpleModule;
@@ -37,6 +38,8 @@ public final class JsonColumns
         return new ObjectMapper()
                 .registerModule(new Jdk8Module())
                 .registerModule(new JavaTimeModule())
-                .registerModule(new SimpleModule().addDeserializer(AssistantReport.class, new AssistantReportDeserializer()));
+                .registerModule(new SimpleModule()
+                        .addDeserializer(AssistantReport.class, new AssistantReportDeserializer())
+                        .addDeserializer(AssistantAssessment.class, new AssistantAssessmentDeserializer()));
     }
 }

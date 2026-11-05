@@ -615,7 +615,14 @@ sources supersede the old job; missing or invalid model output keeps the
 app-owned result without an interpretation. Automatic interpretations can
 remain quiet when they add nothing useful; explicitly requested interpretations
 are delivered. For followed tasks, routine global result alerts wait for the same
-durable decision and use its saved summary. Quiet results do not alert. Unfollowed
+durable decision and use its saved summary. Quiet results do not alert. Activated
+rule reviews save an inbox follow with their accepted rule revision before the
+start receipt is finalized; no chat is fabricated. The same worker reads the
+accepted review's durable summary, coverage, and current findings, using the
+review's account and frozen model settings. It checks the accepted run, PR head,
+and finding revisions before publishing a short card summary with the full review
+link. Review records remain readable after task-log retention. An open review
+retains its rule provenance independently of bounded rule history. Unfollowed
 tasks retain their existing alerts. Approval requests, questions, failures and
 recovery never wait for that judgment.
 

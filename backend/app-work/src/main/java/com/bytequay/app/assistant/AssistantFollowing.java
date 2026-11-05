@@ -19,10 +19,12 @@ import com.bytequay.agent.core.AgentHistoryPage;
 import com.bytequay.agent.core.AgentResourceService;
 import com.bytequay.agent.core.AgentTask;
 import com.bytequay.agent.core.AgentTurn;
+import com.bytequay.agent.core.AgentTurnSettings;
 import com.bytequay.agent.core.ApprovalId;
 import com.bytequay.agent.core.OneShotSession;
 import com.bytequay.agent.core.TaskId;
 import com.bytequay.agent.core.TaskState;
+import com.bytequay.agent.core.TurnId;
 import com.bytequay.agent.core.store.AgentApprovalStore;
 import com.bytequay.agent.core.store.AgentTaskStore;
 import com.bytequay.agent.core.store.AgentTurnStore;
@@ -46,13 +48,16 @@ import com.bytequay.core.domain.AssistantReport;
 import com.bytequay.core.domain.AssistantRuleAction;
 import com.bytequay.core.domain.WorkItem;
 import com.bytequay.core.domain.WorkItemLink;
+import com.bytequay.core.review.AgentReview;
+import com.bytequay.core.review.AgentReviewStore;
+import com.bytequay.core.review.ReviewFinding;
+import com.bytequay.core.review.ReviewRun;
 import com.bytequay.core.store.AssistantFollowStore;
 import com.bytequay.core.store.AssistantStore;
 import com.bytequay.core.store.WorkItemStore;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -99,6 +104,8 @@ class AssistantFollowing
             Return only JSON {"summary":"short plain Markdown without links","notifyUser":true}.
             Set notifyUser=false only when this result adds no actionable or useful information for the user.
             Missing evidence, failure, a decision, or requested review is useful information; do not quietly discard it.
+            For a rule-created review, use at most three short sentences: what changed, the main finding or risk, and what to inspect.
+            Respect the rule's notification intent. A repeated review with no useful change may stay quiet unless every result was requested.
             """;
 
     private final AssistantFollowStore follows;
@@ -108,6 +115,7 @@ class AssistantFollowing
     private final TaskLogStore logs;
     private final WorkItemStore workItems;
     private final AgentApprovalStore approvals;
+    private final AgentReviewStore reviews;
     private final ObjectMapper mapper;
     private final AppNoticeService notices;
     private final SetupSettingsService setup;
@@ -119,7 +127,7 @@ class AssistantFollowing
     private final Set<String> assessing = ConcurrentHashMap.newKeySet();
 
     AssistantFollowing(AssistantFollowStore follows, AssistantStore conversations, AgentTaskStore tasks, AgentTurnStore turns, TaskLogStore logs,
-            WorkItemStore workItems, AgentApprovalStore approvals, ObjectMapper mapper,
+            WorkItemStore workItems, AgentApprovalStore approvals, AgentReviewStore reviews, ObjectMapper mapper,
             AppNoticeService notices, SetupSettingsService setup, AgentDriverRegistry drivers, AgentResourceService resources, Clock clock,
             @Qualifier(IO_EXECUTOR) ExecutorService executor)
     {
@@ -130,6 +138,7 @@ class AssistantFollowing
         this.logs = requireNonNull(logs, "logs is null");
         this.workItems = requireNonNull(workItems, "workItems is null");
         this.approvals = requireNonNull(approvals, "approvals is null");
+        this.reviews = requireNonNull(reviews, "reviews is null");
         this.mapper = requireNonNull(mapper, "mapper is null");
         this.notices = requireNonNull(notices, "notices is null");
         this.setup = requireNonNull(setup, "setup is null");
@@ -141,27 +150,40 @@ class AssistantFollowing
 
     int assessing(String conversationId)
     {
-        return (int) follows.queued().stream().filter(job -> job.conversationId().equals(conversationId) && job.interpret()).count();
+        return (int) follows.queued().stream().filter(job -> job.conversationId().filter(conversationId::equals).isPresent() && job.interpret()).count();
     }
 
     /** Source event cursors and job keys survive restart; unrelated conversations can follow the same task. */
     synchronized void poll(Consumer<AssistantItem> publish)
     {
+        notices.ruleReviews().forEach((taskId, run) -> {
+            if (follows.follow(taskId).isEmpty() && tasks.find(TaskId.valueOf(taskId)).filter(task -> task.archivedAt().isEmpty()).isPresent()
+                    && reviews.findReviewByTask(taskId).filter(review -> review.state() == AgentReview.State.OPEN).isPresent()) {
+                follows.save(AssistantFollow.ruleReview(taskId, run.occurredAt(), "Report the private review requested by “"
+                        + run.authorization().orElseThrow().ruleName() + "” for " + run.subject(), run));
+            }
+        });
         List<AssistantFollow> watching = follows.follows();
         List<TaskId> ids = watching.stream().map(AssistantFollow::taskId).distinct().flatMap(id -> AssistantRows.taskId(id).stream()).collect(toImmutableList());
         Map<String, AppNotice> current = notices.current(ids).stream().collect(toImmutableMap(AppNotice::taskId, notice -> notice));
         for (AssistantFollow follow : watching) {
             try {
                 Optional<AgentTask> task = tasks.find(TaskId.valueOf(follow.taskId()));
-                if (task.isEmpty() || conversations.find(follow.conversationId()).isEmpty()) {
-                    follows.remove(follow.conversationId(), follow.taskId());
+                if (task.isEmpty() || follow.conversationId().isPresent() && follow.conversationId().flatMap(conversations::find).isEmpty()
+                        || follow.ruleRun().isPresent() && (task.orElseThrow().archivedAt().isPresent()
+                                || reviews.findReviewByTask(follow.taskId()).filter(review -> review.state() == AgentReview.State.OPEN).isEmpty())) {
+                    follows.remove(follow);
                     continue;
                 }
                 boolean caughtUp = readEvents(follow, task.orElseThrow());
-                snapshot(task.orElseThrow(), Optional.ofNullable(current.get(follow.taskId())))
+                Optional<AppNotice> notice = Optional.ofNullable(current.get(follow.taskId()));
+                if (follow.ruleRun().isPresent() && notice.filter(value -> value.kind() == AppNotice.Kind.TURN_FINISHED).isEmpty()) {
+                    continue;
+                }
+                snapshot(task.orElseThrow(), notice)
                         .filter(snapshot -> caughtUp || snapshot.report().state() != AssistantReport.State.RESULT_READY
                                 && snapshot.report().state() != AssistantReport.State.COMPLETED)
-                        .ifPresent(snapshot -> enqueue(follow.conversationId(), snapshot, false));
+                        .ifPresent(snapshot -> enqueue(follow.conversationId(), snapshot, follow.context(), false));
             }
             catch (RuntimeException failure) {
                 log.warn("Could not follow assistant task {}", follow.taskId(), failure);
@@ -180,8 +202,8 @@ class AssistantFollowing
             if (follows.follow(conversationId, task.id().toString()).isEmpty()) {
                 follows.save(new AssistantFollow(conversationId, task.id().toString(), clock.instant(), 0, clip(question, 4000)));
             }
-            current(task.id().toString()).ifPresent(snapshot -> enqueue(conversationId, new Snapshot(snapshot.taskId(), snapshot.fingerprint(), snapshot.line(),
-                    snapshot.report(), clip(question, 4000), true), true));
+            current(task.id().toString()).ifPresent(snapshot -> enqueue(Optional.of(conversationId), new Snapshot(snapshot.taskId(), snapshot.fingerprint(), snapshot.line(),
+                    snapshot.report(), true), clip(question, 4000), true));
         });
         dispatch(publish);
     }
@@ -206,7 +228,7 @@ class AssistantFollowing
             AssistantReport report = new AssistantReport(AssistantReport.State.PROGRESS, "approval:" + resolved.approvalId(), target(task),
                     event.turnId().map(Object::toString), Optional.empty(), ImmutableList.of("task:" + task.id()), rules,
                     Optional.of(answered ? "ANSWERED" : resolved.outcome().name()));
-            enqueue(follow.conversationId(), new Snapshot(task.id().toString(), "event:" + resolved.approvalId(), line, report, "", false), false);
+            enqueue(follow.conversationId(), new Snapshot(task.id().toString(), "event:" + resolved.approvalId(), line, report, false), follow.context(), false);
         }
         if (!events.isEmpty()) {
             follows.save(follow.readThrough(events.getLast().sequence()));
@@ -234,6 +256,18 @@ class AssistantFollowing
             state = AssistantReport.State.ATTENTION;
             line = notice.orElseThrow().summaryLine();
             noticeId = notice.orElseThrow().id();
+        }
+        else if (notice.filter(found -> found.reviewId().isPresent() && found.ruleRun().isPresent()).isPresent()) {
+            AppNotice found = notice.orElseThrow();
+            state = switch (found.kind()) {
+                case TURN_FINISHED -> AssistantReport.State.RESULT_READY;
+                case APPROVAL -> AssistantReport.State.APPROVAL_REQUIRED;
+                case QUESTION -> AssistantReport.State.ANSWER_REQUIRED;
+                case NEXT_WORK -> AssistantReport.State.PROPOSAL;
+                case FAILURE, RECOVERY, STUCK, QUEUE_PAUSED, CI_ATTENTION -> AssistantReport.State.ATTENTION;
+            };
+            line = found.summaryLine();
+            noticeId = found.id();
         }
         else if (work.filter(item -> item.state() == WorkItem.State.DONE).isPresent()) {
             state = AssistantReport.State.COMPLETED;
@@ -274,9 +308,15 @@ class AssistantFollowing
         List<AssistantRuleAction> ruleActions = notice.flatMap(AppNotice::ruleRun).stream().flatMap(run -> run.authorization().stream()
                 .map(rule -> new AssistantRuleAction(rule.ruleId(), rule.ruleName(), rule.ruleVersion(), run.outcome().orElse("STARTED"),
                         run.skipped().orElse("Started work for " + run.subject())))).collect(toImmutableList());
-        AssistantReport report = new AssistantReport(state, noticeId, target(task), turn.map(value -> value.id().toString()), Optional.empty(),
-                ImmutableList.of("task:" + task.id()), ruleActions, Optional.empty());
-        return Optional.of(new Snapshot(task.id().toString(), fingerprint, line, report, "", interpret));
+        Optional<ReviewRun> review = notice.filter(found -> found.reviewId().isPresent() && found.ruleRun().isPresent() && interpret)
+                .flatMap(found -> latestReview(found.reviewId().orElseThrow())).filter(run -> run.state() == ReviewRun.State.ACCEPTED);
+        if (review.isPresent()) {
+            fingerprint = noticeId + ":" + line + ":" + notice.orElseThrow().ruleRun().orElseThrow().authorization();
+        }
+        List<String> evidence = review.map(run -> ImmutableList.of("task:" + task.id(), "review-run:" + run.id())).orElse(ImmutableList.of("task:" + task.id()));
+        AssistantReport report = new AssistantReport(state, noticeId, target(task), review.flatMap(run -> run.turnIds().stream().reduce((first, last) -> last))
+                .or(() -> turn.map(value -> value.id().toString())), Optional.empty(), evidence, ruleActions, Optional.empty());
+        return Optional.of(new Snapshot(task.id().toString(), fingerprint, line, report, interpret));
     }
 
     private static AgendaTarget target(AgentTask task)
@@ -284,19 +324,17 @@ class AssistantFollowing
         return AgendaTarget.of(AgendaTarget.Kind.TASK, task.workspaceId().orElseThrow(), task.id().toString());
     }
 
-    private synchronized void enqueue(String conversationId, Snapshot snapshot, boolean requested)
+    private synchronized void enqueue(Optional<String> conversationId, Snapshot snapshot, String context, boolean requested)
     {
-        String key = conversationId + ":" + snapshot.taskId() + ":" + snapshot.fingerprint() + ":" + requested + (requested ? ":" + snapshot.context() : "");
+        String key = conversationId.orElse("inbox") + ":" + snapshot.taskId() + ":" + snapshot.fingerprint() + ":" + requested + (requested ? ":" + context : "");
         String id = UUID.nameUUIDFromBytes(key.getBytes(UTF_8)).toString();
-        if (follows.assessment(id).isPresent()) {
+        if (follows.assessment(id).filter(job -> job.state() != AssistantAssessment.State.SUPERSEDED).isPresent()) {
             return;
         }
-        AssistantItem item = new AssistantItem(id, conversationId, clock.instant(), AssistantItem.Kind.REPORT, snapshot.line(), ImmutableList.of(), Optional.empty(),
-                Optional.empty(), ImmutableMap.of(), false, Optional.empty(), Optional.empty(), Optional.empty(), Optional.of(snapshot.report()));
-        String context = snapshot.context().isBlank() ? follows.follow(conversationId, snapshot.taskId()).map(AssistantFollow::context).orElse("") : snapshot.context();
-        follows.save(new AssistantAssessment(id, conversationId, snapshot.taskId(), snapshot.fingerprint(), item, context, snapshot.interpret(), requested,
-                snapshot.fingerprint().startsWith("event:") && !snapshot.report().ruleActions().isEmpty()
-                        && snapshot.report().outcome().filter("ALLOWED"::equals).isPresent() ? AssistantAssessment.State.QUIET : AssistantAssessment.State.QUEUED));
+        boolean quietReceipt = snapshot.fingerprint().startsWith("event:") && (conversationId.isEmpty()
+                || !snapshot.report().ruleActions().isEmpty() && snapshot.report().outcome().filter("ALLOWED"::equals).isPresent());
+        follows.save(new AssistantAssessment(id, conversationId, snapshot.taskId(), snapshot.fingerprint(), clock.instant(), snapshot.line(), snapshot.report(), context,
+                snapshot.interpret(), requested, quietReceipt ? AssistantAssessment.State.QUIET : AssistantAssessment.State.QUEUED));
     }
 
     private void dispatch(Consumer<AssistantItem> publish)
@@ -347,13 +385,31 @@ class AssistantFollowing
 
     private Optional<Interpretation> assess(AssistantAssessment job)
     {
-        AgentModelSetting model = setup.requireUsableDevelopmentAgent();
-        String evidence = evidence(TaskId.valueOf(job.taskId()));
-        AgentTurnResult result = OneShotSession.run(resources, drivers.require(new AgentLaneId(model.configId())), (id, scratch) -> new AgentSessionContext(
+        Optional<ReviewRun> review = reviewResult(job);
+        AgentLaneId lane;
+        Optional<String> model;
+        Optional<String> effort;
+        if (review.isPresent()) {
+            AgentTask task = tasks.find(TaskId.valueOf(job.taskId())).orElseThrow();
+            Optional<AgentTurnSettings> settings = job.report().sourceTurnId().map(TurnId::valueOf).flatMap(turns::find).flatMap(AgentTurn::settings);
+            lane = settings.flatMap(AgentTurnSettings::laneId).orElse(task.laneId());
+            model = settings.map(AgentTurnSettings::model).orElseGet(() -> task.defaults().model());
+            effort = settings.map(AgentTurnSettings::effort).orElseGet(() -> task.defaults().effort());
+            // Private repository evidence must stay with the review's account, including after repository defaults change.
+            drivers.checkWorkspaceAccess(lane, task.workspaceId());
+        }
+        else {
+            AgentModelSetting selected = setup.requireUsableDevelopmentAgent();
+            lane = new AgentLaneId(selected.configId());
+            model = Optional.of(selected.model());
+            effort = selected.effort();
+        }
+        String evidence = review.map(this::reviewEvidence).orElseGet(() -> evidence(TaskId.valueOf(job.taskId())));
+        AgentTurnResult result = OneShotSession.run(resources, drivers.require(lane), (id, scratch) -> new AgentSessionContext(
                         id.toString(), OneShotSession.scratchWorktree(scratch, "assessment"), scratch.runtimeDirectory(), scratch.providerDirectory(), AgentPermissionPolicy.AUTO,
-                        Optional.empty(), (request, timeout) -> CompletableFuture.completedFuture(ProviderApprovalDecision.deny()), Optional.of(model.model()), model.effort(),
+                        Optional.empty(), (request, timeout) -> CompletableFuture.completedFuture(ProviderApprovalDecision.deny()), model, effort,
                         SessionAccess.TEXT_ONLY, Optional.empty(), INSTRUCTIONS, Optional.empty(), ImmutableList.of()),
-                "User request: " + clip(job.context(), 4000) + "\nApp facts: " + job.item().text() + "\nCard state: " + job.item().report().orElseThrow().state()
+                "User request or activated rule: " + clip(job.context(), 4000) + "\nApp facts: " + job.sourceLine() + "\nCard state: " + job.report().state()
                         + "\nRule actions already recorded (bounded): " + clip(resultReport(job).ruleActions().toString(), 8000)
                         + "\nRetained evidence (bounded, not a complete transcript):\n" + evidence,
                 Duration.ofMinutes(2), _ -> {}).result();
@@ -368,6 +424,45 @@ class AssistantFollowing
         catch (JsonProcessingException invalid) {
             return Optional.empty();
         }
+    }
+
+    private Optional<ReviewRun> latestReview(String reviewId)
+    {
+        return reviews.listRuns(reviewId).stream().filter(run -> !run.explanationOnly()).reduce((first, last) -> last);
+    }
+
+    private Optional<ReviewRun> reviewResult(AssistantAssessment job)
+    {
+        return job.report().evidence().stream().filter(ref -> ref.startsWith("review-run:")).findFirst()
+                .map(ref -> reviews.findRun(ref.substring("review-run:".length())).filter(run -> run.state() == ReviewRun.State.ACCEPTED).orElseThrow());
+    }
+
+    /** Accepted review records outlive task logs; incremental findings can have been created in an earlier run. */
+    private String reviewEvidence(ReviewRun run)
+    {
+        StringBuilder text = new StringBuilder("Accepted private review at " + run.headSha() + " (" + run.scope() + ").\n");
+        run.summary().ifPresent(summary -> {
+            text.append("Purpose: ").append(clip(summary.purpose(), 1500)).append("\nResult: ").append(clip(summary.combinedResult(), 3500)).append('\n');
+            summary.evidence().ifPresent(evidence -> text.append("Verification reported: ").append(clip(evidence, 1500)).append('\n'));
+        });
+        run.latestSealedInvestigation().flatMap(step -> step.investigation())
+                .ifPresent(investigation -> text.append("Changes investigated: ").append(clip(investigation.changeMap(), 5000)).append('\n'));
+        run.coverage().ifPresent(coverage -> text.append("Coverage complete: ").append(coverage.complete())
+                .append("\nOmissions: ").append(clip(coverage.omissions().toString(), 1500))
+                .append("\nVerification warnings: ").append(clip(coverage.warnings().toString(), 1500)).append('\n'));
+        List<ReviewFinding> findings = reviews.listFindings(run.reviewId()).stream()
+                .filter(finding -> !finding.outdated() && finding.validatedHeadSha().equals(run.sourceRevision())).collect(toImmutableList());
+        text.append("Current findings: ").append(findings.size()).append(". Findings marked RESOLVED or WITHDRAWN do not need review.\n");
+        for (ReviewFinding finding : findings) {
+            String line = finding.label() + " [" + finding.state() + "; " + finding.severity().orElse("unrated") + "] "
+                    + clip(finding.title(), 200) + ": " + clip(finding.body(), 800) + "\n";
+            if (text.length() + line.length() > EVIDENCE_CHARACTERS) {
+                text.append("Further findings omitted from this bounded assessment; read the full review.\n");
+                break;
+            }
+            text.append(line);
+        }
+        return text.toString();
     }
 
     /** Read only selected normalized evidence; raw tool output and blobs are not copied into another durable transcript. */
@@ -404,7 +499,8 @@ class AssistantFollowing
 
     private boolean fresh(AssistantAssessment job)
     {
-        return conversations.find(job.conversationId()).isPresent() && (job.fingerprint().startsWith("event:")
+        boolean destinationExists = job.conversationId().isPresent() ? job.conversationId().flatMap(conversations::find).isPresent() : follows.follow(job.taskId()).isPresent();
+        return destinationExists && (job.fingerprint().startsWith("event:")
                 || current(job.taskId()).filter(snapshot -> snapshot.fingerprint().equals(job.fingerprint())).isPresent());
     }
 
@@ -418,31 +514,31 @@ class AssistantFollowing
             return;
         }
         if (!job.requested() && assessment.filter(answer -> !answer.notifyUser()).isPresent()) {
-            follows.save(job.ended(AssistantAssessment.State.QUIET));
+            follows.save(job.assessed(resultReport(job).assessed(assessment.orElseThrow().summary()), AssistantAssessment.State.QUIET));
             closeFollowIfEnded(job);
             return;
         }
-        AssistantItem original = job.item();
         AssistantReport report = resultReport(job);
         if (assessment.isPresent()) {
             report = report.assessed(assessment.orElseThrow().summary());
         }
-        AssistantItem item = new AssistantItem(original.id(), original.conversationId(), original.at(), original.kind(), original.text(), original.visible(),
-                original.onScreen(), original.key(), original.targets(), original.notReady(), original.receipt(), original.list(), original.draft(), Optional.of(report));
-        publish.accept(item);
-        follows.save(job.published(item));
+        AssistantAssessment completed = job.assessed(report, AssistantAssessment.State.PUBLISHED);
+        if (completed.conversationId().isPresent()) {
+            publish.accept(completed.item());
+        }
+        follows.save(completed);
         closeFollowIfEnded(job);
     }
 
     private AssistantReport resultReport(AssistantAssessment job)
     {
-        AssistantReport report = job.item().report().orElseThrow();
+        AssistantReport report = job.report();
         if (report.state() != AssistantReport.State.RESULT_READY && report.state() != AssistantReport.State.COMPLETED) {
             return report;
         }
         Map<String, AssistantRuleAction> receipts = new LinkedHashMap<>();
         for (AssistantAssessment receipt : follows.ruleReceipts(job.conversationId(), job.taskId())) {
-            receipt.item().report().orElseThrow().ruleActions().forEach(action -> receipts.putIfAbsent(receipt.item().report().orElseThrow().noticeId(), action));
+            receipt.report().ruleActions().forEach(action -> receipts.putIfAbsent(receipt.report().noticeId(), action));
         }
         return new AssistantReport(report.state(), report.noticeId(), report.target(), report.sourceTurnId(), report.assessment(), report.evidence(),
                 ImmutableList.<AssistantRuleAction>builder().addAll(report.ruleActions()).addAll(receipts.values()).build(), report.outcome());
@@ -450,18 +546,22 @@ class AssistantFollowing
 
     private void closeFollowIfEnded(AssistantAssessment job)
     {
-        AssistantReport.State state = job.item().report().orElseThrow().state();
+        AssistantReport.State state = job.report().state();
+        if (job.conversationId().isEmpty()) {
+            // The open review keeps its rule provenance and follows later accepted runs, even after rule-history retention.
+            return;
+        }
         if (state != AssistantReport.State.RESULT_READY && state != AssistantReport.State.COMPLETED) {
             return;
         }
         Optional<WorkItem> work = workItems.findByIdentity(WorkItemLink.taskIdentity(job.taskId()));
         if (work.filter(item -> item.state() == WorkItem.State.DONE).isPresent()
                 || work.isEmpty() && tasks.find(TaskId.valueOf(job.taskId())).filter(task -> task.state().terminal()).isPresent()) {
-            follows.remove(job.conversationId(), job.taskId());
+            follows.remove(job.conversationId().orElseThrow(), job.taskId());
         }
     }
 
     private record Interpretation(String summary, Boolean notifyUser) {}
 
-    private record Snapshot(String taskId, String fingerprint, String line, AssistantReport report, String context, boolean interpret) {}
+    private record Snapshot(String taskId, String fingerprint, String line, AssistantReport report, boolean interpret) {}
 }

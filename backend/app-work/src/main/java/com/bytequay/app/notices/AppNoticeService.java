@@ -39,6 +39,7 @@ import com.bytequay.core.ci.CiAutofixRun;
 import com.bytequay.core.ci.CiAutofixStore;
 import com.bytequay.core.domain.Artifact;
 import com.bytequay.core.domain.AssistantAssessment;
+import com.bytequay.core.domain.AssistantFollow;
 import com.bytequay.core.domain.PullRequest;
 import com.bytequay.core.domain.PullRequestDetail;
 import com.bytequay.core.domain.RuleRun;
@@ -64,12 +65,15 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 import static com.bytequay.agent.spi.ProviderApprovalRequest.QUESTION_TOOL;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Comparator.comparing;
 import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.joining;
 
 /** Reads local facts without opening transcripts, contacting providers, or changing execution. */
 @Service
@@ -176,9 +180,10 @@ public class AppNoticeService
         Optional<AssistantAssessment> result = follows.result(notice.taskId(), notice.id(), sourceLine);
         if (result.isPresent()) {
             return result.filter(job -> job.state() == AssistantAssessment.State.PUBLISHED)
-                    .map(job -> notice.withMessage(job.item().report().orElseThrow().assessment().orElse(notice.message())));
+                    .map(job -> notice.withMessage(ContextText.excerpt(job.report().assessment().orElse(notice.message()), 1000)));
         }
-        return follows.followsTask(notice.taskId()) ? Optional.empty() : Optional.of(notice);
+        boolean automaticReview = notice.reviewId().isPresent() && notice.ruleRun().flatMap(RuleRun::authorization).isPresent();
+        return follows.followsTask(notice.taskId()) || automaticReview ? Optional.empty() : Optional.of(notice);
     }
 
     private static AppNotice automaticResult(AppNotice notice, RuleRun run)
@@ -200,9 +205,18 @@ public class AppNoticeService
     private Map<String, RuleRun> automaticTasks()
     {
         Map<String, RuleRun> result = new HashMap<>();
+        follows.follows().forEach(follow -> follow.ruleRun().ifPresent(run -> result.put(follow.taskId(), run)));
         automaticRuns().stream().filter(run -> run.authorization().isPresent() && run.work().isPresent())
-                .forEach(run -> ruleWork.resultTask(run).ifPresent(taskId -> result.putIfAbsent(taskId, run)));
+                .forEach(run -> ruleWork.resultTask(run).ifPresent(taskId -> result.merge(taskId, run,
+                        (retained, incoming) -> incoming.occurredAt().isAfter(retained.occurredAt()) ? incoming : retained)));
         return result;
+    }
+
+    /** Retained accepted starts can enroll reviews created before inbox following was available. New starts enroll durably at admission. */
+    public Map<String, RuleRun> ruleReviews()
+    {
+        return automaticTasks().entrySet().stream().filter(entry -> entry.getValue().work().filter(work -> work.startsWith("review:")).isPresent()
+                && entry.getValue().outcome().filter("STARTED"::equals).isPresent()).collect(toImmutableMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
     private List<RuleRun> automaticRuns()
@@ -275,6 +289,8 @@ public class AppNoticeService
         // Unresolved requests must survive even when newer completed tasks fill the recent page.
         tasks.listRecent(200).forEach(task -> candidates.put(task.id(), task));
         tasks.listLive().forEach(task -> candidates.put(task.id(), task));
+        follows.follows().stream().filter(follow -> follow.ruleRun().isPresent()).map(AssistantFollow::taskId)
+                .forEach(id -> tasks.find(TaskId.valueOf(id)).ifPresent(task -> candidates.putIfAbsent(task.id(), task)));
         return notices(candidates);
     }
 
@@ -395,7 +411,34 @@ public class AppNoticeService
         if (!queue.isEmpty() || overview.filter(ReviewRunOverview::active).isPresent()) {
             return Optional.empty();
         }
+        Optional<AssistantFollow> ruleFollow = follows.follow(task.id().toString());
+        if (review.isPresent() && ruleFollow.isPresent()) {
+            return ruleReviewResult(task, latest, review.orElseThrow(), overview, ruleFollow.orElseThrow().ruleRun().orElseThrow());
+        }
         return latest.filter(turn -> turn.state() == TurnState.COMPLETED).map(turn -> finished(task, review, overview, turn));
+    }
+
+    private Optional<AppNotice> ruleReviewResult(AgentTask task, Optional<AgentTurn> latest, AgentReview review, Optional<ReviewRunOverview> overview, RuleRun origin)
+    {
+        Optional<ReviewRun> current = reviews.listRuns(review.id()).stream().filter(run -> !run.explanationOnly()).reduce((first, last) -> last);
+        if (current.isEmpty() || current.orElseThrow().active()) {
+            return Optional.empty();
+        }
+        ReviewRun run = current.orElseThrow();
+        if (run.state() != ReviewRun.State.ACCEPTED) {
+            return Optional.of(notice(task, Optional.of(review), overview, latest, "review-stopped:" + run.id(), AppNotice.Kind.FAILURE,
+                    run.outcome().orElse("The review did not finish; its saved findings remain provisional."), run.endedAt().orElseThrow()));
+        }
+        if (review.observedHeadSha().filter(head -> !head.equals(run.headSha())).isPresent()) {
+            return Optional.empty();
+        }
+        // Stable per accepted report, including carried reviews that created no provider turn. Later discussions are not new review results.
+        String findings = reviews.listFindings(review.id()).stream()
+                .map(finding -> finding.id() + ":" + finding.version() + ":" + finding.state() + ":" + finding.outdated()).sorted().collect(joining(";"));
+        String source = findings + ":" + origin.authorization().orElseThrow() + ":" + origin.key();
+        String id = "review-result:" + run.id() + ":" + run.version() + ":" + UUID.nameUUIDFromBytes(source.getBytes(UTF_8));
+        return Optional.of(notice(task, Optional.of(review), overview, latest, id, AppNotice.Kind.TURN_FINISHED,
+                "The private review is ready. Read the full review for its findings and verification.", run.endedAt().orElseThrow()));
     }
 
     /**

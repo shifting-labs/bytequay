@@ -14,30 +14,49 @@
 package com.bytequay.core.domain;
 
 import java.time.Instant;
+import java.util.Optional;
 
 import static com.bytequay.core.domain.Checks.checkText;
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
-/** A conversation's continuing interest in a task. The event cursor advances only after associated reports are saved. */
-public record AssistantFollow(String conversationId, String taskId, Instant since, long afterSequence, String context)
+/** A chat or activated rule's continuing interest in a task. The cursor advances only after associated reports are saved. */
+public record AssistantFollow(Optional<String> conversationId, String taskId, Instant since, long afterSequence, String context, Optional<RuleRun> ruleRun)
 {
     public AssistantFollow
     {
-        checkArgument(AssistantConversation.isId(conversationId), "conversationId is invalid");
+        requireNonNull(conversationId, "conversationId is null");
+        conversationId.ifPresent(id -> checkArgument(AssistantConversation.isId(id), "conversationId is invalid"));
+        requireNonNull(ruleRun, "ruleRun is null");
+        checkArgument(conversationId.isPresent() != ruleRun.isPresent(), "follow requires one source");
+        ruleRun.ifPresent(run -> {
+            checkArgument(run.authorization().isPresent(), "rule follow requires authorization");
+            checkArgument(run.work().filter(work -> work.startsWith("review:") && !work.substring("review:".length()).isBlank()).isPresent(),
+                    "rule follow requires a private review");
+        });
         checkText(taskId, "taskId");
         requireNonNull(context, "context is null");
         requireNonNull(since, "since is null");
         checkArgument(afterSequence >= 0, "afterSequence is negative");
     }
 
+    public AssistantFollow(String conversationId, String taskId, Instant since, long afterSequence, String context)
+    {
+        this(Optional.of(conversationId), taskId, since, afterSequence, context, Optional.empty());
+    }
+
+    public static AssistantFollow ruleReview(String taskId, Instant since, String context, RuleRun run)
+    {
+        return new AssistantFollow(Optional.empty(), taskId, since, 0, context, Optional.of(run));
+    }
+
     public String id()
     {
-        return conversationId + ":" + taskId;
+        return conversationId.map(id -> id + ":" + taskId).orElse("rule:" + taskId);
     }
 
     public AssistantFollow readThrough(long sequence)
     {
-        return new AssistantFollow(conversationId, taskId, since, Math.max(afterSequence, sequence), context);
+        return new AssistantFollow(conversationId, taskId, since, Math.max(afterSequence, sequence), context, ruleRun);
     }
 }

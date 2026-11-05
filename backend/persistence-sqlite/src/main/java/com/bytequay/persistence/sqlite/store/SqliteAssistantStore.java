@@ -108,7 +108,8 @@ public class SqliteAssistantStore
                     AssistantFollow follow = new AssistantFollow(item.conversationId(), task, item.at(), 0, item.receipt().flatMap(AssistantReceipt::words).orElse(item.text()));
                     AssistantFollowEntity saved = follows.findById(follow.id()).orElseGet(() -> new AssistantFollowEntity(follow));
                     AssistantFollow previous = saved.toDomain();
-                    saved.update(new AssistantFollow(previous.conversationId(), previous.taskId(), previous.since(), previous.afterSequence(), follow.context()));
+                    saved.update(new AssistantFollow(previous.conversationId(), previous.taskId(), previous.since(), previous.afterSequence(),
+                            follow.context(), previous.ruleRun()));
                     follows.save(saved);
                 });
     }
@@ -131,7 +132,7 @@ public class SqliteAssistantStore
     @Transactional
     public void deleteBefore(Instant updatedBefore, LocalDate actionsBefore)
     {
-        List<String> retained = follows.findAll().stream().map(entity -> entity.toDomain().conversationId()).collect(toImmutableList());
+        List<String> retained = follows.findAll().stream().flatMap(entity -> entity.toDomain().conversationId().stream()).collect(toImmutableList());
         List<AssistantConversationEntity> old = conversations.findByUpdatedAtBefore(updatedBefore).stream()
                 .filter(conversation -> !retained.contains(conversation.getId())).collect(toImmutableList());
         items.deleteByConversationIdIn(old.stream().map(AssistantConversationEntity::getId).collect(toImmutableList()));

@@ -16,7 +16,7 @@ import { testBrowserScenarios } from '../fixtures/browserScenarios';
 testBrowserScenarios([
   {
     name: "answers a rule's move-up card and its finished work from the Assistant in Chromium",
-    expected: 3, timeout: 30_000,
+    expected: 4, timeout: 30_000,
     fixture: { prefix: 'bytequay-rule-cards-', entry: 'src/assistant/fixtures/ruleCardsBrowser.tsx', global: 'RuleCardsTests' },
   },
 ]);

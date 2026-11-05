@@ -36,13 +36,14 @@ const RESULT: AppNotice = {
 function render(notice: AppNotice, result = false) {
   const { host, root, dispose } = createFixtureRoot();
   let opened = 0;
+  let reviewed = 0;
   let cleared = 0;
   flushSync(() => root.render(result
     ? <ResultCard notice={notice} onShow={target => { assert(target.kind === 'PULL' && target.number === 4530, 'Open resolves the pull request rather than a synthetic task'); opened++; }}
-      onOpen={() => { throw new Error('A rule without a task must not open a task'); }} onClear={() => { cleared++; }} />
+      onOpen={() => { assert(notice.reviewId !== null, 'A rule without a review must open the pull request'); reviewed++; }} onClear={() => { cleared++; }} />
     : <NoticeCard notice={notice} focused={false} onOpen={() => { opened++; }} onClear={() => { cleared++; }} />));
   // Read through functions: an assertion on a plain field would narrow it to the count it checked.
-  return { host, opened: () => opened, cleared: () => cleared, dispose };
+  return { host, opened: () => opened, reviewed: () => reviewed, cleared: () => cleared, dispose };
 }
 
 export async function run(): Promise<{ name: string; error?: string }[]> {
@@ -99,6 +100,27 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
       const uncertain = render({ ...notice, kind: 'FAILURE', ruleRun: { ...run, outcome: 'UNKNOWN' } }, true);
       try { assert(uncertain.host.querySelector('[data-state="ATTENTION"]') !== null, 'Unknown remote outcomes need attention, never a retry or completion claim'); }
       finally { uncertain.dispose(); }
+    }],
+    ['shows the Assistant assessment inline and opens the full private review', async () => {
+      const summary = 'The cache now reuses block reads. One correctness risk needs your review: invalidation can leave stale data after a write.';
+      const notice: AppNotice = { ...RESULT, id: 'finished:turn-1', kind: 'TURN_FINISHED', message: summary,
+        ruleRun: { subject: 'acme/warehouse#4530', title: 'Cache block reads', occurredAt: RESULT.occurredAt,
+          verdict: 'PENDING', suggestion: false, skipped: null, outcome: 'RESULT_READY',
+          authorization: { ruleId: RULE, ruleName: 'Review changes to my lines', ruleVersion: 3 } } };
+      const card = render(notice, true);
+      try {
+        assert(card.host.querySelector('[data-state="RESULT_READY"]') !== null, 'A completed review is a result to inspect, not completed work');
+        assert(card.host.querySelector('.assistant-card__assessment')?.textContent === summary, 'The Assistant summary is readable without opening the full review');
+        assert(card.host.textContent?.includes('under Review changes to my lines') && card.host.textContent.includes('rule revision 3'), 'The card retains the rule and revision that started the review');
+        assert(!card.host.textContent?.includes('The latest response is ready to read.'), 'The generic ready message does not replace the assessment');
+        button('Read full review', card.host).click();
+        await settle();
+        assert(card.reviewed() === 1 && card.opened() === 0 && card.cleared() === 0, 'Read full review opens the linked private review without clearing it or opening the PR');
+        button('Clear result', card.host).click();
+        await settle();
+        assert(card.cleared() === 1, 'The result can still be cleared');
+      }
+      finally { card.dispose(); }
     }],
     ["opens a rule's finished work, or dismisses it as the run it came from", async () => {
       const card = render(RESULT);

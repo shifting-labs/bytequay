@@ -252,6 +252,14 @@ it does not mean the work is completed. **Evidence** and rule receipts expand
 to show the supporting records. Type **@rules** on its own, or choose **Rules**
 in the composer, to inspect and activate your rules.
 
+When an active rule finishes a private PR review, the Assistant reads its saved
+findings in the background and decides whether the result is useful to show.
+The **Result ready** card includes a short summary, the rule that started it,
+and **Read full review**. Results with no useful change can stay quiet; the full
+review remains available from the PR. Approval requests, questions, and failures
+appear immediately. If the Assistant is disabled or cannot assess the result,
+the card still links to the full review.
+
 **⇧⌘J** opens the task that has waited longest on your decision, and the Dock
 counts what Decision counts. Task alerts also show as macOS notifications. An
 approval or question waits five minutes for your answer: its card shows the

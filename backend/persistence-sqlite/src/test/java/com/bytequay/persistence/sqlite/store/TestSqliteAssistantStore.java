@@ -24,6 +24,9 @@ import com.bytequay.core.domain.AssistantItem;
 import com.bytequay.core.domain.AssistantList;
 import com.bytequay.core.domain.AssistantReceipt;
 import com.bytequay.core.domain.AssistantReport;
+import com.bytequay.core.domain.AssistantRuleAction;
+import com.bytequay.core.domain.RuleAuthorization;
+import com.bytequay.core.domain.RuleRun;
 import com.bytequay.core.domain.ServedRef;
 import com.bytequay.persistence.sqlite.converter.JsonColumns;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -39,9 +42,11 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class TestSqliteAssistantStore
         extends AbstractTestTransactionalSqliteStore
@@ -249,5 +254,131 @@ class TestSqliteAssistantStore
         entities.clear();
         assertThat(follows.queued()).isEmpty();
         assertThat(follows.assessment(job.id())).contains(job.ended(AssistantAssessment.State.PUBLISHED));
+    }
+
+    @Test
+    void readsRetainedChatFollowsAndJobsWithoutLosingTheirPublicationIdentity()
+    {
+        AssistantFollow follow = new AssistantFollow(CONVERSATION, "task-1", AT, 321, "Follow this work");
+        AssistantItem item = AssistantItem.report(CONVERSATION, AT, "Result ready",
+                new AssistantReport(AssistantReport.State.RESULT_READY, "finished:turn-1", AgendaTarget.of(AgendaTarget.Kind.TASK, "workspace", "task-1")));
+        AssistantAssessment job = new AssistantAssessment(item.id(), CONVERSATION, "task-1", "source-version", item, "Follow this work", true, false,
+                AssistantAssessment.State.QUEUED);
+        follows.save(follow);
+        follows.save(job);
+        entities.flush();
+        ObjectNode oldFollow = JsonColumns.mapper().valueToTree(follow);
+        oldFollow.remove("ruleRun");
+        ObjectNode oldJob = JsonColumns.mapper().valueToTree(job);
+        oldJob.remove(ImmutableList.of("at", "sourceLine", "report"));
+        oldJob.set("item", JsonColumns.mapper().valueToTree(item));
+        entities.createNativeQuery("update assistant_follow set value = ? where id = ?").setParameter(1, oldFollow.toString()).setParameter(2, follow.id()).executeUpdate();
+        entities.createNativeQuery("update assistant_assessment set value = ? where id = ?").setParameter(1, oldJob.toString()).setParameter(2, job.id()).executeUpdate();
+        entities.clear();
+
+        assertThat(follows.follow(CONVERSATION, "task-1")).contains(follow);
+        assertThat(follows.queued()).containsExactly(job);
+        assertThat(follows.assessment(job.id()).orElseThrow().item()).isEqualTo(item);
+        AssistantAssessment assessed = job.assessed(job.report().assessed("The result needs your review."), AssistantAssessment.State.PUBLISHED);
+        follows.save(assessed);
+        entities.flush();
+        entities.clear();
+
+        assertThat(follows.result("task-1", "finished:turn-1", "Result ready")).contains(assessed);
+        assertThat(entities.createNativeQuery("select value from assistant_assessment where id = ?").setParameter(1, job.id()).getSingleResult().toString())
+                .contains("\"sourceLine\":\"Result ready\"").doesNotContain("\"item\":");
+    }
+
+    @Test
+    void ruleResultsSurviveReloadAndChatRetentionWithoutCreatingAConversation()
+    {
+        AssistantFollow follow = AssistantFollow.ruleReview("task-1", AT, "Tell me about meaningful review findings", reviewRun("head-1", AT)).readThrough(321);
+        follows.save(follow);
+        AssistantReport report = new AssistantReport(AssistantReport.State.RESULT_READY, "review-result:run-1",
+                AgendaTarget.of(AgendaTarget.Kind.REVIEW, "workspace", "review-1"));
+        AssistantAssessment job = new AssistantAssessment("result-1", Optional.empty(), "task-1", "run-1", AT, "Review ready", report, follow.context(), true, false,
+                AssistantAssessment.State.QUEUED);
+        follows.save(job);
+        store.save(AssistantConversation.start(CONVERSATION, "Old chat", AT));
+        entities.flush();
+        entities.clear();
+
+        assertThat(follows.follow("task-1")).contains(follow);
+        assertThat(follows.followsTask("task-1")).isTrue();
+        assertThat(follows.queued()).containsExactly(job);
+        assertThatThrownBy(job::item).isInstanceOf(NoSuchElementException.class);
+
+        AssistantAssessment assessed = job.assessed(report.assessed("One new risk needs your review."), AssistantAssessment.State.PUBLISHED);
+        follows.save(assessed);
+        follows.remove(follow);
+        store.deleteBefore(AT.plus(Duration.ofDays(40)), LocalDate.ofInstant(AT, ZoneId.of("UTC")).plusDays(40));
+        entities.flush();
+        entities.clear();
+
+        assertThat(store.conversations(10)).isEmpty();
+        assertThat(follows.follow("task-1")).isEmpty();
+        assertThat(follows.queued()).isEmpty();
+        assertThat(follows.result("task-1", "review-result:run-1", "Review ready")).contains(assessed);
+        assertThat(follows.assessment(job.id())).contains(assessed);
+    }
+
+    @Test
+    void aNewRuleInvocationUpdatesItsScopeWithoutResettingTheCursor()
+    {
+        AssistantFollow first = AssistantFollow.ruleReview("task-1", AT, "First request", reviewRun("head-1", AT)).readThrough(100);
+        AssistantFollow chat = new AssistantFollow(CONVERSATION, "task-1", AT, 5, "User's own request");
+        follows.save(first);
+        follows.save(chat);
+        AssistantFollow newer = AssistantFollow.ruleReview("task-1", AT.plusSeconds(60), "New request", reviewRun("head-2", AT.plusSeconds(60)));
+        follows.save(newer);
+        follows.save(first.readThrough(120));
+        entities.flush();
+        entities.clear();
+
+        assertThat(follows.follow("task-1")).contains(new AssistantFollow(Optional.empty(), "task-1", AT, 120, "New request", newer.ruleRun()));
+        assertThat(follows.follow(CONVERSATION, "task-1")).contains(chat);
+        follows.remove(chat);
+        assertThat(follows.followsTask("task-1")).isTrue();
+        assertThat(follows.follow(CONVERSATION, "task-1")).isEmpty();
+    }
+
+    @Test
+    void advancingAChatCursorPreservesTheLatestUserRequest()
+    {
+        AssistantFollow old = new AssistantFollow(CONVERSATION, "task-1", AT, 80, "First request");
+        follows.save(old);
+        store.add(AssistantItem.receipt(CONVERSATION, AT.plusSeconds(1), "Sent your reply",
+                AssistantReceipt.done(AssistantReceipt.Operation.REPLY_TO_TASK, Optional.of(AgendaTarget.of(AgendaTarget.Kind.TASK, "workspace", "task-1")))
+                        .withWords("Check the revised implementation")));
+        follows.save(old.readThrough(100));
+        entities.flush();
+        entities.clear();
+
+        assertThat(follows.follow(CONVERSATION, "task-1")).contains(new AssistantFollow(CONVERSATION, "task-1", AT, 100, "Check the revised implementation"));
+    }
+
+    @Test
+    void inboxPermissionReceiptsAreQueriedWithoutAChatIdentity()
+    {
+        AssistantReport report = new AssistantReport(AssistantReport.State.PROGRESS, "approval:1", AgendaTarget.of(AgendaTarget.Kind.TASK, "workspace", "task-1"),
+                Optional.empty(), Optional.empty(), ImmutableList.of(), ImmutableList.of(new AssistantRuleAction("permission-rule", "Read GitHub", 2, "ALLOW", "Read PR")),
+                Optional.empty());
+        AssistantAssessment inbox = new AssistantAssessment("receipt-1", Optional.empty(), "task-1", "event:5", AT, "Approved by rule", report, "", false, false,
+                AssistantAssessment.State.QUIET);
+        AssistantAssessment chat = new AssistantAssessment("receipt-2", Optional.of(CONVERSATION), "task-1", "event:5", AT, "Approved by rule", report, "", false, false,
+                AssistantAssessment.State.QUIET);
+        follows.save(inbox);
+        follows.save(chat);
+        entities.flush();
+        entities.clear();
+
+        assertThat(follows.ruleReceipts(Optional.empty(), "task-1")).containsExactly(inbox);
+        assertThat(follows.ruleReceipts(Optional.of(CONVERSATION), "task-1")).containsExactly(chat);
+    }
+
+    private static RuleRun reviewRun(String head, Instant at)
+    {
+        return RuleRun.automatic(new RuleAuthorization("review-rule", "Review my lines", 1), "pr:1:updated:" + head, "owner/repository#42", "Update query planning", at)
+                .started("review:review-1").finished("STARTED");
     }
 }

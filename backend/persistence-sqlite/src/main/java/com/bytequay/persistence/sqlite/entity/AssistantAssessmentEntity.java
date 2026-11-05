@@ -64,9 +64,10 @@ public class AssistantAssessmentEntity
     public void update(AssistantAssessment record)
     {
         state = record.state().name();
-        conversationId = record.conversationId();
+        // This retained index column is non-null in existing databases; inbox assessments have no domain chat identity.
+        conversationId = record.conversationId().orElse("");
         taskId = record.taskId();
-        noticeId = record.item().report().orElseThrow().noticeId();
+        noticeId = record.report().noticeId();
         ruleReceipt = record.ruleReceipt();
         value = record;
     }

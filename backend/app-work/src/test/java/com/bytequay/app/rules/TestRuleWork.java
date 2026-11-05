@@ -34,6 +34,7 @@ import com.bytequay.app.service.rules.AgentRuleView;
 import com.bytequay.app.service.rules.InMemoryRuleRunStore;
 import com.bytequay.app.service.rules.RuleText;
 import com.bytequay.app.workspace.TaskPullRequestOwnership;
+import com.bytequay.core.domain.AssistantFollow;
 import com.bytequay.core.domain.DiffFile;
 import com.bytequay.core.domain.PullRequest;
 import com.bytequay.core.domain.PullRequestDetail;
@@ -45,6 +46,7 @@ import com.bytequay.core.hosting.HostingServer;
 import com.bytequay.core.merge.AutoMerge;
 import com.bytequay.core.review.AgentReview;
 import com.bytequay.core.review.AgentReviewStore;
+import com.bytequay.core.store.AssistantFollowStore;
 import com.bytequay.core.store.PullRequestStore;
 import com.bytequay.core.store.WorkspaceStore;
 import com.google.common.collect.ImmutableList;
@@ -78,6 +80,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -118,6 +121,7 @@ class TestRuleWork
     private final AgentRuleService rules = mock(AgentRuleService.class);
     private final AutoMergeService merges = mock(AutoMergeService.class);
     private final RuleLineOwnership lineOwnership = mock(RuleLineOwnership.class);
+    private final AssistantFollowStore follows = mock(AssistantFollowStore.class);
     private final RuleWork work = work(MoreExecutors.newDirectExecutorService());
     private final RuleRun run = RuleRun.suggested("rule-1", "pr:21:requested:0", "acme/warehouse#21", "Fix the importer", AT).started("review:review-21");
 
@@ -133,6 +137,45 @@ class TestRuleWork
         work.start(view("rule-1", REVIEW_RULE), automatic);
         assertThat(runs.findByRule("rule-1")).singleElement().extracting(RuleRun::outcome).isEqualTo(Optional.of("CANCELLED"));
         verify(reviewer, never()).startIfAbsent(anyString(), anyString(), anyInt(), anyString(), any());
+        verifyNoInteractions(follows);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void onlyAcceptedAutomaticReviewsEnrollForAssistantAssessment(boolean automatic)
+    {
+        RuleRun requested = automatic ? automatic("pr:21:head:head-1") : RuleRun.suggested("rule-1", "pr:21:requested:0", "acme/warehouse#21", "Fix the importer", AT);
+        prepareRepository();
+        AgentReviewProjection projection = projection(false);
+        when(reviewer.startIfAbsent(anyString(), anyString(), anyInt(), anyString(), any())).thenReturn(Optional.of(projection));
+        RuleRun started = requested.started("review:review-21").finished("STARTED");
+        doAnswer(invocation -> {
+            assertThat(runs.findByRule("rule-1")).containsExactly(requested.finished("STARTING"));
+            return null;
+        }).when(follows).save(any(AssistantFollow.class));
+
+        work.start(view("rule-1", REVIEW_RULE), requested);
+
+        assertThat(runs.findByRule("rule-1")).containsExactly(started);
+        if (automatic) {
+            verify(follows).save(AssistantFollow.ruleReview(projection.review().taskId(), AT, "Review it for correctness first.", started));
+        }
+        else {
+            verifyNoInteractions(follows);
+        }
+    }
+
+    @Test
+    void aReviewCancelledAtAdmissionDoesNotEnrollForAssessment()
+    {
+        RuleRun automatic = automatic("pr:21:head:head-1");
+        prepareRepository();
+        when(reviewer.startIfAbsent(anyString(), anyString(), anyInt(), anyString(), any())).thenReturn(Optional.empty());
+
+        work.start(view("rule-1", REVIEW_RULE), automatic);
+
+        assertThat(runs.findByRule("rule-1")).singleElement().extracting(RuleRun::outcome).isEqualTo(Optional.of("CANCELLED"));
+        verifyNoInteractions(follows);
     }
 
     @Test
@@ -152,6 +195,7 @@ class TestRuleWork
         work.start(view("rule-1", REVIEW_RULE), automatic);
         verify(reviewer, times(1)).startIfAbsent(anyString(), anyString(), anyInt(), anyString(), any());
         assertThat(work.starting(automatic)).isFalse();
+        verify(follows, never()).save(any(AssistantFollow.class));
     }
 
     @Test
@@ -177,6 +221,8 @@ class TestRuleWork
         });
         work.start(updated, automatic);
         assertThat(runs.findByRule("rule-1")).contains(automatic.started("review:review-21").finished("STARTED"));
+        verify(follows).save(AssistantFollow.ruleReview(projection.review().taskId(), AT, "Review it for correctness first.",
+                automatic.started("review:review-21").finished("STARTED")));
 
         AgentReviewProjection paused = projection(true);
         when(reviewer.find("ws1", "acme/warehouse", 21)).thenReturn(Optional.of(paused));
@@ -192,6 +238,24 @@ class TestRuleWork
         work.start(view("rule-1", REVIEW_RULE), automatic);
         assertThat(runs.findByRule("rule-1")).containsExactly(automatic.finished("UNKNOWN"));
         verify(reviewer, never()).updateIfUnpaused(anyString(), any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void anEnrolledReviewRecoversItsExactStartReceiptWithoutReplaying(boolean update)
+    {
+        RuleRun requested = automatic("pr:21:head:head-2");
+        RuleRun pending = (update ? requested.started("review:review-21") : requested).finished("STARTING");
+        RuleRun started = requested.started("review:review-21").finished("STARTED");
+        RuleRun otherHead = automatic("pr:21:head:head-1").started("review:review-21").finished("STARTED");
+        runs.save(pending);
+        when(follows.follows()).thenReturn(ImmutableList.of(AssistantFollow.ruleReview("other-task", AT, "Earlier head", otherHead),
+                AssistantFollow.ruleReview("review-task", AT, "Review it for correctness first.", started)));
+
+        work.reconcileInterruptedReview(pending);
+
+        assertThat(runs.findByRule("rule-1")).containsExactly(started);
+        verifyNoInteractions(reviewer);
     }
 
     @Test
@@ -368,7 +432,7 @@ class TestRuleWork
     private RuleWork work(ExecutorService executor)
     {
         return new RuleWork(reviewer, mock(AgentReviewStore.class), reads, pullRequests, workspaces, starter, mock(AgentTaskStore.class),
-                mock(AgentTurnStore.class), mock(TaskPullRequestOwnership.class), runs, executor, rules, merges, lineOwnership);
+                mock(AgentTurnStore.class), mock(TaskPullRequestOwnership.class), runs, executor, rules, merges, lineOwnership, follows);
     }
 
     private RuleRun automatic(String key)

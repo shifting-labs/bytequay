@@ -29,6 +29,7 @@ import com.bytequay.app.service.rules.AgentRuleView;
 import com.bytequay.app.service.rules.RuleDefinition;
 import com.bytequay.app.utils.ContextText;
 import com.bytequay.app.workspace.TaskPullRequestOwnership;
+import com.bytequay.core.domain.AssistantFollow;
 import com.bytequay.core.domain.DiffFile;
 import com.bytequay.core.domain.PullRequest;
 import com.bytequay.core.domain.PullRequestDetail;
@@ -39,6 +40,7 @@ import com.bytequay.core.review.AgentReview;
 import com.bytequay.core.review.AgentReviewStore;
 import com.bytequay.core.review.ReviewFinding;
 import com.bytequay.core.review.ReviewRun;
+import com.bytequay.core.store.AssistantFollowStore;
 import com.bytequay.core.store.PullRequestStore;
 import com.bytequay.core.store.RuleRunStore;
 import com.bytequay.core.store.WorkspaceStore;
@@ -94,12 +96,13 @@ public class RuleWork
     private final AgentRuleService rules;
     private final AutoMergeService merges;
     private final RuleLineOwnership lineOwnership;
+    private final AssistantFollowStore follows;
     // Prevents duplicate dispatch in this process; the durable STARTING receipt prevents replay after an uncertain review start.
     private final Set<String> starting = ConcurrentHashMap.newKeySet();
 
     public RuleWork(AgentReviewService reviewer, AgentReviewStore reviews, PullRequestService reads, PullRequestStore pullRequests, WorkspaceStore workspaces,
             ItemTaskStarter starter, AgentTaskStore tasks, AgentTurnStore turns, TaskPullRequestOwnership ownership, RuleRunStore runs,
-            @Qualifier(IO_EXECUTOR) ExecutorService executor, AgentRuleService rules, AutoMergeService merges, RuleLineOwnership lineOwnership)
+            @Qualifier(IO_EXECUTOR) ExecutorService executor, AgentRuleService rules, AutoMergeService merges, RuleLineOwnership lineOwnership, AssistantFollowStore follows)
     {
         this.reviewer = requireNonNull(reviewer, "reviewer is null");
         this.reviews = requireNonNull(reviews, "reviews is null");
@@ -115,6 +118,7 @@ public class RuleWork
         this.rules = requireNonNull(rules, "rules is null");
         this.merges = requireNonNull(merges, "merges is null");
         this.lineOwnership = requireNonNull(lineOwnership, "lineOwnership is null");
+        this.follows = requireNonNull(follows, "follows is null");
     }
 
     /** Starts the run's work away from the scheduler, since it fetches and checks out; the run then names it, or says why it has none. */
@@ -136,7 +140,7 @@ public class RuleWork
     {
         dispatch(run, () -> {
             RuleRun current = saved(run);
-            return current.outcome().filter("STARTING"::equals).isPresent() ? uncertainReview(current) : current;
+            return current.outcome().filter("STARTING"::equals).isPresent() ? reviewStartResult(current) : current;
         });
     }
 
@@ -187,7 +191,7 @@ public class RuleWork
         if (rule.rule().action() == RuleDefinition.Action.REVIEW) {
             RuleRun saved = saved(run);
             if (saved.outcome().filter("STARTING"::equals).isPresent()) {
-                return uncertainReview(saved);
+                return reviewStartResult(saved);
             }
             if (saved.work().isPresent() || saved.outcome().filter("UNKNOWN"::equals).isPresent()) {
                 return saved;
@@ -211,7 +215,7 @@ public class RuleWork
             }
             RuleRun saved = saved(run);
             if (rule.rule().action() == RuleDefinition.Action.REVIEW && saved.outcome().filter("STARTING"::equals).isPresent()) {
-                return uncertainReview(saved);
+                return reviewStartResult(saved);
             }
             return run.skip(clip("Could not start: " + Optional.ofNullable(failure.getMessage()).orElse(failure.getClass().getSimpleName()))).finished("FAILED");
         }
@@ -232,6 +236,14 @@ public class RuleWork
     {
         return (run.work().isPresent() ? run : run.skip("The review may have started before ByteQuay stopped; inspect the pull request before retrying"))
                 .finished("UNKNOWN");
+    }
+
+    private RuleRun reviewStartResult(RuleRun run)
+    {
+        return follows.follows().stream().flatMap(follow -> follow.ruleRun().stream())
+                .filter(origin -> origin.ruleId().equals(run.ruleId()) && origin.key().equals(run.key()))
+                .filter(origin -> origin.outcome().filter("STARTED"::equals).isPresent())
+                .findFirst().orElseGet(() -> uncertainReview(run));
     }
 
     /**
@@ -330,13 +342,23 @@ public class RuleWork
             RuleRun linked = run.started(REVIEW + review.id());
             runs.save(linked.finished("STARTING"));
             return reviewer.updateIfUnpaused(review.id(), () -> authorized(run))
-                    .map(updated -> linked.finished("STARTED"))
+                    .map(updated -> followReview(rule, linked, updated.review()))
                     .orElseGet(() -> run.skip("The review or rule was paused or changed").finished("CANCELLED"));
         }
         runs.save(run.finished("STARTING"));
         return reviewer.startIfAbsent(workspaceId, pr.repo(), pr.number(), rule.rule().body(), () -> authorized(run))
-                .map(started -> run.started(REVIEW + started.review().id()).finished("STARTED"))
+                .map(started -> followReview(rule, run, started.review()))
                 .orElseGet(() -> run.skip("A review already exists or the rule changed").finished("CANCELLED"));
+    }
+
+    private RuleRun followReview(AgentRuleView rule, RuleRun run, AgentReview review)
+    {
+        RuleRun started = run.started(REVIEW + review.id()).finished("STARTED");
+        if (started.authorization().isPresent()) {
+            // Enroll before the final receipt: a restart can recover the accepted start without invoking the reviewer again.
+            follows.save(AssistantFollow.ruleReview(review.taskId(), run.occurredAt(), ContextText.excerpt(rule.rule().body(), 4000), started));
+        }
+        return started;
     }
 
     private boolean canUpdate(AgentRuleView rule, RuleRun run, AgentReview review)

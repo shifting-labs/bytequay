@@ -57,6 +57,7 @@ import com.bytequay.core.ci.CiAutofixStore;
 import com.bytequay.core.domain.AgendaTarget;
 import com.bytequay.core.domain.Artifact;
 import com.bytequay.core.domain.AssistantAssessment;
+import com.bytequay.core.domain.AssistantFollow;
 import com.bytequay.core.domain.AssistantItem;
 import com.bytequay.core.domain.AssistantReport;
 import com.bytequay.core.domain.DiffFile;
@@ -71,6 +72,7 @@ import com.bytequay.core.hosting.HostingServer;
 import com.bytequay.core.review.AgentReview;
 import com.bytequay.core.review.AgentReviewStore;
 import com.bytequay.core.review.ReviewCommit;
+import com.bytequay.core.review.ReviewFinding;
 import com.bytequay.core.review.ReviewRun;
 import com.bytequay.core.review.ReviewRunOverview;
 import com.bytequay.core.review.ReviewStep;
@@ -84,6 +86,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.file.Path;
@@ -278,6 +281,7 @@ class TestAppNoticeService
         AgentTurn turn = turn();
         show(task, turn.finish(TurnState.COMPLETED, AgentMetrics.empty(), Optional.empty(), NOW.plusSeconds(10)));
         when(tasks.find(task.id())).thenReturn(Optional.of(task));
+        when(reviews.listOpenReviews()).thenReturn(ImmutableList.of(pullRequestReview("review-1", "workspace", "owner/repo", 58, task.id().toString(), NOW)));
         RuleRun run = RuleRun.automatic(new RuleAuthorization("rule-1", "Review changes to my lines", 3), "pr:58:head:abc", "owner/repo#58", "Fix recovery", NOW)
                 .started("review:review-1");
         ruleRuns.save(run);
@@ -285,7 +289,7 @@ class TestAppNoticeService
 
         assertThat(service.current(ImmutableList.of(task.id()))).singleElement()
                 .satisfies(notice -> assertThat(notice.ruleRun()).contains(run.finished("RESULT_READY")));
-        assertThat(service.alerts()).singleElement().satisfies(notice -> assertThat(notice.ruleRun()).contains(run.finished("RESULT_READY")));
+        assertThat(service.alerts()).isEmpty();
 
         show(task, turn.finish(TurnState.FAILED, AgentMetrics.empty(), Optional.of("Provider failed"), NOW.plusSeconds(10)));
         assertThat(service.current(ImmutableList.of(task.id()))).singleElement().satisfies(notice -> assertThat(notice.ruleRun()).contains(run.finished("FAILED")));
@@ -300,6 +304,9 @@ class TestAppNoticeService
         when(tasks.find(task.id())).thenReturn(Optional.of(task));
         RuleRun run = RuleRun.automatic(new RuleAuthorization("rule-1", "Review changes to my lines", 3), "pr:58:head:new", "owner/repo#58", "Fix recovery", NOW.plusSeconds(20))
                 .started("review:review-1").finished(outcome);
+        RuleRun earlier = RuleRun.automatic(run.authorization().orElseThrow(), "pr:58:head:old", run.subject(), run.title(), NOW)
+                .started("review:review-1").finished("STARTED");
+        when(follows.follows()).thenReturn(ImmutableList.of(AssistantFollow.ruleReview(task.id().toString(), NOW, "Review changes to my lines", earlier)));
         ruleRuns.save(run);
         when(ruleWork.resultTask(run)).thenReturn(Optional.of(task.id().toString()));
         assertThat(service.current(ImmutableList.of(task.id()))).singleElement().satisfies(notice -> {
@@ -337,6 +344,150 @@ class TestAppNoticeService
             assertThat(alert.id()).isEqualTo(notice.id());
             assertThat(alert.message()).isEqualTo("The fix passed its observed checks.");
         });
+    }
+
+    @Test
+    void automaticReviewsWaitForAssessmentAndKeepTheirFullReviewLinkBeyondRecentHistory()
+    {
+        AgentReview review = automaticReview();
+        AgentTurn done = turn().finish(TurnState.COMPLETED, AgentMetrics.empty(), Optional.empty(), NOW.plusSeconds(10));
+        ReviewRun run = reviewRun(review, ReviewRun.State.ACCEPTED).withTurn(done.id().toString(), NOW.plusSeconds(10));
+        show(task, done);
+        showRuns(review, run);
+        when(tasks.listRecent(200)).thenReturn(ImmutableList.of());
+        when(tasks.listLive()).thenReturn(ImmutableList.of());
+        AppNotice notice = service.current(ImmutableList.of(task.id())).getFirst();
+        assertThat(notice.id()).startsWith("review-result:run:0:");
+        assertThat(notice.ruleRun().orElseThrow().outcome()).contains("RESULT_READY");
+        assertThat(service.alerts()).isEmpty();
+
+        AssistantReport report = new AssistantReport(AssistantReport.State.RESULT_READY, notice.id(), AgendaTarget.of(AgendaTarget.Kind.REVIEW, "workspace", review.id()));
+        AssistantAssessment job = new AssistantAssessment("review-assessment", Optional.empty(), task.id().toString(), "fingerprint", NOW,
+                notice.summaryLine(), report, "Review changes to my lines", true, false, AssistantAssessment.State.QUEUED);
+        when(follows.result(task.id().toString(), notice.id(), notice.summaryLine())).thenReturn(Optional.of(job));
+        assertThat(service.alerts()).isEmpty();
+        when(follows.result(task.id().toString(), notice.id(), notice.summaryLine())).thenReturn(Optional.of(job.ended(AssistantAssessment.State.QUIET)));
+        assertThat(service.alerts()).isEmpty();
+
+        String summary = "The recovery change can leave stale state after an interrupted write. Check the write-then-retry test before approving.";
+        when(follows.result(task.id().toString(), notice.id(), notice.summaryLine()))
+                .thenReturn(Optional.of(job.assessed(report.assessed(summary), AssistantAssessment.State.PUBLISHED)));
+        assertThat(service.alerts()).singleElement().satisfies(alert -> {
+            assertThat(alert.id()).isEqualTo(notice.id());
+            assertThat(alert.message()).isEqualTo(summary);
+            assertThat(alert.reviewId()).contains(review.id());
+            assertThat(alert.pullRequest()).contains("owner/repo#42");
+            assertThat(alert.ruleRun()).contains(notice.ruleRun().orElseThrow());
+            assertThat(alert.ruleRun().orElseThrow().authorization().orElseThrow().ruleName()).isEqualTo("Review changes to my lines");
+        });
+
+        when(follows.result(task.id().toString(), notice.id(), notice.summaryLine()))
+                .thenReturn(Optional.of(job.assessed(report.assessed(summary.repeat(12)), AssistantAssessment.State.PUBLISHED)));
+        assertThat(service.alerts()).singleElement().satisfies(alert -> {
+            assertThat(alert.message().length()).isLessThanOrEqualTo(1000);
+            assertThat(alert.message()).startsWith(summary).endsWith("…");
+            assertThat(alert.reviewId()).contains(review.id());
+            assertThat(alert.id()).isEqualTo(notice.id());
+        });
+    }
+
+    @Test
+    void automaticReviewsSuppressAnAcceptedOldHeadAndAnActiveRun()
+    {
+        AgentReview review = automaticReview();
+        show(task, turn().finish(TurnState.COMPLETED, AgentMetrics.empty(), Optional.empty(), NOW.plusSeconds(10)));
+        showRuns(review, reviewRun(review, ReviewRun.State.ACCEPTED));
+        assertThat(service.current()).hasSize(1);
+
+        when(reviews.listOpenReviews()).thenReturn(ImmutableList.of(review.withObservedHead("new-head", NOW.plusSeconds(20))));
+        assertThat(service.current()).isEmpty();
+        assertThat(service.alerts()).isEmpty();
+
+        when(reviews.listOpenReviews()).thenReturn(ImmutableList.of(review));
+        showRuns(review, reviewRun(review, ReviewRun.State.RUNNING));
+        assertThat(service.current()).isEmpty();
+        assertThat(service.alerts()).isEmpty();
+        verify(follows, never()).result(any(), any(), any());
+    }
+
+    @Test
+    void resolvingAFindingCannotReuseTheEarlierPublishedWarning()
+    {
+        AgentReview review = automaticReview();
+        show(task);
+        showRuns(review, reviewRun(review, ReviewRun.State.ACCEPTED));
+        ReviewFinding finding = new ReviewFinding("finding", review.id(), "run", 1, "Stale recovery state", "An interrupted write leaves the prior state.",
+                Optional.of("P1"), Optional.empty(), ImmutableList.of(), 1, ReviewFinding.State.OPEN, Optional.empty(), "head", false, 0, NOW, NOW,
+                ImmutableList.of(), ReviewFinding.Origin.AUTOMATIC, Optional.empty());
+        when(reviews.listFindings(review.id())).thenReturn(ImmutableList.of(finding));
+        AppNotice original = service.current(ImmutableList.of(task.id())).getFirst();
+        AssistantReport warning = new AssistantReport(AssistantReport.State.RESULT_READY, original.id(), AgendaTarget.of(AgendaTarget.Kind.REVIEW, "workspace", review.id()))
+                .assessed("Review the stale recovery state before approving.");
+        AssistantAssessment published = new AssistantAssessment("warning", Optional.empty(), task.id().toString(), "fingerprint", NOW,
+                original.summaryLine(), warning, "Review changes to my lines", true, false, AssistantAssessment.State.PUBLISHED);
+        when(follows.result(task.id().toString(), original.id(), original.summaryLine())).thenReturn(Optional.of(published));
+        assertThat(service.alerts()).singleElement().extracting(AppNotice::message).isEqualTo(warning.assessment().orElseThrow());
+
+        when(reviews.listFindings(review.id())).thenReturn(ImmutableList.of(finding.withState(ReviewFinding.State.RESOLVED, Optional.empty(), NOW.plusSeconds(20)).withVersion(1)));
+        AppNotice resolved = service.current(ImmutableList.of(task.id())).getFirst();
+        assertThat(resolved.id()).isNotEqualTo(original.id());
+        assertThat(service.alerts()).isEmpty();
+        AssistantReport noAction = new AssistantReport(AssistantReport.State.RESULT_READY, resolved.id(), warning.target()).assessed("The finding has already been resolved.");
+        AssistantAssessment quiet = new AssistantAssessment("resolved", Optional.empty(), task.id().toString(), "resolved-fingerprint", NOW.plusSeconds(20),
+                resolved.summaryLine(), noAction, "Review changes to my lines", true, false, AssistantAssessment.State.QUIET);
+        when(follows.result(task.id().toString(), resolved.id(), resolved.summaryLine())).thenReturn(Optional.of(quiet));
+        assertThat(service.alerts()).isEmpty();
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ReviewRun.State.class, names = {"INCOMPLETE", "STOPPED", "FAILED"})
+    void anIncompleteAutomaticReviewNeedsAttentionWithoutWaitingForAssessment(ReviewRun.State state)
+    {
+        AgentReview review = automaticReview();
+        show(task, turn().finish(TurnState.COMPLETED, AgentMetrics.empty(), Optional.empty(), NOW.plusSeconds(10)));
+        showRuns(review, reviewRun(review, state));
+
+        assertThat(service.alerts()).singleElement().satisfies(alert -> {
+            assertThat(alert.id()).isEqualTo("review-stopped:run");
+            assertThat(alert.kind()).isEqualTo(AppNotice.Kind.FAILURE);
+            assertThat(alert.message()).contains("did not finish", "provisional");
+            assertThat(alert.reviewId()).contains(review.id());
+            assertThat(alert.ruleRun().orElseThrow().outcome()).contains("FAILED");
+        });
+        verify(follows, never()).result(any(), any(), any());
+    }
+
+    @Test
+    void aCarriedAcceptedReviewHasAStableResultWithoutANewProviderTurn()
+    {
+        AgentReview review = automaticReview();
+        show(task);
+        showRuns(review, reviewRun(review, ReviewRun.State.ACCEPTED));
+        AppNotice carried = service.current(ImmutableList.of(task.id())).getFirst();
+        assertThat(carried.id()).startsWith("review-result:run:0:");
+        assertThat(carried.turnId()).isEmpty();
+        AssistantReport report = new AssistantReport(AssistantReport.State.RESULT_READY, carried.id(), AgendaTarget.of(AgendaTarget.Kind.REVIEW, "workspace", review.id()));
+        AssistantAssessment quiet = new AssistantAssessment("carried-assessment", Optional.empty(), task.id().toString(), "fingerprint", NOW,
+                carried.summaryLine(), report, "Review changes to my lines", true, false, AssistantAssessment.State.QUIET);
+        when(follows.result(task.id().toString(), carried.id(), carried.summaryLine())).thenReturn(Optional.of(quiet));
+        assertThat(service.alerts()).isEmpty();
+
+        show(task, turnAt(NOW.plusSeconds(20)).finish(TurnState.COMPLETED, AgentMetrics.empty(), Optional.empty(), NOW.plusSeconds(30)));
+        assertThat(service.current()).singleElement().satisfies(notice -> {
+            assertThat(notice.id()).isEqualTo(carried.id());
+            assertThat(notice.summaryLine()).isEqualTo(carried.summaryLine());
+            assertThat(notice.occurredAt()).isEqualTo(carried.occurredAt());
+        });
+        assertThat(service.alerts()).isEmpty();
+
+        ReviewRun explanation = new ReviewRun("explanation", review.id(), 2, ReviewRun.Scope.FULL, "main", "base", "base", "new-head", Optional.empty(), Optional.empty(),
+                ImmutableList.of(), ImmutableList.of(), ImmutableList.of(), ReviewRun.State.ACCEPTED, Optional.empty(), Optional.empty(), Optional.empty(),
+                ImmutableList.of(ReviewStep.explanation()), false, ImmutableMap.of(), ImmutableMap.of(), Optional.empty(), 0, NOW, NOW.plusSeconds(40),
+                Optional.of(NOW.plusSeconds(40)));
+        showRuns(review, reviewRun(review, ReviewRun.State.ACCEPTED), explanation);
+        when(reviews.listOpenReviews()).thenReturn(ImmutableList.of(review.withObservedHead("new-head", NOW.plusSeconds(40))));
+        assertThat(service.current()).isEmpty();
+        assertThat(service.alerts()).isEmpty();
     }
 
     @Test
@@ -758,9 +909,31 @@ class TestAppNoticeService
     {
         var runs = ImmutableList.copyOf(history);
         ReviewRun latest = runs.stream().max(comparing(ReviewRun::ordinal)).orElseThrow();
+        when(reviews.listRuns(review.id())).thenReturn(ImmutableList.sortedCopyOf(comparing(ReviewRun::ordinal), runs));
         when(reviews.summarizeRuns(anySet())).thenReturn(ImmutableMap.of(review.id(), new ReviewRunOverview(
                 runs.stream().anyMatch(ReviewRun::active), latest.scope(), latest.commits().size(), latest.diff().size(),
                 latest.diff().stream().mapToLong(DiffFile::additions).sum(), latest.diff().stream().mapToLong(DiffFile::deletions).sum(), latest.state(), latest.endedAt())));
+    }
+
+    private AgentReview automaticReview()
+    {
+        AgentReview review = pullRequestReview("review", "workspace", "owner/repo", 42, task.id().toString(), NOW).withObservedHead("head", NOW);
+        RuleRun run = RuleRun.automatic(new RuleAuthorization("review-rule", "Review changes to my lines", 3), "pr:42:head:head", "owner/repo#42", "Fix recovery",
+                NOW.minus(Duration.ofDays(90))).started("review:" + review.id()).finished("STARTED");
+        AssistantFollow follow = AssistantFollow.ruleReview(task.id().toString(), run.occurredAt(), "Review changes to my lines", run);
+        when(follows.follows()).thenReturn(ImmutableList.of(follow));
+        when(follows.follow(task.id().toString())).thenReturn(Optional.of(follow));
+        when(follows.followsTask(task.id().toString())).thenReturn(true);
+        when(tasks.find(task.id())).thenReturn(Optional.of(task));
+        when(reviews.listOpenReviews()).thenReturn(ImmutableList.of(review));
+        return review;
+    }
+
+    private static ReviewRun reviewRun(AgentReview review, ReviewRun.State state)
+    {
+        return new ReviewRun("run", review.id(), 1, ReviewRun.Scope.FULL, "main", "base", "base", "head", Optional.empty(), Optional.empty(),
+                ImmutableList.of(), ImmutableList.of(), ImmutableList.of(), state, Optional.empty(), Optional.empty(), Optional.empty(), ImmutableList.of(), false,
+                ImmutableMap.of(), ImmutableMap.of(), Optional.empty(), 0, NOW, NOW.plusSeconds(10), state.terminal() ? Optional.of(NOW.plusSeconds(10)) : Optional.empty());
     }
 
     private static TaskWorktree worktree(TaskId owner)

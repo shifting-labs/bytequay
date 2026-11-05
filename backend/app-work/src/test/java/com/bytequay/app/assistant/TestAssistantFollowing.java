@@ -19,7 +19,9 @@ import com.bytequay.agent.core.AgentEventSource;
 import com.bytequay.agent.core.AgentHistoryPage;
 import com.bytequay.agent.core.AgentResourceService;
 import com.bytequay.agent.core.AgentTask;
+import com.bytequay.agent.core.AgentTaskDefaults;
 import com.bytequay.agent.core.AgentTurn;
+import com.bytequay.agent.core.AgentTurnSettings;
 import com.bytequay.agent.core.EventId;
 import com.bytequay.agent.core.TaskId;
 import com.bytequay.agent.core.TaskResources;
@@ -33,9 +35,11 @@ import com.bytequay.agent.core.store.TaskLogStore;
 import com.bytequay.agent.spi.AgentDriver;
 import com.bytequay.agent.spi.AgentDriverRegistry;
 import com.bytequay.agent.spi.AgentLaneId;
+import com.bytequay.agent.spi.AgentPermissionPolicy;
 import com.bytequay.agent.spi.AgentSession;
 import com.bytequay.agent.spi.AgentSessionContext;
 import com.bytequay.agent.spi.AgentSessionRef;
+import com.bytequay.agent.spi.AgentTurnCommand;
 import com.bytequay.agent.spi.AgentTurnResult;
 import com.bytequay.agent.spi.RunningTurn;
 import com.bytequay.agent.spi.SessionAccess;
@@ -50,7 +54,13 @@ import com.bytequay.core.domain.AssistantConversation;
 import com.bytequay.core.domain.AssistantFollow;
 import com.bytequay.core.domain.AssistantReport;
 import com.bytequay.core.domain.RuleAuthorization;
+import com.bytequay.core.domain.RuleRun;
 import com.bytequay.core.domain.WorkItem;
+import com.bytequay.core.review.AgentReview;
+import com.bytequay.core.review.AgentReviewStore;
+import com.bytequay.core.review.ReviewFinding;
+import com.bytequay.core.review.ReviewRun;
+import com.bytequay.core.review.ReviewSummary;
 import com.bytequay.core.store.AssistantFollowStore;
 import com.bytequay.core.store.WorkItemStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -59,6 +69,7 @@ import com.google.common.collect.ImmutableMap;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -85,6 +96,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.MockMakers.INLINE;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -104,6 +116,7 @@ class TestAssistantFollowing
     private final TaskLogStore logs = mock(TaskLogStore.class);
     private final WorkItemStore workItems = mock(WorkItemStore.class);
     private final AgentApprovalStore approvals = mock(AgentApprovalStore.class);
+    private final AgentReviewStore reviews = mock(AgentReviewStore.class);
     private final AppNoticeService notices = mock(AppNoticeService.class);
     private final SetupSettingsService setup = mock(SetupSettingsService.class);
     private final AgentDriverRegistry drivers = mock(AgentDriverRegistry.class);
@@ -157,7 +170,7 @@ class TestAssistantFollowing
 
     private AssistantFollowing create()
     {
-        return new AssistantFollowing(follows, conversations, tasks, turns, logs, workItems, approvals, new ObjectMapper(), notices, setup, drivers, resources,
+        return new AssistantFollowing(follows, conversations, tasks, turns, logs, workItems, approvals, reviews, new ObjectMapper(), notices, setup, drivers, resources,
                 Clock.fixed(NOW, ZoneOffset.UTC), executor);
     }
 
@@ -328,7 +341,7 @@ class TestAssistantFollowing
         when(logs.readAfter(TASK, 0, 200)).thenReturn(events.build());
         following.poll(conversations::add);
         assertThat(conversations.items(CONVERSATION)).isEmpty();
-        assertThat(follows.ruleReceipts(CONVERSATION, TASK.toString())).hasSize(3)
+        assertThat(follows.ruleReceipts(Optional.of(CONVERSATION), TASK.toString())).hasSize(3)
                 .allMatch(receipt -> receipt.state() == AssistantAssessment.State.QUIET);
         assertThat(follows.follows().getFirst().afterSequence()).isEqualTo(3);
         queued.clear();
@@ -391,6 +404,202 @@ class TestAssistantFollowing
     }
 
     @Test
+    void readsDurableRuleReviewEvidenceWithoutCreatingAChatAndKeepsTheReviewAccount()
+    {
+        ruleReview();
+        following.poll(conversations::add);
+        assertThat(follows.queued()).singleElement().satisfies(job -> assertThat(job.conversationId()).isEmpty());
+        assertThat(conversations.items(CONVERSATION)).isEmpty();
+        queued.removeFirst().run();
+
+        ArgumentCaptor<AgentTurnCommand> input = ArgumentCaptor.forClass(AgentTurnCommand.class);
+        verify(session).start(input.capture());
+        assertThat(input.getValue().message()).contains("Avoid duplicate rows", "The join now groups by key", "F-1 [OPEN; P1]", "Rows can be lost", "RESOLVED")
+                .doesNotContain("Outdated finding");
+        verify(logs, never()).readHistory(any(), any(), any());
+        verify(setup, never()).requireUsableDevelopmentAgent();
+        verify(drivers).checkWorkspaceAccess(new AgentLaneId("codex-account-review"), Optional.of("workspace"));
+        verify(drivers).require(new AgentLaneId("codex-account-review"));
+        ArgumentCaptor<AgentSessionContext> context = ArgumentCaptor.forClass(AgentSessionContext.class);
+        verify(driver).open(context.capture(), any());
+        assertThat(context.getValue().model()).contains("review-model");
+        assertThat(context.getValue().access()).isEqualTo(SessionAccess.TEXT_ONLY);
+        assertThat(follows.jobs.values()).singleElement().satisfies(job -> {
+            assertThat(job.state()).isEqualTo(AssistantAssessment.State.PUBLISHED);
+            assertThat(job.report().assessment()).contains("The observed checks passed.");
+            assertThat(job.report().ruleActions()).singleElement().satisfies(action -> assertThat(action.ruleVersion()).isEqualTo(3));
+        });
+        assertThat(conversations.items(CONVERSATION)).isEmpty();
+        create().poll(conversations::add);
+        assertThat(queued).isEmpty();
+        assertThat(follows.follows()).hasSize(1);
+    }
+
+    @Test
+    void keepsUnhelpfulRuleReviewsQuietAcrossRestartAndReplaysPendingAssessment()
+    {
+        ruleReview();
+        when(running.completion()).thenReturn(CompletableFuture.completedFuture(answer("No useful change since the previous review", false)));
+        following.poll(conversations::add);
+        queued.clear();
+        AssistantFollowing restarted = create();
+        restarted.poll(conversations::add);
+        queued.removeFirst().run();
+        assertThat(follows.jobs.values()).singleElement().satisfies(job -> {
+            assertThat(job.state()).isEqualTo(AssistantAssessment.State.QUIET);
+            assertThat(job.report().assessment()).contains("No useful change since the previous review");
+        });
+        restarted.poll(conversations::add);
+        assertThat(queued).isEmpty();
+        assertThat(conversations.items(CONVERSATION)).isEmpty();
+    }
+
+    @Test
+    void discardsRuleReviewSummaryIfANewerHeadArrivesDuringAssessment()
+    {
+        ruleReview();
+        when(running.completion()).thenAnswer(call -> {
+            when(notices.current(anyCollection())).thenReturn(ImmutableList.of());
+            return CompletableFuture.completedFuture(answer("This result belongs to the previous head", true));
+        });
+        following.poll(conversations::add);
+        queued.removeFirst().run();
+        assertThat(follows.jobs.values()).singleElement().extracting(AssistantAssessment::state).isEqualTo(AssistantAssessment.State.SUPERSEDED);
+        create().poll(conversations::add);
+        assertThat(queued).isEmpty();
+    }
+
+    @Test
+    void retriesTheSameReviewIfAConversationTemporarilyHidItDuringAssessment()
+    {
+        ruleReview();
+        AppNotice original = notices.current(ImmutableList.of(TASK)).getFirst();
+        when(running.completion()).thenAnswer(call -> {
+            when(notices.current(anyCollection())).thenReturn(ImmutableList.of());
+            return CompletableFuture.completedFuture(answer("Conversation is active", true));
+        });
+        following.poll(conversations::add);
+        queued.removeFirst().run();
+        when(running.completion()).thenReturn(CompletableFuture.completedFuture(answer("Review findings need inspection", true)));
+        when(notices.current(anyCollection())).thenReturn(ImmutableList.of(original));
+        create().poll(conversations::add);
+        queued.removeFirst().run();
+        assertThat(follows.jobs.values()).singleElement().satisfies(job -> {
+            assertThat(job.state()).isEqualTo(AssistantAssessment.State.PUBLISHED);
+            assertThat(job.report().assessment()).contains("Review findings need inspection");
+        });
+    }
+
+    @Test
+    void rechecksFindingStateBeforePublishingAndEnrolsRetainedStartsWithoutAChat()
+    {
+        ruleReview();
+        RuleRun origin = follows.follow(TASK.toString()).orElseThrow().ruleRun().orElseThrow();
+        follows.watching.clear();
+        when(notices.ruleReviews()).thenReturn(ImmutableMap.of(TASK.toString(), origin));
+        AppNotice original = notices.current(ImmutableList.of(TASK)).getFirst();
+        ReviewFinding finding = reviews.listFindings("review-1").getFirst();
+        when(running.completion()).thenAnswer(call -> {
+            when(finding.state()).thenReturn(ReviewFinding.State.RESOLVED);
+            when(finding.version()).thenReturn(1L);
+            AppNotice changed = new AppNotice(original.id() + ":resolved", original.kind(), original.taskId(), original.workspaceId(), original.turnId(), original.reviewId(),
+                    original.title(), original.pullRequest(), original.pullRequestTitle(), original.branch(), original.changes(), original.message(), original.repository(),
+                    original.laneId(), original.workItemId(), original.occurredAt(), original.expiresAt(), original.ruleRun());
+            when(notices.current(anyCollection())).thenReturn(ImmutableList.of(changed));
+            return CompletableFuture.completedFuture(answer("Inspect the open finding", true));
+        });
+        following.poll(conversations::add);
+        assertThat(follows.follows()).singleElement().satisfies(follow -> assertThat(follow.conversationId()).isEmpty());
+        queued.removeFirst().run();
+        assertThat(follows.jobs.values()).singleElement().extracting(AssistantAssessment::state).isEqualTo(AssistantAssessment.State.SUPERSEDED);
+        when(running.completion()).thenReturn(CompletableFuture.completedFuture(answer("The finding was already resolved", false)));
+        following.poll(conversations::add);
+        queued.removeFirst().run();
+        assertThat(follows.jobs.values()).filteredOn(job -> job.state() == AssistantAssessment.State.QUIET).hasSize(1);
+        assertThat(conversations.items(CONVERSATION)).isEmpty();
+    }
+
+    @Test
+    void unavailableReviewAccountPublishesSourceFactsWithoutSendingEvidenceElsewhere()
+    {
+        ruleReview();
+        doThrow(new IllegalArgumentException("The review account no longer permits this repository")).when(drivers).checkWorkspaceAccess(any(), any());
+        following.poll(conversations::add);
+        queued.removeFirst().run();
+        verify(driver, never()).open(any(), any());
+        verify(setup, never()).requireUsableDevelopmentAgent();
+        assertThat(follows.jobs.values()).singleElement().satisfies(job -> {
+            assertThat(job.state()).isEqualTo(AssistantAssessment.State.PUBLISHED);
+            assertThat(job.report().assessment()).isEmpty();
+            assertThat(job.sourceLine()).contains("The private review is ready");
+        });
+    }
+
+    @Test
+    void invalidRuleReviewAssessmentFallsBackAndDisabledAssistantDoesNotRunAModel()
+    {
+        ruleReview();
+        when(running.completion()).thenReturn(CompletableFuture.completedFuture(new AgentTurnResult(AgentTurnResult.State.COMPLETED, Optional.of("Invalid JSON"),
+                Optional.empty(), Duration.ofSeconds(1), true)));
+        following.poll(conversations::add);
+        queued.removeFirst().run();
+        assertThat(follows.jobs.values()).singleElement().satisfies(job -> {
+            assertThat(job.state()).isEqualTo(AssistantAssessment.State.PUBLISHED);
+            assertThat(job.report().assessment()).isEmpty();
+        });
+        follows.jobs.clear();
+        when(setup.preferences().assistantEnabled()).thenReturn(false);
+        create().poll(conversations::add);
+        assertThat(queued).isEmpty();
+        assertThat(follows.jobs.values()).singleElement().extracting(AssistantAssessment::state).isEqualTo(AssistantAssessment.State.PUBLISHED);
+    }
+
+    private void ruleReview()
+    {
+        follows.watching.clear();
+        RuleRun rule = RuleRun.automatic(new RuleAuthorization("rule-1", "Review changes to my lines", 3), "pr:1:head:head-a", "owner/repository#1", "Review joins", NOW)
+                .started("review:review-1").finished("STARTED");
+        follows.save(AssistantFollow.ruleReview(TASK.toString(), NOW, "Read changes to my lines and summarize useful findings", rule));
+        AgentReview review = mock(AgentReview.class, withSettings().mockMaker(INLINE));
+        when(review.state()).thenReturn(AgentReview.State.OPEN);
+        when(reviews.findReviewByTask(TASK.toString())).thenReturn(Optional.of(review));
+        ReviewRun run = mock(ReviewRun.class, withSettings().mockMaker(INLINE));
+        when(run.id()).thenReturn("review-run-1");
+        when(run.reviewId()).thenReturn("review-1");
+        when(run.headSha()).thenReturn("head-a");
+        when(run.sourceRevision()).thenReturn("head-a");
+        when(run.scope()).thenReturn(ReviewRun.Scope.INCREMENTAL);
+        when(run.state()).thenReturn(ReviewRun.State.ACCEPTED);
+        when(run.turnIds()).thenReturn(ImmutableList.of(TURN.toString()));
+        when(run.summary()).thenReturn(Optional.of(new ReviewSummary(1, "Avoid duplicate rows", ImmutableList.of(), "The join now groups by key",
+                Optional.of("Focused tests passed"), ImmutableList.of("finding-1"))));
+        when(reviews.listRuns("review-1")).thenReturn(ImmutableList.of(run));
+        when(reviews.findRun("review-run-1")).thenReturn(Optional.of(run));
+        ReviewFinding finding = mock(ReviewFinding.class, withSettings().mockMaker(INLINE));
+        when(finding.label()).thenReturn("F-1");
+        when(finding.state()).thenReturn(ReviewFinding.State.OPEN);
+        when(finding.severity()).thenReturn(Optional.of("P1"));
+        when(finding.title()).thenReturn("Rows can be lost");
+        when(finding.body()).thenReturn("Null keys need preserving");
+        when(finding.validatedHeadSha()).thenReturn("head-a");
+        when(finding.runId()).thenReturn("previous-run");
+        ReviewFinding outdated = mock(ReviewFinding.class, withSettings().mockMaker(INLINE));
+        when(outdated.outdated()).thenReturn(true);
+        when(outdated.title()).thenReturn("Outdated finding");
+        when(reviews.listFindings("review-1")).thenReturn(ImmutableList.of(finding, outdated));
+        when(task.laneId()).thenReturn(new AgentLaneId("codex-account-next"));
+        when(task.defaults()).thenReturn(new AgentTaskDefaults(Optional.of("next-model"), Optional.empty(), AgentPermissionPolicy.AUTO));
+        when(turns.find(TURN)).thenReturn(Optional.of(turn));
+        when(turn.settings()).thenReturn(Optional.of(new AgentTurnSettings(Optional.of("review-model"), Optional.of("high"), AgentPermissionPolicy.AUTO, Duration.ZERO,
+                ImmutableList.of(), Optional.empty(), Optional.empty()).withLaneId(new AgentLaneId("codex-account-review"))));
+        AppNotice notice = new AppNotice("review-result:review-run-1:0", AppNotice.Kind.TURN_FINISHED, TASK.toString(), "workspace", Optional.of(TURN.toString()),
+                Optional.of("review-1"), "Review joins", Optional.of("owner/repository#1"), Optional.of("Review joins"), Optional.empty(), Optional.empty(),
+                "The private review is ready. Read the full review for its findings and verification.", "owner/repository", "codex-account-review", Optional.empty(), NOW,
+                Optional.empty(), Optional.of(rule.finished("RESULT_READY")));
+        when(notices.current(anyCollection())).thenReturn(ImmutableList.of(notice));
+    }
+
+    @Test
     void manualApprovalOutcomesRemainVisibleImmediately()
     {
         AgentEventPayload.ApprovalResolved resolved = new AgentEventPayload.ApprovalResolved(UUID.randomUUID().toString(), AgentEventPayload.ApprovalOutcome.DENIED, false);
@@ -448,6 +657,18 @@ class TestAssistantFollowing
         }
 
         @Override
+        public Optional<AssistantFollow> follow(String taskId)
+        {
+            return Optional.ofNullable(watching.get("rule:" + taskId));
+        }
+
+        @Override
+        public void remove(AssistantFollow follow)
+        {
+            watching.remove(follow.id());
+        }
+
+        @Override
         public void save(AssistantFollow follow)
         {
             watching.put(follow.id(), follow);
@@ -480,12 +701,12 @@ class TestAssistantFollowing
         @Override
         public Optional<AssistantAssessment> result(String taskId, String noticeId, String sourceLine)
         {
-            return jobs.values().stream().filter(job -> job.taskId().equals(taskId) && job.item().report().orElseThrow().noticeId().equals(noticeId)
-                    && job.item().text().equals(sourceLine) && !job.requested()).findFirst();
+            return jobs.values().stream().filter(job -> job.taskId().equals(taskId) && job.report().noticeId().equals(noticeId)
+                    && job.sourceLine().equals(sourceLine) && !job.requested()).findFirst();
         }
 
         @Override
-        public List<AssistantAssessment> ruleReceipts(String conversationId, String taskId)
+        public List<AssistantAssessment> ruleReceipts(Optional<String> conversationId, String taskId)
         {
             return jobs.values().stream().filter(job -> job.conversationId().equals(conversationId) && job.taskId().equals(taskId) && job.ruleReceipt())
                     .collect(toImmutableList());

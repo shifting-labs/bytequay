@@ -58,14 +58,24 @@ public class SqliteAssistantFollowStore
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public Optional<AssistantFollow> follow(String taskId)
+    {
+        return follows.findById("rule:" + taskId).map(AssistantFollowEntity::toDomain);
+    }
+
+    @Override
     @Transactional
     public void save(AssistantFollow follow)
     {
         AssistantFollowEntity entity = follows.findById(follow.id()).orElseGet(() -> new AssistantFollowEntity(follow));
         AssistantFollow previous = entity.toDomain();
-        // A cursor read can finish after a newer user receipt refreshed the follow's request context.
+        // A cursor read can finish after a newer user receipt or rule invocation refreshed the follow's context.
+        AssistantFollow source = follow.ruleRun().filter(run -> previous.ruleRun()
+                        .filter(saved -> saved.occurredAt().isAfter(run.occurredAt()) || saved.ruleId().equals(run.ruleId()) && saved.key().equals(run.key())).isEmpty())
+                .map(_ -> follow).orElse(previous);
         entity.update(new AssistantFollow(follow.conversationId(), follow.taskId(), previous.since(), Math.max(previous.afterSequence(), follow.afterSequence()),
-                previous.context()));
+                source.context(), source.ruleRun()));
         follows.save(entity);
     }
 
@@ -74,6 +84,13 @@ public class SqliteAssistantFollowStore
     public void remove(String conversationId, String taskId)
     {
         follows.deleteById(conversationId + ":" + taskId);
+    }
+
+    @Override
+    @Transactional
+    public void remove(AssistantFollow follow)
+    {
+        follows.deleteById(follow.id());
     }
 
     @Override
@@ -111,15 +128,15 @@ public class SqliteAssistantFollowStore
     public Optional<AssistantAssessment> result(String taskId, String noticeId, String sourceLine)
     {
         return assessments.findByTaskIdAndNoticeId(taskId, noticeId).stream().map(AssistantAssessmentEntity::toDomain)
-                .filter(job -> !job.requested() && job.item().text().equals(sourceLine) && job.state() != AssistantAssessment.State.SUPERSEDED)
-                .max(comparing((AssistantAssessment job) -> job.state() == AssistantAssessment.State.PUBLISHED).thenComparing(job -> job.item().at()));
+                .filter(job -> !job.requested() && job.sourceLine().equals(sourceLine) && job.state() != AssistantAssessment.State.SUPERSEDED)
+                .max(comparing((AssistantAssessment job) -> job.state() == AssistantAssessment.State.PUBLISHED).thenComparing(AssistantAssessment::at));
     }
 
     @Override
     @Transactional(readOnly = true)
-    public List<AssistantAssessment> ruleReceipts(String conversationId, String taskId)
+    public List<AssistantAssessment> ruleReceipts(Optional<String> conversationId, String taskId)
     {
-        return assessments.findByConversationIdAndTaskIdAndRuleReceiptTrue(conversationId, taskId).stream().map(AssistantAssessmentEntity::toDomain)
+        return assessments.findByConversationIdAndTaskIdAndRuleReceiptTrue(conversationId.orElse(""), taskId).stream().map(AssistantAssessmentEntity::toDomain)
                 .collect(toImmutableList());
     }
 }

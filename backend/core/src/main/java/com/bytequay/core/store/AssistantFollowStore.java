@@ -19,16 +19,21 @@ import com.bytequay.core.domain.AssistantFollow;
 import java.util.List;
 import java.util.Optional;
 
-/** Durable following and read-only jobs; provider sessions remain owned by their foreground conversation. */
+/** Durable chat and rule following with independent read-only assessment jobs. */
 public interface AssistantFollowStore
 {
     List<AssistantFollow> follows();
 
     Optional<AssistantFollow> follow(String conversationId, String taskId);
 
+    /** The rule-owned subscription to this task's results in the Assistant inbox. */
+    Optional<AssistantFollow> follow(String taskId);
+
     void save(AssistantFollow follow);
 
     void remove(String conversationId, String taskId);
+
+    void remove(AssistantFollow follow);
 
     Optional<AssistantAssessment> assessment(String id);
 
@@ -42,5 +47,5 @@ public interface AssistantFollowStore
     Optional<AssistantAssessment> result(String taskId, String noticeId, String sourceLine);
 
     /** Quiet automatic permission receipts retained after the event cursor has advanced. */
-    List<AssistantAssessment> ruleReceipts(String conversationId, String taskId);
+    List<AssistantAssessment> ruleReceipts(Optional<String> conversationId, String taskId);
 }
