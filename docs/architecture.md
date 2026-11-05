@@ -722,8 +722,10 @@ that leaves the tree unchanged. Abort closes the pull request and deletes the
 branch; the target branch is never written. A backport chain's executions stop
 after applying and leave publication to the chain.
 
-Provider login profiles live outside repositories. Named Claude profiles have
-either global or repository ownership. Model catalogs filter repository-owned
+Provider login profiles live outside repositories. Named Claude and Codex profiles have
+either global or repository ownership. Gateway tokens use the encrypted credential
+store and are supplied only to the selected provider process; Codex gateways use
+the Responses protocol without a ChatGPT login. Model catalogs filter repository-owned
 profiles by workspace, and the provider registry checks that ownership before
 task creation and every resumed turn. Restricting an existing global profile
 preserves its login identity while denying later work in other repositories.

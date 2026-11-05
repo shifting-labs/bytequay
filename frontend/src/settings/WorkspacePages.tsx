@@ -22,9 +22,9 @@ import type {
 import RepoAvatar from '../RepoAvatar';
 import { providerName } from '../pulls/PullRequestWorkspace';
 import { RelatedWorkspaceSettings } from '../workspaces/RelatedWorkspaces';
-import { isClaudeLane, isDeepSeekKeyLane, type ClaudeLogin } from './model';
+import { isClaudeLane, isCodexAccount, isDeepSeekKeyLane, type CliAccountLogin } from './model';
 import ProviderRow from './ProviderRow';
-import ClaudeAccountsCard from './ClaudeAccountsCard';
+import CliAccountsCard from './CliAccountsCard';
 import { AgentModelControls, typeLabel, type ModelChoice } from './ModelsPage';
 import { Badge, SettingsCard, SettingsRow } from './primitives';
 
@@ -136,7 +136,7 @@ export function WorkspaceRepositoryPage({ workspace, settings, error, onUnlinkUp
 }
 
 export function WorkspaceAgentsPage({
-  workspace, settings, models, checking, saving = false, checkedAt, error, onChoose, onUseGlobal, onCheck, onSignIn, onAddClaudeAccount, onRemoveClaudeAccount, onRestrictClaudeAccount,
+  workspace, settings, models, checking, saving = false, checkedAt, error, onChoose, onUseGlobal, onCheck, onSignIn, onAddCodexAccount, onRemoveCodexAccount, onAddClaudeAccount, onRemoveClaudeAccount, onRestrictClaudeAccount, onRestrictCodexAccount,
 }: {
   workspace: WorkspaceDto;
   settings: WorkspaceSettingsDto | null;
@@ -150,8 +150,11 @@ export function WorkspaceAgentsPage({
   onCheck: () => void;
   /** Opens that lane's sign-in terminal; this is where a blocked composer sends the user. */
   onSignIn?: (providerId: string) => void;
-  onAddClaudeAccount?: (label: string, login: ClaudeLogin) => Promise<void>;
+  onAddCodexAccount?: (label: string, login: CliAccountLogin) => Promise<void>;
+  onRemoveCodexAccount?: (laneId: string) => Promise<void>;
+  onAddClaudeAccount?: (label: string, login: CliAccountLogin) => Promise<void>;
   onRemoveClaudeAccount?: (laneId: string) => Promise<void>;
+  onRestrictCodexAccount?: (laneId: string) => Promise<void>;
   onRestrictClaudeAccount?: (laneId: string) => Promise<void>;
 }) {
   return (
@@ -186,12 +189,14 @@ export function WorkspaceAgentsPage({
           </button>
         </div>
       }>
-        {(models?.providers ?? []).filter(provider => !isClaudeLane(provider.id)).map(provider => (
+        {(models?.providers ?? []).filter(provider => !isClaudeLane(provider.id) && !isCodexAccount(provider.id)).map(provider => (
           <ProviderRow key={provider.id} provider={provider} checking={checking}
             onSignIn={isDeepSeekKeyLane(provider.id) ? undefined : onSignIn} />
         ))}
       </SettingsCard>
-      <ClaudeAccountsCard providers={models?.providers ?? []} checking={checking} onCheck={onCheck}
+      <CliAccountsCard providerName="Codex" providers={models?.providers ?? []} checking={checking} onCheck={onCheck}
+        onSignIn={onSignIn} onAdd={onAddCodexAccount} onRemove={onRemoveCodexAccount} repository onRestrict={onRestrictCodexAccount} />
+      <CliAccountsCard providers={models?.providers ?? []} checking={checking} onCheck={onCheck}
         onSignIn={onSignIn} onAdd={onAddClaudeAccount} onRemove={onRemoveClaudeAccount} repository onRestrict={onRestrictClaudeAccount} />
     </div>
   );

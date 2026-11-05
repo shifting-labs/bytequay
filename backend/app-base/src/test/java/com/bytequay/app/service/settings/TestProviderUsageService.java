@@ -53,7 +53,7 @@ class TestProviderUsageService
         when(registry.require(work.laneId())).thenReturn(claude);
         when(codex.quota()).thenReturn(new ProviderQuotaSnapshot(Optional.of("pro"), ImmutableList.of(), Optional.empty()));
         when(claude.quota()).thenReturn(new ProviderQuotaSnapshot(Optional.of("enterprise"), ImmutableList.of(), Optional.empty()));
-        ProviderUsageService service = new ProviderUsageService(registry, accounts, mock(ModelApiKeyStore.class), Clock.systemUTC());
+        ProviderUsageService service = new ProviderUsageService(registry, accounts, mock(CodexAccounts.class), mock(ModelApiKeyStore.class), Clock.systemUTC());
         assertThat(service.usage("codex").plan()).contains("pro");
         assertThat(service.usage(work.laneId().value()).plan()).contains("enterprise");
         service.usage("codex");
@@ -72,7 +72,7 @@ class TestProviderUsageService
         when(driver.id()).thenReturn(AgentLaneId.CODEX_CLI);
         when(registry.require(AgentLaneId.CODEX_CLI)).thenReturn(driver);
         when(driver.quota()).thenThrow(new IllegalStateException("sensitive provider diagnostic"));
-        ProviderUsageService service = new ProviderUsageService(registry, accounts, mock(ModelApiKeyStore.class), Clock.systemUTC());
+        ProviderUsageService service = new ProviderUsageService(registry, accounts, mock(CodexAccounts.class), mock(ModelApiKeyStore.class), Clock.systemUTC());
         assertThat(service.usage("codex").message().orElseThrow()).doesNotContain("sensitive");
         assertThat(service.usage("codex").windows()).isEmpty();
         verify(driver, times(1)).quota();
@@ -90,7 +90,7 @@ class TestProviderUsageService
         AgentDriver driver = mock(AgentDriver.class);
         when(registry.require(lane)).thenReturn(driver);
         when(driver.quota()).thenReturn(new ProviderQuotaSnapshot(Optional.empty(), ImmutableList.of(), Optional.of("Available balance: USD 12.34.")));
-        ProviderUsageService service = new ProviderUsageService(registry, mock(ClaudeAccounts.class), keys, Clock.systemUTC());
+        ProviderUsageService service = new ProviderUsageService(registry, mock(ClaudeAccounts.class), mock(CodexAccounts.class), keys, Clock.systemUTC());
         String accountId = "api-key-" + key.id();
         var usage = service.usage(accountId);
         assertThat(usage.accountId()).isEqualTo(accountId);
@@ -115,7 +115,7 @@ class TestProviderUsageService
         ModelApiKey openAi = new ModelApiKey("22222222-2222-4222-8222-222222222222", "Work.OpenAI_2", "OpenAI", "masked hint", created);
         when(keys.findAll()).thenReturn(ImmutableList.of(deepSeek, openAi));
         when(keys.findById(openAi.id())).thenReturn(Optional.of(openAi));
-        ProviderUsageService service = new ProviderUsageService(registry, accounts, keys, Clock.systemUTC());
+        ProviderUsageService service = new ProviderUsageService(registry, accounts, mock(CodexAccounts.class), keys, Clock.systemUTC());
         assertThat(service.accounts()).containsExactly(
                 new ProviderUsageService.Account("codex", "Codex"),
                 new ProviderUsageService.Account("claude", "Claude"),

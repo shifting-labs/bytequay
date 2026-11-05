@@ -477,6 +477,32 @@ URL and token instead of an email. The token is stored encrypted on your Mac.
 
 Existing tasks keep the account they started with.
 
+## Keep Codex work and personal logins separate
+
+1. In a repository's **Model overrides → Codex accounts**, choose **Add Codex account**.
+2. Select **Codex login**, enter a name and your work email, then choose **Add and sign in**.
+3. Choose your work account and workspace in the browser. ByteQuay verifies the email.
+4. Select that account for **Development** and **Review**.
+
+Each login has a separate profile. Accounts added in repository settings cannot
+run in other repositories; accounts added in global **Models** settings are shared.
+Existing tasks keep their original account. Removing an account from ByteQuay
+preserves its Codex-owned login and session files.
+
+## Use Codex through a company gateway
+
+1. In **Models → Codex accounts**, choose **Add Codex account**, then **Gateway token**.
+2. Enter a name, the Responses API base URL (including `/v1` when required),
+   and your gateway token.
+3. Choose the account and a standard Codex model your gateway supports for
+   Development or Review, such as `gpt-6-astra`.
+
+Tokens are stored encrypted on your Mac; no ChatGPT sign-in is needed. Add an
+account in a repository's **Model overrides**, or choose **Use only here**, to
+limit it to that repository. Existing tasks keep their account. The model list
+comes from Codex; gateway access is checked when a task runs. Native web search
+is unavailable through gateway accounts.
+
 <a id="agent-tasks"></a>
 
 ## Start an agent task

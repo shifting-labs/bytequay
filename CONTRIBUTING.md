@@ -177,6 +177,44 @@ tests stopped during the prepared lifecycle run. `--diagnostic true --runs 1`
 uses a shifted clock for a shorter smoke check and is excluded from resource
 comparisons.
 
+## Codex accounts
+
+For separate work and personal ChatGPT logins, open **Settings → Models →
+Codex accounts → Add Codex account**, choose **Codex login**, and enter a name
+and email. **Add and sign in** opens Codex's browser flow for that account's
+isolated profile. Choose the intended email and ChatGPT workspace in the browser;
+Codex does not offer an email-prefill CLI flag. ByteQuay checks the returned email
+after sign-in and again before task startup, refusing a different account.
+Codex owns the OAuth credentials; ByteQuay does not copy the terminal's login.
+
+To keep a work account to an internal repository, add it in that repository's
+**Model overrides**, sign in, then select it for **Development** and **Review**.
+Adding a browser login alone does not replace model selections. Other repositories
+cannot use a repository-owned account. Global accounts can be restricted with
+**Use only here**. Existing tasks retain their original account.
+
+For Codex through a Responses-compatible gateway such as LiteLLM, open
+**Settings → Models → Codex accounts → Add Codex account** and choose **Gateway token**. Enter a name,
+the API base URL (for example, `https://llm.example.com/v1`), and a gateway token.
+Choose a standard Codex model your gateway serves, such as `gpt-6-astra`, in
+Development or Review. The model picker uses the installed Codex catalog;
+it does not discover which routes your gateway permits.
+
+Accounts can be global or added in a repository's **Model overrides**. Repository
+accounts are selected for Development and Review after successful model discovery.
+**Use only here** restricts an existing global account. Existing tasks retain
+their account; removing it deletes its encrypted token and prevents later turns.
+
+Each account has an isolated Codex home. ByteQuay configures a custom provider
+with `wire_api = "responses"`, `requires_openai_auth = false`, and an `env_key`
+pointing at its process-only `BYTEQUAY_CODEX_GATEWAY_TOKEN`. Tokens are encrypted
+with the saved API keys, omitted from launch arguments and configuration files,
+and excluded from agent-run shells. No ChatGPT login is needed. The gateway
+must support Responses streaming and tool calls. Native web search and WebSockets
+are disabled for these accounts. Gateway readiness checks the CLI and local
+configuration; authentication and model access are checked when a task runs.
+Usage limits remain in your gateway's dashboard.
+
 ## Claude accounts
 
 Settings → Models shows CLI status and the default Claude account, with Sign

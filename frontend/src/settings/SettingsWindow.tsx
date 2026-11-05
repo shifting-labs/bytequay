@@ -49,7 +49,7 @@ import {
   WorkspaceRepositoryPage,
 } from './WorkspacePages';
 import { isWorkspaceSection, type SettingsSection } from './routes';
-import type { ClaudeLogin } from './model';
+import type { CliAccountLogin } from './model';
 import { errorMessage } from '../errorMessage';
 import '../css/settings-window.css';
 
@@ -262,7 +262,7 @@ export default function SettingsWindow({ section, workspace, onWorkspacesChanged
     saveWorkspaceModel(() => window.bridge.setWorkspaceAgentModel(workspace.id, type, choice.configId, choice.model, choice.effort));
   };
 
-  const addClaudeAccount = async (label: string, login: ClaudeLogin) => {
+  const addClaudeAccount = async (label: string, login: CliAccountLogin) => {
     setError(null);
     const scope = modelWorkspaceId;
     const updated = 'email' in login
@@ -294,6 +294,45 @@ export default function SettingsWindow({ section, workspace, onWorkspacesChanged
     if (modelWorkspaceId === undefined) return;
     const scope = modelWorkspaceId;
     const updated = await window.bridge.restrictClaudeAccount(laneId, scope);
+    if (modelScopeRef.current !== scope) return;
+    modelRequest.current += 1;
+    setChecking(false);
+    setModels(updated);
+    refreshWorkspaceSettings();
+  };
+
+  const addCodexAccount = async (label: string, login: CliAccountLogin) => {
+    setError(null);
+    const scope = modelWorkspaceId;
+    const updated = 'email' in login
+      ? await window.bridge.addCodexAccount(label, login.email, scope)
+      : await window.bridge.addCodexGateway(label, login.gatewayUrl, login.token, scope);
+    if (modelScopeRef.current !== scope) return;
+    modelRequest.current += 1;
+    setChecking(false);
+    setModels(updated);
+    setModelsScope(scope);
+    refreshWorkspaceSettings();
+    const account = updated.providers.find(provider => provider.label === `Codex · ${label}`);
+    if (account !== undefined && 'email' in login) setSigningIn({ laneId: account.id, providerName: account.label });
+  };
+
+  const removeCodexAccount = async (laneId: string) => {
+    setError(null);
+    const scope = modelWorkspaceId;
+    await window.bridge.removeCodexAccount(laneId);
+    const updated = await window.bridge.getModelSettings(scope);
+    if (modelScopeRef.current !== scope) return;
+    modelRequest.current += 1;
+    setChecking(false);
+    setModels(updated);
+    refreshWorkspaceSettings();
+  };
+
+  const restrictCodexAccount = async (laneId: string) => {
+    if (modelWorkspaceId === undefined) return;
+    const scope = modelWorkspaceId;
+    const updated = await window.bridge.restrictCodexAccount(laneId, scope);
     if (modelScopeRef.current !== scope) return;
     modelRequest.current += 1;
     setChecking(false);
@@ -383,6 +422,8 @@ export default function SettingsWindow({ section, workspace, onWorkspacesChanged
           {section === 'models' && models !== null && modelsScope === modelWorkspaceId && (
             <ModelsPage
               settings={models}
+              onAddCodexAccount={addCodexAccount}
+              onRemoveCodexAccount={removeCodexAccount}
               onAddClaudeAccount={addClaudeAccount}
               onRemoveClaudeAccount={removeClaudeAccount}
               checking={checking}
@@ -541,8 +582,11 @@ export default function SettingsWindow({ section, workspace, onWorkspacesChanged
                 laneId: providerId,
                 providerName: models?.providers.find(provider => provider.id === providerId)?.label ?? providerId,
               })}
+              onAddCodexAccount={addCodexAccount}
+              onRemoveCodexAccount={removeCodexAccount}
               onAddClaudeAccount={addClaudeAccount}
               onRemoveClaudeAccount={removeClaudeAccount}
+              onRestrictCodexAccount={restrictCodexAccount}
               onRestrictClaudeAccount={restrictClaudeAccount}
             />
           )}

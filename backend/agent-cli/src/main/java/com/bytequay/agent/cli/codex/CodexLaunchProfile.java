@@ -101,13 +101,18 @@ final class CodexLaunchProfile
                     "-c", "model_providers.deepseek.supports_websockets=false",
                     "-c", "model_providers.deepseek.request_max_retries=0");
         }
+        else if (options.gatewayUrl().isPresent()) {
+            arguments.add("-c", "cli_auth_credentials_store=\"ephemeral\"", "-c", "model_provider=\"bytequay_gateway\"");
+            gatewayProviderConfig(options.gatewayUrl().orElseThrow()).forEach((key, value) ->
+                    arguments.add("-c", "model_providers.bytequay_gateway." + key + "=" + (value instanceof String text ? tomlString(text) : value)));
+        }
         else {
             // forced_login_method synthesizes managed requirements; the isolation guard checks account/read instead.
             arguments.add("-c", "cli_auth_credentials_store=\"file\"");
         }
         arguments.add(
                 "-c",
-                "web_search=" + tomlString(textOnly || ci ? "disabled" : "live"),
+                "web_search=" + tomlString(textOnly || ci || options.gatewayUrl().isPresent() ? "disabled" : "live"),
                 "-c",
                 "shell_environment_policy.inherit=\"core\"",
                 "-c",
@@ -185,7 +190,7 @@ final class CodexLaunchProfile
         ChildProfile childProfile = options.childProfile();
         boolean ci = options.ci();
         ImmutableMap.Builder<String, Object> config = ImmutableMap.<String, Object>builder()
-                .put("web_search", options.textOnly() || ci ? "disabled" : "live")
+                .put("web_search", options.textOnly() || ci || options.gatewayUrl().isPresent() ? "disabled" : "live")
                 .put("features", expectedFeatures(childProfile, options.textOnly(), options.review(), options.asksUser()))
                 .put("shell_environment_policy", expectedShellEnvironmentPolicy())
                 .put("project_doc_max_bytes", 0);
@@ -199,6 +204,8 @@ final class CodexLaunchProfile
         options.deepSeek().ifPresent(deepSeek -> config.put("model_provider", "deepseek")
                 .put("model_catalog_json", deepSeek.catalog().toString())
                 .put("model_providers", ImmutableMap.of("deepseek", deepSeekProviderConfig(deepSeek.baseUrl()))));
+        options.gatewayUrl().ifPresent(url -> config.put("model_provider", "bytequay_gateway")
+                .put("model_providers", ImmutableMap.of("bytequay_gateway", gatewayProviderConfig(url))));
         if (ci) {
             config.put("approval_policy", "on-request")
                     .put("approvals_reviewer", "auto_review")
@@ -252,6 +259,17 @@ final class CodexLaunchProfile
                 "request_max_retries", 0);
     }
 
+    static Map<String, Object> gatewayProviderConfig(String baseUrl)
+    {
+        return ImmutableMap.of(
+                "name", "ByteQuay gateway",
+                "base_url", baseUrl,
+                "wire_api", "responses",
+                "env_key", CodexGateway.TOKEN_VARIABLE,
+                "requires_openai_auth", false,
+                "supports_websockets", false);
+    }
+
     /** A TOML basic string: quotes, backslashes, and line breaks escaped, everything else literal. */
     static String tomlString(String value)
     {
@@ -285,16 +303,25 @@ final class CodexLaunchProfile
             boolean githubCommands,
             boolean review,
             boolean asksUser,
-            Optional<DeepSeekProfile> deepSeek)
+            Optional<DeepSeekProfile> deepSeek,
+            Optional<String> gatewayUrl)
     {
         Options
         {
             requireNonNull(childProfile, "childProfile is null");
             ciWritableRoots = ImmutableList.copyOf(ciWritableRoots);
             requireNonNull(deepSeek, "deepSeek is null");
+            requireNonNull(gatewayUrl, "gatewayUrl is null");
+            checkArgument(deepSeek.isEmpty() || gatewayUrl.isEmpty(), "A launch uses one provider");
             boolean ci = !ciWritableRoots.isEmpty();
             checkArgument(!githubCommands || (!textOnly && !ci && !review), "Restricted Codex profiles cannot use attended network scope");
             checkArgument(!review || (!textOnly && !ci), "Restricted Codex profiles cannot run private review");
+        }
+
+        Options(ChildProfile childProfile, boolean textOnly, List<String> ciWritableRoots, boolean githubCommands, boolean review, boolean asksUser,
+                Optional<DeepSeekProfile> deepSeek)
+        {
+            this(childProfile, textOnly, ciWritableRoots, githubCommands, review, asksUser, deepSeek, Optional.empty());
         }
 
         boolean ci()

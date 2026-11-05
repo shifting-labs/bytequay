@@ -124,6 +124,84 @@ class TestCodexCliDriver
     private Path worktree;
 
     @Test
+    void namedBrowserAccountChecksEmailBeforeDiscoveryAndBeforeTaskStartup()
+            throws Exception
+    {
+        supervisor.versionOutput = "codex-cli 0.164.0";
+        supervisor.loggedIn = false;
+        Path home = CodexHome.prepare(worktree.resolve("work-account-home"));
+        CodexCliDriver driver = CodexCliDriver.account("/fake/codex", "0.164.0", objectMapper, supervisor, home,
+                PermissionBroker.builder(() -> URI.create(MCP_ENDPOINT), objectMapper, (taskId, query) -> "").build(),
+                new AgentLaneId("codex-account-123e4567-e89b-12d3-a456-426614174000"), "Codex · Work", "work@example.com");
+        AgentProviderStatus signedOut = driver.probe();
+        assertThat(signedOut.readiness()).isEqualTo(AgentProviderStatus.Readiness.AUTHENTICATION_REQUIRED);
+        assertThat(signedOut.signInCommand().orElseThrow()).contains(home.toString(), "cli_auth_credentials_store=\"file\"", " login").doesNotContain("--email");
+        supervisor.loggedIn = true;
+        for (String identity : ImmutableList.of(
+                "{\"requiresOpenaiAuth\":true,\"account\":{\"type\":\"chatgpt\",\"email\":\"personal@example.com\"}}",
+                "{\"requiresOpenaiAuth\":true,\"account\":{\"type\":\"chatgpt\"}}",
+                "{\"requiresOpenaiAuth\":true,\"account\":{\"type\":\"apiKey\"}}")) {
+            supervisor.account = identity;
+            assertThat(driver.probe().readiness()).isEqualTo(AgentProviderStatus.Readiness.AUTHENTICATION_REQUIRED);
+        }
+        String work = "{\"requiresOpenaiAuth\":true,\"account\":{\"type\":\"chatgpt\",\"email\":\"Work@example.com\",\"planType\":\"business\"}}";
+        supervisor.account = work;
+        assertThat(driver.probe().diagnostic()).isEqualTo("Signed in as Work@example.com");
+        assertThat(driver.models()).isNotEmpty();
+        // A different login after the readiness check must not get the task's context.
+        supervisor.account = "{\"requiresOpenaiAuth\":true,\"account\":{\"type\":\"chatgpt\",\"email\":\"personal@example.com\"}}";
+        assertThatThrownBy(() -> driver.open(context(Optional.empty(), new AtomicReference<>()), events::add)).hasMessageContaining("sign in as work@example.com");
+        assertThat(supervisor.servers.getLast().threadRequests).isEmpty();
+        supervisor.account = work;
+        try (AgentSession session = driver.open(context(Optional.empty(), new AtomicReference<>()), events::add)) {
+            RunningTurn turn = session.start(command("explain this"));
+            supervisor.servers.getLast().completeTurnWithSummary("[{\"type\":\"agentMessage\",\"id\":\"answer\",\"text\":\"Explained.\",\"phase\":\"final_answer\"}]");
+            assertThat(turn.completion().toCompletableFuture().get(5, TimeUnit.SECONDS).state()).isEqualTo(AgentTurnResult.State.COMPLETED);
+        }
+        assertThat(supervisor.environments).allSatisfy(environment -> assertThat(environment).containsEntry("CODEX_HOME", home.toString()));
+    }
+
+    @Test
+    void gatewayRunsWithoutChatGptAndKeepsItsTokenOutOfArgumentsAndShells()
+            throws Exception
+    {
+        supervisor.versionOutput = "codex-cli 0.164.0";
+        CodexHome.prepare(codexHome());
+        AtomicReference<Optional<String>> token = new AtomicReference<>(Optional.of("fake-gateway-secret"));
+        CodexCliDriver driver = CodexCliDriver.gateway("/fake/codex", "0.164.0", objectMapper, supervisor, codexHome(),
+                PermissionBroker.builder(() -> URI.create(MCP_ENDPOINT), objectMapper, (taskId, query) -> "").build(),
+                new AgentLaneId("codex-account-123e4567-e89b-12d3-a456-426614174000"), "Codex · Work",
+                new CodexGateway("https://llm.example.com/v1", token::get));
+        assertThat(driver.probe().available()).isTrue();
+        assertThat(supervisor.probeCommands).hasValue(1);
+        assertThat(driver.quota().windows()).isEmpty();
+        AgentSessionRef reference;
+        try (AgentSession session = driver.open(context(Optional.empty(), new AtomicReference<>()), events::add)) {
+            reference = session.reference();
+            RunningTurn turn = session.start(command("explain this"));
+            assertThat(supervisor.environments.getLast()).containsEntry(CodexGateway.TOKEN_VARIABLE, "fake-gateway-secret");
+            assertThat(supervisor.serverArgv.getLast()).contains("model_provider=\"bytequay_gateway\"", "web_search=\"disabled\"")
+                    .noneMatch(argument -> argument.contains("fake-gateway-secret"));
+            assertThat(CodexLaunchProfile.expectedShellEnvironmentIncludeOnly()).doesNotContain(CodexGateway.TOKEN_VARIABLE);
+            supervisor.server().completeTurnWithSummary("[{\"type\":\"agentMessage\",\"id\":\"answer\",\"text\":\"Explained. fake-gateway-secret\",\"phase\":\"final_answer\"}]");
+            AgentTurnResult result = turn.completion().toCompletableFuture().get(5, TimeUnit.SECONDS);
+            assertThat(result.state()).isEqualTo(AgentTurnResult.State.COMPLETED);
+            assertThat(result.finalResponse()).contains("Explained. [REDACTED]");
+        }
+        try (AgentSession resumed = driver.open(context(Optional.of(reference), new AtomicReference<>()), events::add)) {
+            assertThat(resumed.reference().providerValue()).isEqualTo(reference.providerValue());
+            assertThat(supervisor.servers.getLast().threadRequests.getFirst().path("config").path("model_provider").asText()).isEqualTo("bytequay_gateway");
+        }
+        ObjectNode provider = objectMapper.valueToTree(CodexLaunchProfile.gatewayProviderConfig("https://other.example.com/v1"));
+        supervisor.configBody = objectMapper.createObjectNode().set("model_providers", objectMapper.createObjectNode().set("bytequay_gateway", provider)).toString();
+        assertThatThrownBy(() -> driver.open(context(Optional.empty(), new AtomicReference<>()), events::add)).hasMessageContaining("base_url");
+        supervisor.configBody = "{}";
+        token.set(Optional.empty());
+        assertThat(driver.probe().readiness()).isEqualTo(AgentProviderStatus.Readiness.AUTHENTICATION_REQUIRED);
+        assertThatThrownBy(() -> driver.open(context(Optional.empty(), new AtomicReference<>()), events::add)).hasMessageContaining("token removed");
+    }
+
+    @Test
     void readOnlyDiscussionsReceiveTheirContextToolWithoutWritePermissions()
             throws Exception
     {
@@ -4965,7 +5043,7 @@ class TestCodexCliDriver
             ObjectNode config = objectMapper.valueToTree(
                     CodexLaunchProfile.threadConfig(
                             new CodexLaunchProfile.Options(childProfile(), textOnlyProfile(), ciWritableRoots(), allowsGitHubCommands() && !review, review,
-                                    hasArguments("--enable", CodexLaunchProfile.ASK_USER_FEATURE), deepSeekProfile()),
+                                    hasArguments("--enable", CodexLaunchProfile.ASK_USER_FEATURE), deepSeekProfile(), gatewayUrl()),
                             false));
             for (String argument : argv) {
                 for (String key : ImmutableList.of("approval_policy", "approvals_reviewer", "cli_auth_credentials_store")) {
@@ -4976,6 +5054,13 @@ class TestCodexCliDriver
                 }
             }
             return config;
+        }
+
+        private Optional<String> gatewayUrl()
+                throws IOException
+        {
+            Optional<String> url = configArgument("model_providers.bytequay_gateway.base_url=");
+            return url.isPresent() ? Optional.of(objectMapper.readTree(url.orElseThrow()).asText()) : Optional.empty();
         }
 
         private Optional<CodexLaunchProfile.DeepSeekProfile> deepSeekProfile()
@@ -5115,7 +5200,7 @@ class TestCodexCliDriver
                 case "account/read" -> {
                     accountReads.incrementAndGet();
                     // What Codex 0.164.0 reports for a provider that does not use OpenAI auth with ephemeral credentials.
-                    respond(id, argv.contains("model_provider=\"deepseek\"") ? "{\"account\":null,\"requiresOpenaiAuth\":false}" : account.get());
+                    respond(id, (argv.contains("model_provider=\"deepseek\"") || argv.contains("model_provider=\"bytequay_gateway\"")) ? "{\"account\":null,\"requiresOpenaiAuth\":false}" : account.get());
                 }
                 case "config/read" -> respond(id, configReadResponse().toString());
                 case "skills/list" -> respond(id, "{\"data\":[{\"cwd\":\""

@@ -276,6 +276,47 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
       view.render('models'); await settle(); view.finish(withAccount); await settle();
       assert(!view.host.textContent?.includes('Claude · Work'), 'Repository setup does not add global provider rows');
     },
+    async 'repository Codex login opens the named work profile'(view: View) {
+      await settle(); view.finish(saved); await settle();
+      view.render('ws-agents', 'repo-a'); await settle(); view.finish(saved); await settle();
+      const calls: unknown[][] = [];
+      const work = { ...saved.providers[0], id: 'codex-account-work', label: 'Codex · Work', workspaceId: 'repo-a',
+        readiness: 'AUTHENTICATION_REQUIRED' as const, signInCommand: 'codex login', diagnostic: 'Sign in as work@example.com' };
+      window.bridge.addCodexAccount = async (...args) => { calls.push(args); return { ...saved, providers: [...saved.providers, work] }; };
+      const add = [...view.host.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Add Codex account');
+      assert(add !== undefined, 'Codex setup is available in the repository'); add.click(); await settle();
+      changeInput(element<HTMLInputElement>('[aria-label="Codex account name"]', view.host, 'Name'), 'Work');
+      changeInput(element<HTMLInputElement>('[aria-label="Codex account email"]', view.host, 'Email'), 'work@example.com'); await settle();
+      const confirm = [...view.host.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.textContent?.trim() === 'Add and sign in');
+      assert(confirm !== undefined && !confirm.disabled, 'Browser login can be added'); confirm.click(); await settle();
+      assert(JSON.stringify(calls) === JSON.stringify([['Work', 'work@example.com', 'repo-a']]), 'The email and repository scope cross the bridge');
+      assert(view.signIns.join() === work.id, 'Sign-in uses only the new work profile');
+      assert(view.host.textContent?.includes('Choose the intended email'), 'The browser account choice is explicit');
+    },
+    async 'Codex gateway setup saves a token without opening browser sign-in'(view: View) {
+      await settle(); view.finish(saved); await settle();
+      const gateway = { ...saved.providers[0], id: 'codex-account-123', label: 'Codex · Work' };
+      const configured = { ...saved, providers: [...saved.providers, gateway] };
+      const calls: unknown[][] = [];
+      window.bridge.addCodexGateway = async (...args) => { calls.push(args); return configured; };
+      const add = [...view.host.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Add Codex account');
+      assert(add !== undefined, 'Codex account setup is available'); add.click(); await settle();
+      const tokenMode = [...view.host.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.textContent?.trim() === 'Gateway token');
+      assert(tokenMode !== undefined, 'Gateway token remains an option'); tokenMode.click(); await settle();
+      changeInput(element<HTMLInputElement>('[aria-label="Codex account name"]', view.host, 'Name'), 'Work');
+      changeInput(element<HTMLInputElement>('[aria-label="Codex gateway URL"]', view.host, 'URL'), 'https://llm.example.com/v1');
+      const token = element<HTMLInputElement>('[aria-label="Codex gateway token"]', view.host, 'Token');
+      assert(token.type === 'password', 'Token input is masked');
+      changeInput(token, 'sk-gateway-test'); await settle();
+      const confirm = [...view.host.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.textContent?.trim() === 'Add account');
+      assert(confirm !== undefined && !confirm.disabled, 'Gateway can be saved'); confirm.click(); await settle();
+      assert(JSON.stringify(calls) === JSON.stringify([['Work', 'https://llm.example.com/v1', 'sk-gateway-test', undefined]]), 'Gateway values cross the bridge');
+      assert(view.signIns.length === 0, 'Gateway setup does not run CLI login');
+      assert(view.host.querySelector('[role="dialog"]') === null, 'Token form is discarded after saving');
+      assert(view.host.textContent?.includes('Codex · Work'), 'Saved gateway appears as an account');
+      view.host.querySelector<HTMLButtonElement>('[aria-label="Development model"]')?.click(); await settle();
+      assert([...view.host.querySelectorAll('[role="option"]')].some(option => option.textContent?.includes('Codex · Work')), 'Gateway model can be selected');
+    },
     async 'leaving models ignores a late refresh error'(view: View) {
       await settle(); view.render('browser'); await settle();
       view.fail(new Error('Old page refresh failed')); await settle();

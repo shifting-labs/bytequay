@@ -42,7 +42,7 @@ export function providerBrand(id: string): Brand | null {
   const key = id.toLowerCase();
   if (key.startsWith('claude')) return 'claude';
   if (key.startsWith('deepseek')) return 'deepseek';
-  if (key === 'codex' || key.startsWith('openai')) return 'openai';
+  if (key === 'codex' || key.startsWith('codex-account-') || key.startsWith('openai')) return 'openai';
   return null;
 }
 

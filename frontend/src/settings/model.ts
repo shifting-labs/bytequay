@@ -39,19 +39,23 @@ export function isDeepSeekKeyLane(laneId: string): boolean {
   return laneId.startsWith('deepseek-key-');
 }
 
+export function isCodexAccount(laneId: string): boolean {
+  return laneId.startsWith('codex-account-');
+}
+
 export function isClaudeAccount(laneId: string): boolean {
   return laneId.startsWith('claude-account-');
 }
 
-/** How a new Claude account authenticates: a Claude sign-in for the email, or a gateway's base URL and token. */
-export type ClaudeLogin = { email: string } | { gatewayUrl: string; token: string };
+/** How a CLI account authenticates: a browser sign-in email, or a gateway base URL and token. */
+export type CliAccountLogin = { email: string } | { gatewayUrl: string; token: string };
 
 export function isClaudeLane(laneId: string): boolean {
   return laneId === 'claude' || isClaudeAccount(laneId);
 }
 
 export function laneLabel(laneId: string): string {
-  return isClaudeAccount(laneId) ? 'Claude' : isDeepSeekKeyLane(laneId) ? 'DeepSeek' : LANE_LABELS[laneId] ?? laneId;
+  return isCodexAccount(laneId) ? 'Codex' : isClaudeAccount(laneId) ? 'Claude' : isDeepSeekKeyLane(laneId) ? 'DeepSeek' : LANE_LABELS[laneId] ?? laneId;
 }
 
 /**
@@ -124,6 +128,9 @@ export function laneModels(providers: ModelProviderDto[] | null, laneId: string)
 }
 
 export function providerRemedy(readiness: AgentProviderReadiness, laneId = INTERACTIVE_LANE_ID): ProviderRemedy {
+  if (isCodexAccount(laneId) && readiness === 'AUTHENTICATION_REQUIRED') {
+    return { kind: 'login', title: 'Check the Codex account', detail: 'Sign in with the intended email in Models settings, or replace the token for a gateway account.', command: null };
+  }
   if (isDeepSeekKeyLane(laneId) && readiness === 'AUTHENTICATION_REQUIRED') {
     return {
       kind: 'retry',
@@ -138,7 +145,7 @@ export function providerRemedy(readiness: AgentProviderReadiness, laneId = INTER
         kind: 'install',
         title: isDeepSeekKeyLane(laneId) ? 'Install Codex CLI' : 'Install the CLI',
         detail: 'ByteQuay runs the CLI you already manage; it does not install one for you.',
-        command: isClaudeAccount(laneId) ? INSTALL_COMMANDS.claude : isDeepSeekKeyLane(laneId) ? INSTALL_COMMANDS.codex : INSTALL_COMMANDS[laneId] ?? null,
+        command: isClaudeAccount(laneId) ? INSTALL_COMMANDS.claude : (isDeepSeekKeyLane(laneId) || isCodexAccount(laneId)) ? INSTALL_COMMANDS.codex : INSTALL_COMMANDS[laneId] ?? null,
       };
     case 'AUTHENTICATION_REQUIRED':
       return {
@@ -185,7 +192,7 @@ export function providerStatusLabel(readiness: AgentProviderReadiness, checking:
     case 'READY':
       return { label: 'Ready', tone: 'is-ok' };
     case 'AUTHENTICATION_REQUIRED':
-      return { label: isDeepSeekKeyLane(laneId) ? 'Key needs attention' : 'Sign in required', tone: 'is-danger' };
+      return { label: isCodexAccount(laneId) ? 'Account needs attention' : isDeepSeekKeyLane(laneId) ? 'Key needs attention' : 'Sign in required', tone: 'is-danger' };
     case 'CLI_MISSING':
       return { label: 'Not installed', tone: 'is-neutral' };
     case 'UNSUPPORTED':

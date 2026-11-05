@@ -46,6 +46,13 @@ describe('settings model helpers', () => {
 });
 
 describe('provider remedies', () => {
+  it('routes named Codex accounts to their own authentication setup', () => {
+    expect(laneLabel('codex-account-work')).toBe('Codex');
+    expect(providerStatusLabel('AUTHENTICATION_REQUIRED', false, 'codex-account-work').label).toBe('Account needs attention');
+    expect(providerRemedy('AUTHENTICATION_REQUIRED', 'codex-account-work')).toMatchObject({ kind: 'login', title: 'Check the Codex account', command: null });
+    expect(providerRemedy('CLI_MISSING', 'codex-account-work').command).toBe('npm install -g @openai/codex');
+  });
+
   it('offers installation commands and requires the provider profile for sign-in', () => {
     expect(providerRemedy('CLI_MISSING').kind).toBe('install');
     expect(providerRemedy('CLI_MISSING').command).toBe('npm install -g @openai/codex');

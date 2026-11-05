@@ -41,13 +41,15 @@ public class ProviderUsageService
 
     private final AgentDriverRegistry drivers;
     private final ClaudeAccounts claudeAccounts;
+    private final CodexAccounts codexAccounts;
     private final ModelApiKeyStore apiKeys;
     private final Clock clock;
     private final Cache<AgentLaneId, Usage> cache = CacheBuilder.newBuilder().maximumSize(100).expireAfterWrite(Duration.ofSeconds(60)).build();
 
-    public ProviderUsageService(AgentDriverRegistry drivers, ClaudeAccounts claudeAccounts, ModelApiKeyStore apiKeys, Clock clock)
+    public ProviderUsageService(AgentDriverRegistry drivers, ClaudeAccounts claudeAccounts, CodexAccounts codexAccounts, ModelApiKeyStore apiKeys, Clock clock)
     {
         this.drivers = requireNonNull(drivers, "drivers is null");
+        this.codexAccounts = requireNonNull(codexAccounts, "codexAccounts is null");
         this.claudeAccounts = requireNonNull(claudeAccounts, "claudeAccounts is null");
         this.apiKeys = requireNonNull(apiKeys, "apiKeys is null");
         this.clock = requireNonNull(clock, "clock is null");
@@ -58,8 +60,9 @@ public class ProviderUsageService
         ImmutableList.Builder<Account> result = ImmutableList.builder();
         result.add(new Account("codex", "Codex"), new Account("claude", "Claude"));
         claudeAccounts.list().forEach(account -> result.add(new Account(account.laneId().value(), "Claude · " + account.label())));
+        codexAccounts.list().forEach(account -> result.add(new Account(account.laneId().value(), "Codex · " + account.label())));
         apiKeys.findAll().stream()
-                .filter(key -> !key.provider().equals(ClaudeAccounts.GATEWAY_TOKEN_PROVIDER))
+                .filter(key -> !key.provider().equals(ClaudeAccounts.GATEWAY_TOKEN_PROVIDER) && !key.provider().equals(CodexAccounts.GATEWAY_TOKEN_PROVIDER))
                 .forEach(key -> result.add(new Account(API_KEY_PREFIX + key.id(), key.provider() + " · " + key.alias())));
         return result.build();
     }

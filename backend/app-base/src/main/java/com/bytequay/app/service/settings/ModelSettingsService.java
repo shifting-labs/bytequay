@@ -107,16 +107,25 @@ public class ModelSettingsService
     private final AgentDriverRegistry drivers;
     private final ModelApiKeyStore apiKeys;
     private final ClaudeAccounts claudeAccounts;
+    private final CodexAccounts codexAccounts;
     private final AppSettingsStore settings;
     private final ObjectMapper mapper;
     private final Clock clock;
     private final AtomicReference<List<AgentProviderStatus>> providerStatuses = new AtomicReference<>(ImmutableList.of());
     private volatile Optional<Instant> checkedAt = Optional.empty();
 
-    public ModelSettingsService(AgentDriverRegistry drivers, ModelApiKeyStore apiKeys, ClaudeAccounts claudeAccounts, AppSettingsStore settings, ObjectMapper mapper, Clock clock)
+    public ModelSettingsService(
+            AgentDriverRegistry drivers,
+            ModelApiKeyStore apiKeys,
+            ClaudeAccounts claudeAccounts,
+            CodexAccounts codexAccounts,
+            AppSettingsStore settings,
+            ObjectMapper mapper,
+            Clock clock)
     {
         this.drivers = requireNonNull(drivers, "drivers is null");
         this.apiKeys = requireNonNull(apiKeys, "apiKeys is null");
+        this.codexAccounts = requireNonNull(codexAccounts, "codexAccounts is null");
         this.claudeAccounts = requireNonNull(claudeAccounts, "claudeAccounts is null");
         this.settings = requireNonNull(settings, "settings is null");
         this.mapper = requireNonNull(mapper, "mapper is null");
@@ -189,6 +198,9 @@ public class ModelSettingsService
             status = new AgentProviderStatus(laneId, AgentProviderStatus.Readiness.TEMPORARILY_UNAVAILABLE, Optional.empty(), "Could not be checked. Try again.",
                     AgentCapabilities.none());
         }
+        if (laneId.value().startsWith(AgentLaneId.CODEX_ACCOUNT_PREFIX)) {
+            refreshCatalogs(ImmutableList.of(status), false);
+        }
         AgentProviderStatus checked = status;
         providerStatuses.updateAndGet(statuses -> Stream.concat(statuses.stream().filter(value -> !value.laneId().equals(laneId)), Stream.of(checked))
                 .collect(toImmutableList()));
@@ -247,6 +259,7 @@ public class ModelSettingsService
     {
         requireNonNull(workspaceId, "workspaceId is null");
         List<Provider> providers = providerStatuses.get().stream()
+                .filter(status -> codexAccounts.availableIn(status.laneId().value(), workspaceId))
                 .filter(status -> !status.laneId().value().startsWith(AgentLaneId.CLAUDE_ACCOUNT_PREFIX)
                         || claudeAccounts.find(status.laneId().value()).filter(account -> account.availableIn(workspaceId)).isPresent())
                 .filter(status -> (!status.laneId().value().startsWith(DEEPSEEK_LANE_PREFIX)
@@ -255,7 +268,7 @@ public class ModelSettingsService
                 .map(this::provider)
                 .collect(toImmutableList());
         List<ApiKey> keys = apiKeys.findAll().stream()
-                // Gateway tokens belong to their Claude account, not the API keys list.
+                // Gateway tokens belong to their CLI account, not the API keys list.
                 .filter(key -> KEY_PROVIDER_MODELS.containsKey(key.provider()))
                 .map(this::apiKey)
                 .collect(toImmutableList());
@@ -278,6 +291,7 @@ public class ModelSettingsService
     public void validateWorkspaceAccess(String configId, Optional<String> workspaceId)
     {
         claudeAccounts.checkWorkspaceAccess(configId, workspaceId);
+        codexAccounts.checkWorkspaceAccess(configId, workspaceId);
     }
 
     /** Validates a provider model selection without changing saved settings. */
@@ -298,9 +312,8 @@ public class ModelSettingsService
     public void requireImageInput(AgentLaneId laneId, Optional<String> selectedModel, List<String> mediaTypes)
     {
         String model = selectedModel.orElse("");
-        boolean modelAccepted = get().providers().stream()
-                .filter(provider -> provider.id().equals(laneId.value()))
-                .flatMap(provider -> provider.models().stream())
+        boolean modelAccepted = cliCatalog(laneId.value()).stream()
+                .flatMap(catalog -> catalog.models().stream())
                 .anyMatch(option -> option.id().equals(model) && option.acceptsImages());
         if (!modelAccepted) {
             throw new InvalidAgentRequestException("Model " + model + " does not accept images");
@@ -346,6 +359,9 @@ public class ModelSettingsService
                     return new AgentModelSetting(
                             type, workspaceId.isEmpty() && global.explicit(), global.configId(), global.label(), global.model(), global.modelLabel(), global.effort());
                 });
+        if (!codexAccounts.availableIn(selected.configId(), workspaceId)) {
+            return new AgentModelSetting(type, selected.explicit(), selected.configId(), "Codex account unavailable", selected.model(), selected.modelLabel(), selected.effort());
+        }
         if (!claudeAccounts.availableIn(selected.configId(), workspaceId)) {
             return new AgentModelSetting(type, selected.explicit(), selected.configId(), "Claude account unavailable", selected.model(), selected.modelLabel(), selected.effort());
         }
@@ -409,7 +425,7 @@ public class ModelSettingsService
     public ClaudeAccount addClaudeAccount(String label, String email, Optional<String> workspaceId)
     {
         ClaudeAccount account = claudeAccounts.add(label, email, workspaceId);
-        workspaceId.ifPresent(id -> useClaudeAccount(id, account.laneId().value()));
+        workspaceId.ifPresent(id -> useAccount(id, account.laneId().value()));
         return account;
     }
 
@@ -418,7 +434,7 @@ public class ModelSettingsService
     {
         ClaudeAccount account = claudeAccounts.addGateway(label, gatewayUrl, workspaceId);
         apiKeys.save(new ModelApiKey(account.id(), account.id(), ClaudeAccounts.GATEWAY_TOKEN_PROVIDER, SecretMasker.mask(token), clock.instant()), token);
-        workspaceId.ifPresent(id -> useClaudeAccount(id, account.laneId().value()));
+        workspaceId.ifPresent(id -> useAccount(id, account.laneId().value()));
         return account;
     }
 
@@ -434,10 +450,45 @@ public class ModelSettingsService
     public void restrictClaudeAccount(String laneId, String workspaceId)
     {
         claudeAccounts.restrictToWorkspace(laneId, workspaceId);
-        useClaudeAccount(workspaceId, laneId);
+        useAccount(workspaceId, laneId);
     }
 
-    private void useClaudeAccount(String workspaceId, String laneId)
+    public CodexAccount addCodexAccount(String label, String email, Optional<String> workspaceId)
+    {
+        return codexAccounts.add(label, email, workspaceId);
+    }
+
+    @Transactional
+    public CodexAccount addCodexGateway(String label, String gatewayUrl, String token, Optional<String> workspaceId)
+    {
+        CodexAccount account = codexAccounts.addGateway(label, gatewayUrl, workspaceId);
+        apiKeys.save(new ModelApiKey(account.id(), account.id(), CodexAccounts.GATEWAY_TOKEN_PROVIDER, SecretMasker.mask(token), clock.instant()), token);
+        return account;
+    }
+
+    public void selectCodexAccount(CodexAccount account)
+    {
+        if (cliCatalog(account.laneId().value()).filter(catalog -> !catalog.models().isEmpty()).isPresent()) {
+            account.workspaceId().ifPresent(id -> useAccount(id, account.laneId().value()));
+        }
+    }
+
+    @Transactional
+    public void removeCodexAccount(String id)
+    {
+        codexAccounts.remove(id);
+        apiKeys.delete(id);
+        settings.delete(CATALOG_PREFIX + AgentLaneId.CODEX_ACCOUNT_PREFIX + id);
+    }
+
+    @Transactional
+    public void restrictCodexAccount(String laneId, String workspaceId)
+    {
+        codexAccounts.restrictToWorkspace(laneId, workspaceId);
+        codexAccounts.find(laneId).ifPresent(this::selectCodexAccount);
+    }
+
+    private void useAccount(String workspaceId, String laneId)
     {
         Catalog catalog = requireCatalog(laneId);
         for (AgentModelType type : AgentModelType.values()) {
@@ -498,7 +549,7 @@ public class ModelSettingsService
                 .filter(AgentProviderStatus::available)
                 .map(status -> status.laneId().value())
                 .filter(laneId -> !laneId.startsWith(DEEPSEEK_LANE_PREFIX))
-                .filter(laneId -> !laneId.startsWith(AgentLaneId.CLAUDE_ACCOUNT_PREFIX))
+                .filter(laneId -> !laneId.startsWith(AgentLaneId.CLAUDE_ACCOUNT_PREFIX) && !laneId.startsWith(AgentLaneId.CODEX_ACCOUNT_PREFIX))
                 .filter(laneId -> cliCatalog(laneId).filter(catalog -> !catalog.models().isEmpty()).isPresent())
                 .findFirst()
                 .orElse(CLAUDE_LANE);
@@ -543,7 +594,7 @@ public class ModelSettingsService
         return new Provider(
                 id,
                 catalog.label(),
-                claudeAccounts.find(id).flatMap(ClaudeAccount::workspaceId),
+                claudeAccounts.find(id).flatMap(ClaudeAccount::workspaceId).or(() -> codexAccounts.find(id).flatMap(CodexAccount::workspaceId)),
                 status.readiness(),
                 status.version(),
                 status.diagnostic(),
@@ -609,6 +660,9 @@ public class ModelSettingsService
     /** The stored catalog row for a CLI lane; absent until seeded or probed. */
     private Optional<Catalog> cliCatalog(String laneId)
     {
+        if (laneId.startsWith(AgentLaneId.CODEX_ACCOUNT_PREFIX) && codexAccounts.find(laneId).isEmpty()) {
+            return Optional.empty();
+        }
         if (laneId.startsWith(AgentLaneId.CLAUDE_ACCOUNT_PREFIX)) {
             try {
                 String label = drivers.require(new AgentLaneId(laneId)).label();

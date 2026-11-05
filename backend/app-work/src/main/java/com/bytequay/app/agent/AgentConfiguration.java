@@ -17,6 +17,7 @@ import com.bytequay.agent.cli.claude.ClaudeCliDriver;
 import com.bytequay.agent.cli.claude.ClaudeGateway;
 import com.bytequay.agent.cli.claude.ClaudeHome;
 import com.bytequay.agent.cli.codex.CodexCliDriver;
+import com.bytequay.agent.cli.codex.CodexGateway;
 import com.bytequay.agent.cli.codex.CodexHome;
 import com.bytequay.agent.cli.mcp.PermissionBroker;
 import com.bytequay.agent.cli.process.LaunchIntentRecorder;
@@ -89,6 +90,7 @@ import com.bytequay.app.service.pr.PullRequestService;
 import com.bytequay.app.service.settings.AgentSkillService;
 import com.bytequay.app.service.settings.AppSettingsService;
 import com.bytequay.app.service.settings.ClaudeAccounts;
+import com.bytequay.app.service.settings.CodexAccounts;
 import com.bytequay.app.workspace.WorkspaceHostingService;
 import com.bytequay.core.ci.CiAutofixStore;
 import com.bytequay.core.review.AgentReview;
@@ -113,6 +115,7 @@ import org.springframework.context.annotation.Primary;
 
 import java.io.IOException;
 import java.net.URI;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.util.List;
 import java.util.Optional;
@@ -213,6 +216,7 @@ public class AgentConfiguration
     @Primary
     public AgentDriverRegistry agentDriverRegistry(
             ClaudeAccountDriverRegistry cliDrivers,
+            CodexAccounts codexAccounts,
             ModelApiKeyStore keys,
             AgentProperties properties,
             ObjectMapper objectMapper,
@@ -220,10 +224,24 @@ public class AgentConfiguration
             PermissionBroker permissions,
             @Value("${bytequay.agent.codex-enabled:false}") boolean codexEnabled)
     {
+        CodexAccountDriverRegistry accounts = new CodexAccountDriverRegistry(cliDrivers, codexAccounts, codexEnabled, account -> {
+            try {
+                Path home = CodexHome.prepare(properties.codexHome().resolve("accounts").resolve(account.id()));
+                if (account.gatewayUrl().isPresent()) {
+                    return CodexCliDriver.gateway(properties.codexExecutable(), properties.codexMinimumVersion(), objectMapper, supervisor, home, permissions,
+                            account.laneId(), "Codex · " + account.label(), new CodexGateway(account.gatewayUrl().orElseThrow(), () -> keys.findSecretById(account.id())));
+                }
+                return CodexCliDriver.account(properties.codexExecutable(), properties.codexMinimumVersion(), objectMapper, supervisor, home, permissions,
+                        account.laneId(), "Codex · " + account.label(), account.email().orElseThrow());
+            }
+            catch (IOException failure) {
+                throw new AgentUnavailableException("Codex account home could not be prepared", failure);
+            }
+        });
         if (!codexEnabled) {
-            return cliDrivers;
+            return accounts;
         }
-        return new DeepSeekAgentDriverRegistry(cliDrivers, keys, key -> {
+        return new DeepSeekAgentDriverRegistry(accounts, keys, key -> {
             AgentLaneId laneId = new AgentLaneId(DeepSeekAgentDriverRegistry.PREFIX + key.id());
             Supplier<Optional<String>> secret = () -> keys.findSecretById(key.id());
             CodexCliDriver codex = CodexCliDriver.deepSeek(

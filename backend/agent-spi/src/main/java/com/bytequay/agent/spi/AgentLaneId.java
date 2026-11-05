@@ -20,6 +20,7 @@ public record AgentLaneId(String value)
 {
     public static final AgentLaneId CODEX_CLI = new AgentLaneId("codex");
     public static final AgentLaneId CLAUDE_CLI = new AgentLaneId("claude");
+    public static final String CODEX_ACCOUNT_PREFIX = "codex-account-";
     public static final String CLAUDE_ACCOUNT_PREFIX = "claude-account-";
 
     public AgentLaneId

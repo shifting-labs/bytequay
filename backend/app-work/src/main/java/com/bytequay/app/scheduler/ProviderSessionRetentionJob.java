@@ -74,6 +74,7 @@ public class ProviderSessionRetentionJob
     {
         Instant deleteBefore = Instant.now().minus(retention);
         sweep("Codex", () -> CodexHome.pruneSessions(properties.codexHome(), deleteBefore));
+        sweepHomes(properties.codexHome().resolve("accounts"), "Codex", home -> CodexHome.pruneSessions(home, deleteBefore));
         sweepHomes(properties.codexHome().resolve("deepseek"), "DeepSeek", home -> CodexHome.pruneSessions(home, deleteBefore));
         sweep("Claude", () -> ClaudeHome.pruneSessions(properties.claudeHome(), deleteBefore));
         sweepHomes(properties.claudeHome().resolve("accounts"), "Claude", home -> ClaudeHome.pruneSessions(home, deleteBefore));

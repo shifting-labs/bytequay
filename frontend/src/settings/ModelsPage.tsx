@@ -16,8 +16,8 @@ import { Plus } from 'lucide-react';
 import { ProviderIcon } from '../agents/ProviderIcon';
 import type { AgentModelSettingDto, AgentModelType, ModelSettingsDto } from '../types';
 import ProviderRow from './ProviderRow';
-import ClaudeAccountsCard from './ClaudeAccountsCard';
-import { isClaudeAccount, isDeepSeekKeyLane, providerStatusLabel, type ClaudeLogin } from './model';
+import CliAccountsCard from './CliAccountsCard';
+import { isClaudeAccount, isCodexAccount, isDeepSeekKeyLane, providerStatusLabel, type CliAccountLogin } from './model';
 import { AddAction, Dialog, Segmented, SelectPill, SettingsCard, SettingsRow, StatusDot, dotTone, type PillOption } from './primitives';
 
 /** Chosen when Review should follow Development instead of naming its own model. */
@@ -122,7 +122,7 @@ export function AgentModelControls({ agent, settings, saving = false, inheritLab
         wide
         ariaLabel={`${typeLabel(agent.type)} model`}
         value={inheriting ? INHERIT_VALUE : optionValue(agent.configId, agent.model)}
-        label={inheriting ? (inheritLabel ?? '') : (isClaudeAccount(agent.configId) || isDeepSeekKeyLane(agent.configId)) ? `${agent.modelLabel} · ${agent.label}` : agent.modelLabel}
+        label={inheriting ? (inheritLabel ?? '') : (isClaudeAccount(agent.configId) || isCodexAccount(agent.configId) || isDeepSeekKeyLane(agent.configId)) ? `${agent.modelLabel} · ${agent.label}` : agent.modelLabel}
         icon={inheriting ? undefined : <ProviderIcon id={agent.configId} />}
         options={pillOptions}
         footer={onAddKey === undefined ? undefined : (
@@ -173,7 +173,7 @@ function AgentModelRow({ agent, subtitle, ...controls }: {
   );
 }
 
-export default function ModelsPage({ settings, checkedAt, checking, saving = false, error, onCheck, onSignIn, onChoose, onInherit, onAddKey, onRemoveKey, onAddClaudeAccount, onRemoveClaudeAccount }: {
+export default function ModelsPage({ settings, checkedAt, checking, saving = false, error, onCheck, onSignIn, onChoose, onInherit, onAddKey, onRemoveKey, onAddCodexAccount, onRemoveCodexAccount, onAddClaudeAccount, onRemoveClaudeAccount }: {
   settings: ModelSettingsDto;
   checkedAt: string | null;
   checking: boolean;
@@ -186,7 +186,9 @@ export default function ModelsPage({ settings, checkedAt, checking, saving = fal
   onInherit: (type: AgentModelType) => void;
   onAddKey: (provider: string, alias: string, key: string) => void;
   onRemoveKey: (alias: string) => void;
-  onAddClaudeAccount?: (label: string, login: ClaudeLogin) => Promise<void>;
+  onAddCodexAccount?: (label: string, login: CliAccountLogin) => Promise<void>;
+  onRemoveCodexAccount?: (laneId: string) => Promise<void>;
+  onAddClaudeAccount?: (label: string, login: CliAccountLogin) => Promise<void>;
   onRemoveClaudeAccount?: (laneId: string) => Promise<void>;
 }) {
   const [addingKey, setAddingKey] = useState(false);
@@ -234,7 +236,7 @@ export default function ModelsPage({ settings, checkedAt, checking, saving = fal
             <button type="button" className="setw-btn" disabled={checking} onClick={onCheck}>Check</button>
           </SettingsRow>
         )}
-        {globalSettings.providers.filter(provider => !isDeepSeekKeyLane(provider.id) && !isClaudeAccount(provider.id)).map(provider => (
+        {globalSettings.providers.filter(provider => !isDeepSeekKeyLane(provider.id) && !isClaudeAccount(provider.id) && !isCodexAccount(provider.id)).map(provider => (
           <ProviderRow key={provider.id} provider={provider} checking={checking} onSignIn={onSignIn} onCheck={onCheck} />
         ))}
         {settings.apiKeys.map(key => {
@@ -265,7 +267,9 @@ export default function ModelsPage({ settings, checkedAt, checking, saving = fal
       <div className="setw-footnote">
         Models and providers refresh automatically{checkedAt === null ? '' : ` · checked ${checkedAt}`}. Check fetches the latest available models.
       </div>
-      <ClaudeAccountsCard providers={globalSettings.providers.filter(provider => isClaudeAccount(provider.id))} checking={checking}
+      <CliAccountsCard providerName="Codex" providers={globalSettings.providers} checking={checking} onCheck={onCheck}
+        onSignIn={onSignIn} onAdd={onAddCodexAccount} onRemove={onRemoveCodexAccount} />
+      <CliAccountsCard providers={globalSettings.providers.filter(provider => isClaudeAccount(provider.id))} checking={checking}
         onCheck={onCheck} onSignIn={onSignIn} onAdd={onAddClaudeAccount} onRemove={onRemoveClaudeAccount} />
 
       {addingKey && (

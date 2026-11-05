@@ -1432,6 +1432,11 @@ function registerIpc(): void {
     if (typeof email !== 'string' || email.trim() === '' || email.length > 254) throw new Error('Invalid Claude account email');
     return backendJson(`${backendBase()}/api/settings/claude-accounts`, jsonInit('POST', { label, email, workspaceId })).then(parseModelSettings);
   });
+  ipcMain.handle('settings:codex-accounts:add', (_event, label: unknown, email: unknown, workspaceId?: string) => {
+    if (typeof label !== 'string' || label.trim() === '' || label.length > 80) throw new Error('Invalid Codex account name');
+    if (typeof email !== 'string' || email.trim() === '' || email.length > 254) throw new Error('Invalid Codex account email');
+    return backendJson(`${backendBase()}/api/settings/codex-accounts`, jsonInit('POST', { label, email, workspaceId })).then(parseModelSettings);
+  });
   ipcMain.handle('settings:claude-accounts:add-gateway', (_event, label: unknown, gatewayUrl: unknown, token: unknown, workspaceId?: string) => {
     if (typeof label !== 'string' || label.trim() === '' || label.length > 80) throw new Error('Invalid Claude account name');
     if (typeof gatewayUrl !== 'string' || gatewayUrl.trim() === '' || gatewayUrl.length > 2048) throw new Error('Invalid gateway URL');
@@ -1451,6 +1456,26 @@ function registerIpc(): void {
       throw new Error('Invalid Claude account');
     }
     return backendJson(`${backendBase()}/api/settings/claude-accounts/${laneId.slice('claude-account-'.length)}`, { method: 'DELETE' }).then(parseModelSettings);
+  });
+  ipcMain.handle('settings:codex-accounts:add-gateway', (_event, label: unknown, gatewayUrl: unknown, token: unknown, workspaceId?: string) => {
+    if (typeof label !== 'string' || label.trim() === '' || label.length > 80) throw new Error('Invalid Codex account name');
+    if (typeof gatewayUrl !== 'string' || gatewayUrl.trim() === '' || gatewayUrl.length > 2048) throw new Error('Invalid gateway URL');
+    if (typeof token !== 'string' || token.trim() === '') throw new Error('Invalid gateway token');
+    return backendJson(`${backendBase()}/api/settings/codex-accounts/gateway`, jsonInit('POST', { label, gatewayUrl, token, workspaceId })).then(parseModelSettings);
+  });
+  ipcMain.handle('settings:codex-accounts:restrict', (_event, laneId: unknown, workspaceId: unknown) => {
+    if (typeof laneId !== 'string' || !/^codex-account-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(laneId)) {
+      throw new Error('Invalid Codex account');
+    }
+    if (typeof workspaceId !== 'string' || workspaceId.trim() === '') throw new Error('Invalid workspace');
+    return backendJson(`${backendBase()}/api/settings/codex-accounts/${laneId.slice('codex-account-'.length)}/workspace`,
+      jsonInit('PUT', { workspaceId })).then(parseModelSettings);
+  });
+  ipcMain.handle('settings:codex-accounts:remove', (_event, laneId: unknown) => {
+    if (typeof laneId !== 'string' || !/^codex-account-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(laneId)) {
+      throw new Error('Invalid Codex account');
+    }
+    return backendJson(`${backendBase()}/api/settings/codex-accounts/${laneId.slice('codex-account-'.length)}`, { method: 'DELETE' }).then(parseModelSettings);
   });
   ipcMain.handle('settings:api-keys:remove', (_event, alias: string) =>
     backendJson(`${backendBase()}/api/settings/api-keys/${encodeURIComponent(alias)}`, {

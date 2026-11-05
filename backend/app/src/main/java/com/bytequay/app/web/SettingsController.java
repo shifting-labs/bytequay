@@ -17,6 +17,7 @@ import com.bytequay.app.service.settings.AgentModelType;
 import com.bytequay.app.service.settings.AppPreferences;
 import com.bytequay.app.service.settings.AppSettingsService;
 import com.bytequay.app.service.settings.ClaudeAccount;
+import com.bytequay.app.service.settings.CodexAccount;
 import com.bytequay.app.service.settings.ModelSettingsService;
 import com.bytequay.app.service.settings.ModelSettingsService.ModelSettings;
 import com.bytequay.app.service.settings.QuietHours;
@@ -118,6 +119,47 @@ public class SettingsController
         return models.get(workspaceId);
     }
 
+    @PostMapping("/codex-accounts")
+    public ModelSettings addCodexAccount(@RequestBody CodexAccountRequest request)
+    {
+        checkText(request.label(), "account name");
+        checkText(request.email(), "account email");
+        Optional<String> workspaceId = Optional.ofNullable(request.workspaceId());
+        workspaceId.ifPresent(this::requireWorkspace);
+        CodexAccount account = models.addCodexAccount(request.label(), request.email(), workspaceId);
+        models.checkNewLane(account.laneId());
+        return models.get(workspaceId);
+    }
+
+    @PostMapping("/codex-accounts/gateway")
+    public ModelSettings addCodexGateway(@RequestBody CodexGatewayRequest request)
+    {
+        checkText(request.label(), "account name");
+        checkText(request.gatewayUrl(), "gateway URL");
+        checkText(request.token(), "gateway token");
+        Optional<String> workspaceId = Optional.ofNullable(request.workspaceId());
+        workspaceId.ifPresent(this::requireWorkspace);
+        CodexAccount account = models.addCodexGateway(request.label(), request.gatewayUrl(), request.token(), workspaceId);
+        models.checkNewLane(account.laneId());
+        models.selectCodexAccount(account);
+        return models.get(workspaceId);
+    }
+
+    @PutMapping("/codex-accounts/{id}/workspace")
+    public ModelSettings restrictCodexAccount(@PathVariable String id, @RequestBody AccountWorkspaceRequest request)
+    {
+        requireWorkspace(request.workspaceId());
+        models.restrictCodexAccount("codex-account-" + id, request.workspaceId());
+        return models.get(Optional.of(request.workspaceId()));
+    }
+
+    @DeleteMapping("/codex-accounts/{id}")
+    public ModelSettings removeCodexAccount(@PathVariable String id)
+    {
+        models.removeCodexAccount(id);
+        return models.get();
+    }
+
     @PutMapping("/claude-accounts/{id}/workspace")
     public ModelSettings restrictClaudeAccount(@PathVariable String id, @RequestBody AccountWorkspaceRequest request)
     {
@@ -187,6 +229,10 @@ public class SettingsController
     public record ApiKeyRequest(String provider, String alias, String key) {}
 
     public record ClaudeAccountRequest(String label, String email, String workspaceId) {}
+
+    public record CodexAccountRequest(String label, String email, String workspaceId) {}
+
+    public record CodexGatewayRequest(String label, String gatewayUrl, String token, String workspaceId) {}
 
     public record ClaudeGatewayRequest(String label, String gatewayUrl, String token, String workspaceId) {}
 

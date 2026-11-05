@@ -66,10 +66,12 @@ final class CodexIsolationGuard
     private final boolean review;
     private final boolean asksUser;
     private final Optional<CodexLaunchProfile.DeepSeekProfile> deepSeek;
+    private final Optional<String> gatewayUrl;
+    private final Optional<String> loginEmail;
     private boolean accountVerified;
 
     /** Checks the launch {@code options} described, the same value its process flags and thread config were built from. */
-    CodexIsolationGuard(CodexAppServerClient client, Path codexHome, CodexLaunchProfile.Options options, Optional<URI> codeQueriesEndpoint)
+    CodexIsolationGuard(CodexAppServerClient client, Path codexHome, CodexLaunchProfile.Options options, Optional<URI> codeQueriesEndpoint, Optional<String> loginEmail)
     {
         this.client = requireNonNull(client, "client is null");
         this.codexHome = requireNonNull(codexHome, "codexHome is null").toAbsolutePath().normalize();
@@ -81,6 +83,8 @@ final class CodexIsolationGuard
         this.review = options.review();
         this.asksUser = options.asksUser();
         this.deepSeek = options.deepSeek();
+        this.gatewayUrl = options.gatewayUrl();
+        this.loginEmail = requireNonNull(loginEmail, "loginEmail is null");
     }
 
     /**
@@ -234,7 +238,7 @@ final class CodexIsolationGuard
             throw unavailable("config/read omitted the launch policy");
         }
         boolean ci = !ciWritableRoots.isEmpty();
-        requireTextValue(config, "web_search", textOnly || ci ? "disabled" : "live");
+        requireTextValue(config, "web_search", textOnly || ci || gatewayUrl.isPresent() ? "disabled" : "live");
         requireTextValue(config, "approval_policy", textOnly ? "never" : "on-request");
         requireTextValue(config, "approvals_reviewer", "auto_review");
         if (deepSeek.isPresent()) {
@@ -259,6 +263,24 @@ final class CodexIsolationGuard
                 throw unavailable("DeepSeek provider could retry a failed request");
             }
             DeepSeekModelCatalog.verify(deepSeek.orElseThrow().catalog());
+        }
+        if (gatewayUrl.isPresent()) {
+            requireTextValue(config, "cli_auth_credentials_store", "ephemeral");
+            requireTextValue(config, "model_provider", "bytequay_gateway");
+            JsonNode provider = config.path("model_providers").path("bytequay_gateway");
+            CodexLaunchProfile.gatewayProviderConfig(gatewayUrl.orElseThrow()).forEach((key, value) -> {
+                if (value instanceof String text) {
+                    requireTextValue(provider, key, text);
+                }
+                else {
+                    requireBooleanValue(provider, key, (Boolean) value);
+                }
+            });
+            if (config.hasNonNull("forced_login_method") || provider.hasNonNull("experimental_bearer_token")
+                    || provider.hasNonNull("http_headers") || provider.hasNonNull("env_http_headers")
+                    || provider.hasNonNull("auth") || provider.hasNonNull("gateway_oauth")) {
+                throw unavailable("Codex gateway inherited additional authentication settings");
+            }
         }
         if (ci) {
             JsonNode sandbox = config.path("sandbox_workspace_write");
@@ -494,17 +516,20 @@ final class CodexIsolationGuard
     private void verifyChatGptAccount()
     {
         JsonNode response = request("account/read", ACCOUNT_TIMEOUT);
-        if (deepSeek.isPresent()) {
-            // DeepSeek authenticates through ByteQuay's loopback with its own key; an OpenAI login must not be reachable at all.
+        if (deepSeek.isPresent() || gatewayUrl.isPresent()) {
+            // Gateway lanes authenticate with their own key; an OpenAI login must not be reachable.
             JsonNode account = response.path("account");
             if (response.path("requiresOpenaiAuth").asBoolean(true) || !(account.isNull() || account.isMissingNode())) {
-                throw unavailable("DeepSeek launch can reach an OpenAI account");
+                throw unavailable("Gateway launch can reach an OpenAI account");
             }
             return;
         }
         if (!response.path("requiresOpenaiAuth").asBoolean(false)
                 || !response.path("account").path("type").asText().equals("chatgpt")) {
             throw unavailable("Codex must use the isolated ChatGPT account");
+        }
+        if (loginEmail.filter(email -> !email.equalsIgnoreCase(response.path("account").path("email").asText())).isPresent()) {
+            throw unavailable("Codex account does not match; sign in as " + loginEmail.orElseThrow());
         }
     }
 

@@ -21,6 +21,7 @@ describe('provider icon', () => {
     expect(providerBrand('claude')).toBe('claude');
     expect(providerBrand('claude-account-1')).toBe('claude');
     expect(providerBrand('codex')).toBe('openai');
+    expect(providerBrand('codex-account-work')).toBe('openai');
     expect(providerBrand('OpenAI')).toBe('openai');
     expect(providerBrand('deepseek-key-1')).toBe('deepseek');
     expect(providerBrand('DeepSeek')).toBe('deepseek');

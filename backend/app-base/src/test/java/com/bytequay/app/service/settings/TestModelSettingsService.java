@@ -89,9 +89,37 @@ class TestModelSettingsService
         apiKeys = new InMemoryModelApiKeyStore();
         clock = mock(Clock.class);
         when(clock.instant()).thenReturn(Instant.parse("2026-08-23T10:00:00Z"));
-        service = new ModelSettingsService(drivers, apiKeys, new ClaudeAccounts(settingsStore, new ObjectMapper()), settingsStore, new ObjectMapper(), clock);
+        service = new ModelSettingsService(
+                drivers, apiKeys, new ClaudeAccounts(settingsStore, new ObjectMapper()), new CodexAccounts(settingsStore, new ObjectMapper()),
+                settingsStore, new ObjectMapper(), clock);
         service.seedCatalogs();
         service.refreshCatalogs();
+    }
+
+    @Test
+    void codexGatewayDiscoversModelsScopesSelectionsAndDeletesItsSecret()
+    {
+        CodexAccount account = service.addCodexGateway("Work", "https://llm.example.com/v1", "sk-gateway-secret", Optional.of("repository"));
+        when(drivers.require(account.laneId())).thenReturn(codexDriver);
+        when(codexDriver.label()).thenReturn("Codex · Work");
+        when(codexDriver.probe()).thenReturn(new AgentProviderStatus(account.laneId(), Readiness.READY, Optional.of("0.164.0"), "Configured", AgentCapabilities.none()));
+        service.checkNewLane(account.laneId());
+        service.selectCodexAccount(account);
+        assertThat(service.get().providers()).noneMatch(provider -> provider.id().equals(account.laneId().value()));
+        assertThat(service.get(Optional.of("repository")).providers()).anyMatch(provider -> provider.id().equals(account.laneId().value()) && !provider.models().isEmpty());
+        assertThat(service.agentModel(AgentModelType.DEVELOPMENT, Optional.of("repository")).configId()).isEqualTo(account.laneId().value());
+        assertThat(service.agentModel(AgentModelType.REVIEW, Optional.of("repository")).configId()).isEqualTo(account.laneId().value());
+        assertThatThrownBy(() -> service.setAgentModel(AgentModelType.DEVELOPMENT, account.laneId().value(), "gpt-5.6-sol", Optional.empty()))
+                .hasMessageContaining("unavailable in this repository");
+        when(codexDriver.capabilities()).thenReturn(new AgentCapabilities(true, true, true, ImmutableSet.of(), ImmutableSet.of("image/png")));
+        service.requireImageInput(account.laneId(), Optional.of("gpt-5.6-sol"), ImmutableList.of("image/png"));
+        assertThat(apiKeys.findSecretById(account.id())).contains("sk-gateway-secret");
+        assertThat(service.get().apiKeys()).noneMatch(key -> key.alias().equals(account.id()));
+        service.removeCodexAccount(account.id());
+        assertThat(apiKeys.findSecretById(account.id())).isEmpty();
+        assertThat(service.get(Optional.of("repository")).providers()).noneMatch(provider -> provider.id().equals(account.laneId().value()));
+        assertThatThrownBy(() -> service.validateWorkspaceAccess(account.laneId().value(), Optional.of("repository")))
+                .hasMessageContaining("unavailable in this repository");
     }
 
     @Test
@@ -151,7 +179,8 @@ class TestModelSettingsService
         service.setWorkspaceOverride("repo-a", AgentModelType.REVIEW, work.laneId().value(), "sonnet", Optional.of("Medium"));
         assertThat(service.agentModel(AgentModelType.REVIEW, Optional.of("repo-a")).label()).isEqualTo("Claude · Work");
         ModelSettingsService restarted = new ModelSettingsService(
-                drivers, apiKeys, new ClaudeAccounts(settingsStore, new ObjectMapper()), settingsStore, new ObjectMapper(), clock);
+                drivers, apiKeys, new ClaudeAccounts(settingsStore, new ObjectMapper()), new CodexAccounts(settingsStore, new ObjectMapper()),
+                settingsStore, new ObjectMapper(), clock);
         assertThat(restarted.agentModel(AgentModelType.DEVELOPMENT, Optional.of("repo-a")).configId()).isEqualTo(work.laneId().value());
         service.clearWorkspaceOverride("repo-a", AgentModelType.DEVELOPMENT);
         assertThat(service.agentModel(AgentModelType.DEVELOPMENT, Optional.of("repo-b")).configId()).isEqualTo(personal.laneId().value());
@@ -420,7 +449,7 @@ class TestModelSettingsService
         ModelSettingsService fresh = new ModelSettingsService(
                 drivers,
                 new InMemoryModelApiKeyStore(),
-                new ClaudeAccounts(settingsStore, new ObjectMapper()),
+                new ClaudeAccounts(settingsStore, new ObjectMapper()), new CodexAccounts(settingsStore, new ObjectMapper()),
                 new InMemoryAppSettingsStore(),
                 new ObjectMapper(),
                 Clock.fixed(Instant.parse("2026-08-23T10:00:00Z"), ZoneOffset.UTC));
@@ -511,7 +540,7 @@ class TestModelSettingsService
         ModelSettingsService fresh = new ModelSettingsService(
                 drivers,
                 new InMemoryModelApiKeyStore(),
-                new ClaudeAccounts(settingsStore, new ObjectMapper()),
+                new ClaudeAccounts(settingsStore, new ObjectMapper()), new CodexAccounts(settingsStore, new ObjectMapper()),
                 new InMemoryAppSettingsStore(),
                 new ObjectMapper(),
                 Clock.fixed(Instant.parse("2026-08-23T10:00:00Z"), ZoneOffset.UTC));
@@ -553,7 +582,7 @@ class TestModelSettingsService
         ModelSettingsService upgraded = new ModelSettingsService(
                 drivers,
                 new InMemoryModelApiKeyStore(),
-                new ClaudeAccounts(settingsStore, new ObjectMapper()),
+                new ClaudeAccounts(settingsStore, new ObjectMapper()), new CodexAccounts(settingsStore, new ObjectMapper()),
                 store,
                 new ObjectMapper(),
                 Clock.fixed(Instant.parse("2026-08-23T10:00:00Z"), ZoneOffset.UTC));
@@ -571,7 +600,7 @@ class TestModelSettingsService
         ModelSettingsService unseeded = new ModelSettingsService(
                 drivers,
                 new InMemoryModelApiKeyStore(),
-                new ClaudeAccounts(settingsStore, new ObjectMapper()),
+                new ClaudeAccounts(settingsStore, new ObjectMapper()), new CodexAccounts(settingsStore, new ObjectMapper()),
                 new InMemoryAppSettingsStore(),
                 new ObjectMapper(),
                 Clock.fixed(Instant.parse("2026-08-23T10:00:00Z"), ZoneOffset.UTC));

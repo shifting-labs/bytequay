@@ -219,6 +219,8 @@ public final class CodexCliDriver
     private final String laneLabel;
     private final Optional<Supplier<Optional<String>>> deepSeekSecret;
     private final Optional<Path> deepSeekCatalog;
+    private final Optional<CodexGateway> gateway;
+    private final Optional<String> loginEmail;
     private final String executable;
     private final String minimumVersion;
     private final Version minimumRelease;
@@ -241,7 +243,7 @@ public final class CodexCliDriver
     public CodexCliDriver(String executable, String minimumVersion, ObjectMapper objectMapper, ProcessSupervisor supervisor, Path codexHome, PermissionBroker permissions)
     {
         this(executable, minimumVersion, objectMapper, supervisor, ProviderCli.inheritedEnvironment(System.getenv(), INHERITED_ENVIRONMENT), codexHome, permissions,
-                DEFAULT_QUIESCENCE_TIMEOUT, AgentLaneId.CODEX_CLI, "Codex", Optional.empty());
+                DEFAULT_QUIESCENCE_TIMEOUT, AgentLaneId.CODEX_CLI, "Codex", Optional.empty(), Optional.empty(), Optional.empty());
     }
 
     /** One saved DeepSeek key becomes one Codex App Server lane with its own isolated home. */
@@ -260,7 +262,39 @@ public final class CodexCliDriver
         checkArgument(laneId.value().startsWith("deepseek-key-"), "DeepSeek lane ID must identify a saved key");
         checkArgument(!label.isBlank(), "label is blank");
         return new CodexCliDriver(executable, minimumVersion, objectMapper, supervisor, ProviderCli.inheritedEnvironment(System.getenv(), INHERITED_ENVIRONMENT),
-                codexHome, permissions, DEFAULT_QUIESCENCE_TIMEOUT, laneId, label, Optional.of(secretSupplier));
+                codexHome, permissions, DEFAULT_QUIESCENCE_TIMEOUT, laneId, label, Optional.of(secretSupplier), Optional.empty(), Optional.empty());
+    }
+
+    public static CodexCliDriver gateway(
+            String executable,
+            String minimumVersion,
+            ObjectMapper objectMapper,
+            ProcessSupervisor supervisor,
+            Path codexHome,
+            PermissionBroker permissions,
+            AgentLaneId laneId,
+            String label,
+            CodexGateway gateway)
+    {
+        checkArgument(laneId.value().startsWith(AgentLaneId.CODEX_ACCOUNT_PREFIX), "Codex gateway lane must identify an account");
+        return new CodexCliDriver(executable, minimumVersion, objectMapper, supervisor, ProviderCli.inheritedEnvironment(System.getenv(), INHERITED_ENVIRONMENT),
+                codexHome, permissions, DEFAULT_QUIESCENCE_TIMEOUT, laneId, label, Optional.empty(), Optional.of(gateway), Optional.empty());
+    }
+
+    public static CodexCliDriver account(
+            String executable,
+            String minimumVersion,
+            ObjectMapper objectMapper,
+            ProcessSupervisor supervisor,
+            Path codexHome,
+            PermissionBroker permissions,
+            AgentLaneId laneId,
+            String label,
+            String email)
+    {
+        checkArgument(laneId.value().startsWith(AgentLaneId.CODEX_ACCOUNT_PREFIX), "Codex login lane must identify an account");
+        return new CodexCliDriver(executable, minimumVersion, objectMapper, supervisor, ProviderCli.inheritedEnvironment(System.getenv(), INHERITED_ENVIRONMENT),
+                codexHome, permissions, DEFAULT_QUIESCENCE_TIMEOUT, laneId, label, Optional.empty(), Optional.empty(), Optional.of(email));
     }
 
     CodexCliDriver(
@@ -273,7 +307,7 @@ public final class CodexCliDriver
             PermissionBroker permissions,
             Duration quiescenceTimeout)
     {
-        this(executable, minimumVersion, objectMapper, supervisor, environment, codexHome, permissions, quiescenceTimeout, AgentLaneId.CODEX_CLI, "Codex", Optional.empty());
+        this(executable, minimumVersion, objectMapper, supervisor, environment, codexHome, permissions, quiescenceTimeout, AgentLaneId.CODEX_CLI, "Codex", Optional.empty(), Optional.empty(), Optional.empty());
     }
 
     private CodexCliDriver(
@@ -287,8 +321,12 @@ public final class CodexCliDriver
             Duration quiescenceTimeout,
             AgentLaneId laneId,
             String laneLabel,
-            Optional<Supplier<Optional<String>>> deepSeekSecret)
+            Optional<Supplier<Optional<String>>> deepSeekSecret,
+            Optional<CodexGateway> gateway,
+            Optional<String> loginEmail)
     {
+        this.loginEmail = requireNonNull(loginEmail, "loginEmail is null");
+        this.gateway = requireNonNull(gateway, "gateway is null");
         this.laneId = requireNonNull(laneId, "laneId is null");
         this.laneLabel = requireNonNull(laneLabel, "laneLabel is null");
         this.deepSeekSecret = requireNonNull(deepSeekSecret, "deepSeekSecret is null");
@@ -372,8 +410,11 @@ public final class CodexCliDriver
         if (deepSeekSecret.isEmpty()) {
             registration.ifPresent(value -> processEnvironment.put(CodexLaunchProfile.ManagedToolsLaunch.TOKEN_VARIABLE, value.token()));
         }
+        Optional<String> gatewayToken = gateway.map(value -> value.token().get().filter(token -> !token.isBlank())
+                .orElseThrow(() -> new AgentUnavailableException("Codex gateway token removed or unavailable")));
+        gatewayToken.ifPresent(token -> processEnvironment.put(CodexGateway.TOKEN_VARIABLE, token));
         Map<String, String> launchEnvironment = processEnvironment.buildOrThrow();
-        SecretRedactor baseRedactor = key.map(redactor::withSecret).orElse(redactor);
+        SecretRedactor baseRedactor = key.or(() -> gatewayToken).map(redactor::withSecret).orElse(redactor);
         SecretRedactor launchRedactor = registration.map(value -> baseRedactor.withSecret(value.token())).orElse(baseRedactor);
         Optional<DeepSeekLoopback> loopback = key.map(value -> DeepSeekLoopback.start(value, permissions, registration, objectMapper));
         try {
@@ -386,7 +427,7 @@ public final class CodexCliDriver
             // Only sessions without a checkout strip the shell and code tools: a read-only session must
             // keep them to read the checkout at all, and is contained by its sandbox.
             CodexLaunchProfile.Options options = new CodexLaunchProfile.Options(
-                    childProfile, shellOff(access), ciWritableRoots, allowGitHubCommands, review, asksUser, deepSeek);
+                    childProfile, shellOff(access), ciWritableRoots, allowGitHubCommands, review, asksUser, deepSeek, gateway.map(CodexGateway::baseUrl));
             return new ClientLaunch(new CodexAppServerClient(
                     supervisor,
                     new ProcessSpec(
@@ -474,7 +515,16 @@ public final class CodexCliDriver
                 CodexIsolationGuard.rejectRuleFiles(codexHome);
                 return status(AgentProviderStatus.Readiness.READY, Optional.of(version), "DeepSeek Codex profile is available");
             }
-            ProviderCli.Result login = run(executable, "login", "status");
+            if (gateway.isPresent()) {
+                if (gateway.orElseThrow().token().get().filter(token -> !token.isBlank()).isEmpty()) {
+                    return status(AgentProviderStatus.Readiness.AUTHENTICATION_REQUIRED, Optional.of(version), "Codex gateway token removed or unavailable");
+                }
+                CodexIsolationGuard.rejectRuleFiles(codexHome);
+                return status(AgentProviderStatus.Readiness.READY, Optional.of(version), "Gateway configured; access is checked when a task runs");
+            }
+            ProviderCli.Result login = loginEmail.isPresent()
+                    ? run(executable, "-c", "cli_auth_credentials_store=\"file\"", "login", "status")
+                    : run(executable, "login", "status");
             if (login.exitCode() != 0) {
                 // ByteQuay's home is signed in separately from the user's, so the generic login
                 // command would land in the wrong place; readiness carries the exact one.
@@ -482,7 +532,7 @@ public final class CodexCliDriver
                         laneId,
                         AgentProviderStatus.Readiness.AUTHENTICATION_REQUIRED,
                         Optional.of(version),
-                        "Codex CLI " + version + " is not signed in for ByteQuay: " + login.combinedOutput(),
+                        loginEmail.map(email -> "Sign in as " + email).orElse("Codex CLI " + version + " is not signed in for ByteQuay: " + login.combinedOutput()),
                         capabilities(),
                         Optional.of(signInCommand()));
             }
@@ -497,6 +547,19 @@ public final class CodexCliDriver
                         Optional.of(version),
                         "Codex CLI " + version + " is signed in, but " + rules.getMessage()
                                 + ". ByteQuay tasks refuse inherited exec-policy rules; move that rules folder aside, then check again.");
+            }
+            if (loginEmail.isPresent()) {
+                try (CodexAppServerClient client = appServerClient("codex-account", codexHome, CodexLaunchProfile.ChildProfile.NONE)) {
+                    client.start();
+                    AccountReadResponse identity = client.request("account/read", new CodexProtocol.EmptyParams(), AccountReadResponse.class,
+                            Duration.ofSeconds(60));
+                    Optional<String> email = identity.account().filter(account -> account.type().equals("chatgpt")).flatMap(AccountIdentity::email);
+                    if (!identity.requiresOpenaiAuth() || email.filter(loginEmail.orElseThrow()::equalsIgnoreCase).isEmpty()) {
+                        return new AgentProviderStatus(laneId, AgentProviderStatus.Readiness.AUTHENTICATION_REQUIRED, Optional.of(version),
+                                "Sign in as " + loginEmail.orElseThrow() + "; the current Codex account does not match", capabilities(), Optional.of(signInCommand()));
+                    }
+                    return status(AgentProviderStatus.Readiness.READY, Optional.of(version), "Signed in as " + email.orElseThrow());
+                }
             }
             return status(AgentProviderStatus.Readiness.READY, Optional.of(version), login.combinedOutput());
         }
@@ -515,6 +578,9 @@ public final class CodexCliDriver
     @Override
     public ProviderQuotaSnapshot quota()
     {
+        if (gateway.isPresent()) {
+            return new ProviderQuotaSnapshot(Optional.empty(), ImmutableList.of(), Optional.of("Check your gateway for usage limits."));
+        }
         requireAvailable();
         try (CodexAppServerClient client = appServerClient("codex-usage", codexHome, CodexLaunchProfile.ChildProfile.NONE)) {
             client.start();
@@ -628,7 +694,7 @@ public final class CodexCliDriver
         if (deepSeekSecret.isPresent() && savedKey.filter(key -> !key.isBlank()).isEmpty()) {
             throw new AgentUnavailableException("DeepSeek key removed or unavailable");
         }
-        SecretRedactor toolRedactor = savedKey.map(redactor::withSecret).orElse(redactor);
+        SecretRedactor toolRedactor = savedKey.or(() -> gateway.flatMap(value -> value.token().get())).map(redactor::withSecret).orElse(redactor);
         List<String> ciWritableRoots = context.permissionPolicy() == AgentPermissionPolicy.CI_AUTOFIX ? ciWritableRoots(context.worktree()) : ImmutableList.of();
         // A task tool token lives exactly as long as this session; the App Server reaches the
         // ByteQuay task MCP endpoint with it and never learns the task's filesystem identity.
@@ -806,7 +872,7 @@ public final class CodexCliDriver
     /** The one command that signs ByteQuay's Codex home in; a plain {@code codex login} would not. */
     private String signInCommand()
     {
-        return "CODEX_HOME=\"" + codexHome + "\" " + executable + " login";
+        return "CODEX_HOME=\"" + codexHome + "\" " + executable + (loginEmail.isPresent() ? " -c 'cli_auth_credentials_store=\"file\"'" : "") + " login";
     }
 
     private ProviderCli.Result run(String... command)
@@ -831,8 +897,12 @@ public final class CodexCliDriver
 
     private Map<String, String> launchEnvironment()
     {
-        return GitCliEnvironment.withoutCredentials(Maps.filterKeys(environment, name -> !name.equals("OPENAI_API_KEY")));
+        return GitCliEnvironment.withoutCredentials(Maps.filterKeys(environment, name -> !name.equals("OPENAI_API_KEY") && (gateway.isEmpty() || !name.equals("OPENAI_BASE_URL"))));
     }
+
+    private record AccountReadResponse(Optional<AccountIdentity> account, boolean requiresOpenaiAuth) {}
+
+    private record AccountIdentity(String type, Optional<String> email) {}
 
     private record ClientLaunch(
             CodexAppServerClient client,
@@ -950,7 +1020,7 @@ public final class CodexCliDriver
             this.developerInstructions = ProviderInstructions.compose(permissionScope, PLAN_INSTRUCTION, context.managedInstructions(), toolInstructions);
             this.setup = ProviderInstructions.setup(permissionScope, PLAN_INSTRUCTION, codeQueries.map(McpRegistration::toolsDigest), toolInstructions);
             this.eventMapper = new CodexEventMapper(context.worktree(), sessionRedactor, deepSeekSecret.isEmpty());
-            this.isolation = new CodexIsolationGuard(client, codexHome, launchOptions, mcpEndpoint);
+            this.isolation = new CodexIsolationGuard(client, codexHome, launchOptions, mcpEndpoint, loginEmail);
             // Attached before the process is started, so nothing App Server emits can arrive
             // before there is a session to receive it.
             client.listen(this);
@@ -1086,7 +1156,7 @@ public final class CodexCliDriver
         @Override
         public synchronized void allowReuse()
         {
-            reuseAllowed = deepSeekSecret.isEmpty() && ciWritableRoots.isEmpty()
+            reuseAllowed = gateway.isEmpty() && deepSeekSecret.isEmpty() && ciWritableRoots.isEmpty()
                     && reference.contractVersion() == REVIEW_DYNAMIC_CONTRACT_VERSION && guardedReviewTools.isPresent()
                     && !context.scratchWorktree() && context.discussionContext().isEmpty() && context.sessionTools().isEmpty();
         }

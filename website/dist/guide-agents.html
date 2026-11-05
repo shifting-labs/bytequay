@@ -48,6 +48,8 @@
             ><span class="mini-label doc-on-page">On this page</span
             ><a href="#models">Choose your model</a
             ><a href="#claude-accounts">Claude Code accounts</a
+            ><a href="#codex-accounts">Codex accounts</a
+            ><a href="#codex-gateways">Codex gateways</a
             ><a href="#agent-tasks">Start an agent task</a
             ><a href="#delivery-and-ci">Delivery and CI</a
             ><a href="#commits-and-backports">Cherry-pick and backport</a
@@ -106,6 +108,31 @@
             <p>
               Existing tasks keep the account they started with.
             </p>
+          </section>
+          <section id="codex-accounts">
+            <h2>Keep Codex work and personal logins separate</h2>
+            <ol>
+              <li>In a repository’s <strong>Model overrides → Codex accounts</strong>, choose <strong>Add Codex account</strong>.</li>
+              <li>Select <strong>Codex login</strong>, enter a name and your work email, then choose <strong>Add and sign in</strong>.</li>
+              <li>Choose your work account and workspace in the browser. ByteQuay verifies the email.</li>
+              <li>Select that account for <strong>Development</strong> and <strong>Review</strong>.</li>
+            </ol>
+            <p>Each login has a separate profile. Repository accounts cannot run in other repositories;
+              accounts added in global <strong>Models</strong> settings are shared. Existing tasks keep their original account.</p>
+            <p>Removing an account from ByteQuay preserves its Codex-owned login and session files.</p>
+          </section>
+          <section id="codex-gateways">
+            <h2>Use Codex through a company gateway</h2>
+            <ol>
+              <li>In <strong>Models → Codex accounts</strong>, choose <strong>Add Codex account</strong>, then <strong>Gateway token</strong>.</li>
+              <li>Enter a name, the Responses API base URL (including <code>/v1</code> when required), and your gateway token.</li>
+              <li>Choose the account and a standard Codex model your gateway supports for Development or Review, such as <code>gpt-6-astra</code>.</li>
+            </ol>
+            <p>Tokens are stored encrypted on your Mac; no ChatGPT sign-in is needed.
+              Add an account in a repository’s <strong>Model overrides</strong>, or choose <strong>Use only here</strong>,
+              to limit it to that repository. Existing tasks keep their account.</p>
+            <p>The model list comes from Codex; gateway access is checked when a task runs.
+              Native web search is unavailable through gateway accounts.</p>
           </section>
           <section id="agent-tasks">
             <h2>Start an agent task</h2>

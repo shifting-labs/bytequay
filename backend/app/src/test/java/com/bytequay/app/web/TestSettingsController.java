@@ -20,6 +20,7 @@ import com.bytequay.app.service.settings.AppPreferences;
 import com.bytequay.app.service.settings.AppSettingsService;
 import com.bytequay.app.service.settings.AppTheme;
 import com.bytequay.app.service.settings.ClaudeAccount;
+import com.bytequay.app.service.settings.CodexAccount;
 import com.bytequay.app.service.settings.ModelSettingsService;
 import com.bytequay.app.service.settings.QuietHours;
 import com.bytequay.core.domain.Workspace;
@@ -136,6 +137,38 @@ class TestSettingsController
                 .andExpect(status().isOk());
         verify(models).checkNewLane(WORK.laneId());
         verify(models).get(Optional.empty());
+    }
+
+    @Test
+    void addingCodexBrowserAccountChecksOnlyItsProfileAndRequiresEmail()
+            throws Exception
+    {
+        mvc().perform(post("/api/settings/codex-accounts").contentType(MediaType.APPLICATION_JSON).content("{\"label\":\"Work\"}"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(models);
+        CodexAccount account = new CodexAccount(WORK.id(), "Work", Optional.of("work@example.com"), Optional.empty(), Optional.empty());
+        when(models.addCodexAccount("Work", "work@example.com", Optional.empty())).thenReturn(account);
+        mvc().perform(post("/api/settings/codex-accounts").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"label\":\"Work\",\"email\":\"work@example.com\"}"))
+                .andExpect(status().isOk());
+        verify(models).checkNewLane(account.laneId());
+    }
+
+    @Test
+    void addingCodexGatewayRequiresTokenAndSelectsTheCheckedAccount()
+            throws Exception
+    {
+        mvc().perform(post("/api/settings/codex-accounts/gateway").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"label\":\"Work\",\"gatewayUrl\":\"https://llm.example.com/v1\"}"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(models);
+        CodexAccount account = new CodexAccount(WORK.id(), "Work", Optional.empty(), Optional.of("https://llm.example.com/v1"), Optional.empty());
+        when(models.addCodexGateway("Work", account.gatewayUrl().orElseThrow(), "sk-gateway", Optional.empty())).thenReturn(account);
+        mvc().perform(post("/api/settings/codex-accounts/gateway").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"label\":\"Work\",\"gatewayUrl\":\"https://llm.example.com/v1\",\"token\":\"sk-gateway\"}"))
+                .andExpect(status().isOk());
+        verify(models).checkNewLane(account.laneId());
+        verify(models).selectCodexAccount(account);
     }
 
     @Test

@@ -15,7 +15,7 @@ import type { ReactNode } from 'react';
 import { LogIn, RefreshCw } from 'lucide-react';
 import { ProviderIcon } from '../agents/ProviderIcon';
 import type { ModelProviderDto } from '../types';
-import { isDeepSeekKeyLane, providerAvailable, providerStatusLabel } from './model';
+import { isCodexAccount, isDeepSeekKeyLane, providerAvailable, providerStatusLabel } from './model';
 import { SettingsRow, StatusDot, dotTone } from './primitives';
 
 export default function ProviderRow({ provider, checking, account = false, onSignIn, onCheck, children }: {
@@ -39,7 +39,7 @@ export default function ProviderRow({ provider, checking, account = false, onSig
         {provider.version ? ` · v${provider.version}` : ''}</span>
     </span>
   }>
-    {onSignIn !== undefined && provider.readiness === 'AUTHENTICATION_REQUIRED' && (
+    {onSignIn !== undefined && provider.readiness === 'AUTHENTICATION_REQUIRED' && (!isCodexAccount(provider.id) || provider.signInCommand) && (
       <button type="button" className="setw-btn" disabled={checking} onClick={() => onSignIn(provider.id)}>
         <LogIn size={12} strokeWidth={2.2} color="var(--text-3)" /><span>Sign in</span>
       </button>
