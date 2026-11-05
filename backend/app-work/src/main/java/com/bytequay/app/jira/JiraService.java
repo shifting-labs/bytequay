@@ -27,7 +27,9 @@ import com.bytequay.integration.jira.JiraClient;
 import com.bytequay.integration.jira.JiraDtos;
 import com.bytequay.integration.jira.JiraIssue;
 import com.bytequay.integration.jira.JiraIssueLocks;
+import com.bytequay.integration.jira.impl.JiraCache;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -40,8 +42,11 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.function.Supplier;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 
 /** Application workflows and scheduling around the independently compiled Jira connector. */
@@ -54,11 +59,12 @@ public class JiraService
     private final WorkspaceStore workspaces;
     private final ObjectProvider<AppSettingsService> appSettings;
     private final WorkItemStore workItems;
+    private final JiraCache cache;
     // Work items depend on Jira tickets, so release an unmarked Epic's work only when needed.
     private final ObjectProvider<WorkItemService> work;
 
     public JiraService(JiraClient client, JiraIssueContextImpl context, JiraIssueTaskStore tasks, WorkspaceStore workspaces,
-            ObjectProvider<AppSettingsService> appSettings, WorkItemStore workItems, ObjectProvider<WorkItemService> work)
+            ObjectProvider<AppSettingsService> appSettings, WorkItemStore workItems, ObjectProvider<WorkItemService> work, JiraCache cache)
     {
         this.client = requireNonNull(client, "client is null");
         this.context = requireNonNull(context, "context is null");
@@ -68,7 +74,82 @@ public class JiraService
         this.appSettings = requireNonNull(appSettings, "appSettings is null");
         this.workItems = requireNonNull(workItems, "workItems is null");
         this.work = requireNonNull(work, "work is null");
+        this.cache = requireNonNull(cache, "cache is null");
     }
+
+    public JiraDtos.Detail unlinkTask(String connectionId, String cloudId, String issueId, String taskId)
+    {
+        return JiraIssueLocks.withLock(cloudId, issueId, () -> {
+            tasks.findBySource(cloudId, issueId).ifPresent(link -> {
+                if (!link.taskId().equals(taskId)) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT, "This ticket's task changed. Refresh before unlinking it.");
+                }
+                context.assignWorkspace(cloudId, issueId, link.workspaceId());
+                tasks.retire(taskId);
+            });
+            return detail(connectionId, cloudId, issueId, false);
+        });
+    }
+
+    /** The accepted Start development action also moves a To Do ticket into its workflow's working status. */
+    public JiraIssue startDevelopment(JiraIssue issue)
+    {
+        return JiraIssueLocks.withLock(issue.cloudId(), issue.id(), () -> {
+            JiraDtos.Detail detail = detail(issue.connectionId(), issue.cloudId(), issue.id(), true);
+            if (detail.error().isPresent() || !detail.issue().updatedAt().equals(issue.updatedAt())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Jira issue changed or could not be refreshed. Refresh it before starting development.");
+            }
+            if (!"new".equalsIgnoreCase(detail.issue().status().category())) {
+                return detail.issue();
+            }
+            List<JiraDtos.Transition> working = detail.transitions().stream()
+                    .filter(transition -> "indeterminate".equalsIgnoreCase(transition.to().category())).collect(ImmutableList.toImmutableList());
+            List<JiraDtos.Transition> named = working.stream()
+                    .filter(transition -> "In Progress".equalsIgnoreCase(transition.to().name())).collect(ImmutableList.toImmutableList());
+            List<JiraDtos.Transition> candidates = named.isEmpty() ? working : named;
+            if (candidates.size() != 1 || candidates.getFirst().fields().stream().anyMatch(JiraDtos.Field::required)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Jira needs a status choice or required fields. Move this ticket to In Progress, then start development again.");
+            }
+            JiraDtos.Detail moved = transition(issue.connectionId(), issue.cloudId(), issue.id(), issue.updatedAt(), candidates.getFirst().id(), ImmutableMap.of());
+            if (moved.error().isPresent() || !"indeterminate".equalsIgnoreCase(moved.issue().status().category())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Jira's status change could not be confirmed. Refresh the ticket before starting development again.");
+            }
+            return moved.issue();
+        });
+    }
+
+    /** Uses only published PR text; detached attempts retain context but can no longer write to the ticket. */
+    public void pullRequestPublished(String taskId, String url, Supplier<String> description)
+    {
+        tasks.findByTaskId(taskId).ifPresent(link -> JiraIssueLocks.withLock(link.source().cloudId(), link.source().issueId(), () -> {
+            JiraIssueSource source = link.source();
+            if (tasks.findBySource(source.cloudId(), source.issueId()).filter(current -> current.taskId().equals(taskId)).isEmpty()) {
+                return null;
+            }
+            String operationId = UUID.nameUUIDFromBytes((source.identity() + "\n" + url).getBytes(UTF_8)).toString();
+            String key = "development-comment." + operationId;
+            PullRequestComment comment = cache.read(key, PullRequestComment.class).orElseGet(() -> {
+                String summary = description.get().strip();
+                if (summary.length() > 2000) {
+                    summary = summary.substring(0, 2000).stripTrailing() + "…\nSee the PR for the full description.";
+                }
+                String body = "A pull request is available to address " + source.key() + ":\n" + url
+                        + (summary.isEmpty() ? "\n\nSee the pull request for the implementation details."
+                                : "\n\nPlan and approach (from the PR description):\n" + summary);
+                PullRequestComment pending = new PullRequestComment(body, false);
+                cache.write(key, pending);
+                return pending;
+            });
+            if (!comment.completed()) {
+                client.comment(source.connectionId(), source.cloudId(), source.issueId(), comment.body(), ImmutableMap.of(), operationId, Optional.empty());
+                cache.write(key, new PullRequestComment(comment.body(), true));
+            }
+            return null;
+        }));
+    }
+
+    private record PullRequestComment(String body, boolean completed) {}
 
     public boolean isEpic(String cloudId, String issueId)
     {

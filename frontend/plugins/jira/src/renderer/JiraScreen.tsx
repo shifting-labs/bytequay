@@ -229,6 +229,11 @@ export default function JiraScreen({ workspace }: { workspace?: { id: string; na
     try { update(await host.bridge.setJiraEpic(jiraIssueLocation(issue), !issue.isEpic)); }
     catch (cause) { if (activeReload.current === reload) setError(message(cause)); }
   };
+  const unlinkTask = async (issue: JiraIssue) => {
+    if (issue.task === null) return;
+    try { update(await host.bridge.unlinkJiraTask(jiraIssueLocation(issue), issue.task.id), false); }
+    catch (cause) { if (activeReload.current === reload) setError(message(cause)); }
+  };
   const closeMenu = useCallback(() => setMenu(null), []);
   const toggleMenu = (next: 'scope' | 'status' | 'assignment') => setMenu(current => current === next ? null : next);
   const chooseView = (next: 'current' | 'completed') => { setMenu(null); setView(next); setStatus(''); };
@@ -271,7 +276,7 @@ export default function JiraScreen({ workspace }: { workspace?: { id: string; na
       </span>}
       {issue.task !== null && <>{tasks[issue.task.id]}</>}
       <span className="jira-card__foot"><JiraTypeIcon type={issue.type} /><span className="card-key">{issue.key}</span><JiraPriority priority={issue.priority} /><span className="jira-spacer" />
-        <JiraIssueActions issue={issue} onAssigned={detail => update(detail, false)} onEpic={() => { void toggleEpic(issue); }} onStart={() => setLaunch({ issue })} />
+        <JiraIssueActions issue={issue} onAssigned={detail => update(detail, false)} onEpic={() => { void toggleEpic(issue); }} onStart={() => setLaunch({ issue })} onUnlink={() => { void unlinkTask(issue); }} />
         <JiraAvatar key={issue.assignee?.accountId ?? 'unassigned'} person={issue.assignee} label={`Assignee: ${issue.assignee?.displayName ?? 'Unassigned'}`} /></span>
     </Card>;
   };
@@ -741,7 +746,8 @@ function JiraDetail({ location, scope, sprints, boardId, onClose, onChanged, onS
           </div>
           <span className="jira-muted jira-detail__updated">Updated {ago(issue.updatedAt)}</span>
           <span className="jira-spacer" />
-          <JiraIssueActions labelled issue={issue} busy={busy || loading} onAssigned={value => { setDetail(value); onChanged(value, false); }} onEpic={() => { void mutate(() => host.bridge.setJiraEpic(location, !issue.isEpic)); }} onStart={() => onStart(issue, setDetail)} />
+          <JiraIssueActions labelled issue={issue} busy={busy || loading} onAssigned={value => { setDetail(value); onChanged(value, false); }} onEpic={() => { void mutate(() => host.bridge.setJiraEpic(location, !issue.isEpic)); }} onStart={() => onStart(issue, setDetail)}
+            onUnlink={() => { if (issue.task !== null) { const taskId = issue.task.id; void mutate(() => host.bridge.unlinkJiraTask(location, taskId), undefined, null); } }} />
           <button type="button" className="bq-iconbtn" aria-label={`Open ${issue.key} in Jira`} title="Open in Jira" onClick={() => { void host.openInAppBrowser(issue.url); }}><ExternalLink size={14} /></button>
         </div></>}
     </header>

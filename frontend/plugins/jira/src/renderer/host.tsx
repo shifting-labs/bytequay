@@ -18,6 +18,7 @@ import type { JiraBridge, JiraIssue, JiraIssueDetail, JiraLocation } from '../co
 export type JiraIssueActionsProps = {
   issue: JiraIssue; busy?: boolean; labelled?: boolean; onEpic: () => void; onStart: () => void;
   onAssigned?: (detail: JiraIssueDetail) => void;
+  onUnlink?: () => void;
 };
 export type JiraWorkspaceDialogProps = { issue: JiraIssue; onClose: () => void; onAssigned: (detail: JiraIssueDetail) => void };
 export type JiraLaunchProps = { issue: JiraIssue; draft?: string; replaces?: string; send?: boolean; onClose: () => void; onChanged: (detail: JiraIssueDetail) => void };

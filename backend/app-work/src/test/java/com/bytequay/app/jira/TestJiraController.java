@@ -38,6 +38,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -252,6 +253,15 @@ class TestJiraController
         mvc.perform(put(ISSUE + "/workspace").contentType(MediaType.APPLICATION_JSON).content("{\"workspaceId\":\"workspace\"}"))
                 .andExpect(status().isOk());
         verify(jira).assignWorkspace("connection", "cloud", "10001", "workspace");
+    }
+
+    @Test
+    void unlinksTheExactTaskTheUserSaw()
+            throws Exception
+    {
+        when(jira.unlinkTask("connection", "cloud", "10001", "task-id")).thenReturn(detail());
+        mvc.perform(delete(ISSUE + "/task/task-id")).andExpect(status().isOk());
+        verify(jira).unlinkTask("connection", "cloud", "10001", "task-id");
     }
 
     @Test

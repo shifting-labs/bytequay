@@ -127,6 +127,7 @@ export async function mountPreview(offline = false, openIssue = true, body = jir
     getJiraIssue: async (location, refresh, automatic) => { if (offline && refresh) throw new Error('Jira is offline'); record('detail', location, refresh, automatic); return { ...detail, issue }; },
     assignJiraWorkspace: async (location, workspaceId) => { record('assign', location, workspaceId); if (assignmentFails) { assignmentFails = false; throw new Error('Workspace assignment failed'); } const workspace = workspaces.find(value => value.id === workspaceId); assert(workspace !== undefined, 'Selected workspace exists'); issue = { ...issue, workspace: { id: workspace.id, name: workspace.name } }; return { ...detail, issue }; },
     setJiraEpic: async (_location, isEpic) => { record('epic', isEpic); assert(!isEpic || issue.workspace !== null, 'Epic requires a saved workspace'); issue = { ...issue, isEpic }; return { ...detail, issue }; },
+    unlinkJiraTask: async (location, taskId) => { record('unlink', location, taskId); assert(issue.task?.id === taskId, 'Unlink targets the displayed task'); issue = { ...issue, task: null }; return { ...detail, issue }; },
     updateJiraIssue: async (_location, fields, expectedUpdatedAt) => { record('fields', fields, expectedUpdatedAt); issue = { ...issue, labels: fields.labels as string[] }; return { ...detail, issue }; },
     transitionJiraIssue: async (_location, id, fields, expectedUpdatedAt) => { record('transition', id, fields, expectedUpdatedAt); const transition = detail.transitions.find(value => value.id === id); assert(transition !== undefined, 'Known transition required'); issue = { ...issue, status: transition.to }; return { ...detail, issue }; },
     commentJiraIssue: async (_location, body, operationId, parentId, mentions) => { record('comment', body, operationId, parentId, mentions); if (commentFails) { commentFails = false; throw new Error('Connection lost; draft retained'); } detail = { ...detail, comments: [...detail.comments, { id: `posted-${detail.comments.length}`, parentId: parentId ?? null, body, author: { accountId: 'me', displayName: 'Alex Chen', avatarUrl: null }, created: issue.updatedAt, updated: issue.updatedAt, mine: true, editableText: body }] }; return { ...detail, issue }; },
@@ -382,6 +383,30 @@ export async function run(richDescription: string): Promise<{ name: string; erro
       assert(fields.textContent?.includes('Workspace') && fields.textContent.includes('Repository'), 'Linked workspace remains visible in Details');
       assert(fields.querySelector('.jira-field-button') === null && !calls.some(call => call.name === 'assign'), 'A linked development task owns its read-only workspace');
       await until(() => fields.querySelector('.jira-task-line')?.textContent === 'PR #42· open', 'Details name the linked task and its pull request');
+    },
+    async 'unlinks a ticket task and starts a fresh attempt while preserving its workspace'() {
+      await mountPreview();
+      issue = { ...issue, workspace: { id: 'workspace', name: 'Repository' }, task: { id: 'unfinished-task', workspaceId: 'workspace' } };
+      button('Refresh ticket').click(); await until(() => document.querySelector('.jira-side__bytequay')?.textContent?.includes('Set by the linked development task.') ?? false);
+      const pane = element('.jira-detail', document, 'Details exist');
+      const unlink = window.bridge.unlinkJiraTask;
+      window.bridge.unlinkJiraTask = async () => { throw new Error('Task link changed; refresh before unlinking'); };
+      button('Unlink task', pane).click();
+      await until(() => pane.textContent?.includes('Task link changed') ?? false);
+      assert(issue.task?.id === 'unfinished-task' && button('View task', pane) !== null, 'Failed unlink preserves the existing task link');
+      window.bridge.unlinkJiraTask = unlink;
+      button('Unlink task', pane).click();
+      await until(() => (issue as JiraIssue).task === null && pane.querySelector('.jira-task-line') === null);
+      assert((issue as JiraIssue).workspace?.id === 'workspace', 'Unlink retains the selected workspace');
+      assert(calls.find(call => call.name === 'unlink')?.args[1] === 'unfinished-task', 'Unlink names exactly the previous task');
+      button('Start development', pane).click(); await until(() => document.querySelector('.agt-compose textarea') !== null);
+      assert(document.querySelector('dialog[aria-label^="Assign workspace"]') === null, 'Restart reuses the selected workspace');
+      const instructions = element<HTMLTextAreaElement>('.agt-compose textarea', document, 'Task input exists');
+      changeInput(instructions, 'Try a fresh approach.'); await settle();
+      const send = element<HTMLButtonElement>('.agt-send', document, 'Task send exists');
+      await until(() => !send.disabled); send.click(); await until(() => taskRequest !== null);
+      const created = taskRequest as unknown as CreateAgentTaskRequest;
+      assert(created.taskId !== 'unfinished-task' && created.jiraSource?.issueId === issue.id && created.jiraSource.replaces === undefined, 'Fresh task is linked to the same Jira ticket');
     },
     async 'assigns a workspace before Epic marking and preserves cancellation and failures'() {
       await mountPreview(false, false);

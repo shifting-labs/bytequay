@@ -78,4 +78,10 @@ describe('Jira desktop boundary', () => {
     await bridge.listWorkspaceJiraIssues('workspace / one', true);
     expect(requests).toHaveBeenLastCalledWith('/api/jira/workspaces/workspace%20%2F%20one/issues/refresh', { method: 'POST', signal: expect.any(AbortSignal) });
   });
+
+  it('unlinks only the task displayed on the selected ticket', async () => {
+    const { bridge, requests } = connect();
+    await bridge.unlinkJiraTask(location, 'task / one');
+    expect(requests).toHaveBeenLastCalledWith(`${issuePath}/task/task%20%2F%20one`, { method: 'DELETE' });
+  });
 });

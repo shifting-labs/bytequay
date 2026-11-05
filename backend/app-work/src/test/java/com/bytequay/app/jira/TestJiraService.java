@@ -39,6 +39,7 @@ import com.bytequay.integration.jira.impl.JiraActivityLog;
 import com.bytequay.integration.jira.impl.JiraCache;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import org.junit.jupiter.api.AfterEach;
@@ -62,6 +63,7 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -83,7 +85,7 @@ class TestJiraService
     private final ObjectProvider<WorkItemService> work = mock(ObjectProvider.class);
     private final JiraIssueContextImpl context = new JiraIssueContextImpl(new JiraCache(settings, mapper), tasks, workspaces, workItems, recent);
     private final JiraClient client = new JiraIntegrationConfiguration().jiraClient(remote, cache, new JiraActivityLog(cache), context);
-    private final JiraService jira = new JiraService(client, context, tasks, workspaces, settingsProvider, workItems, work);
+    private final JiraService jira = new JiraService(client, context, tasks, workspaces, settingsProvider, workItems, work, cache);
     private final Map<String, String> saved = new ConcurrentHashMap<>();
 
     @AfterEach
@@ -133,6 +135,102 @@ class TestJiraService
     }
 
     @Test
+    void unlinkReleasesOnlyTheDisplayedTaskAndKeepsItsSourceAndWorkspace()
+    {
+        cache.write("connection.cloud.issue.1001", ticketIssue("connection"));
+        when(workspaces.findById("workspace")).thenReturn(Optional.of(workspace("workspace", "Workspace")));
+        JiraIssueSource source = new JiraIssueSource("connection", "cloud", "1001", "ENG-7", ticketIssue("connection").url(), "A ticket", "", UPDATED);
+        JiraIssueTask link = new JiraIssueTask("old-task", "workspace", source, "Implement", UPDATED);
+        when(tasks.findBySource("cloud", "1001")).thenReturn(Optional.of(link));
+        when(tasks.findByTaskId("old-task")).thenReturn(Optional.of(link));
+        assertThatThrownBy(() -> jira.unlinkTask("connection", "cloud", "1001", "stale-task")).hasMessageContaining("task changed");
+        verify(tasks, never()).retire(anyString());
+        doAnswer(ignored -> {
+            when(tasks.findBySource("cloud", "1001")).thenReturn(Optional.empty());
+            return null;
+        }).when(tasks).retire("old-task");
+        JiraIssue unlinked = jira.unlinkTask("connection", "cloud", "1001", "old-task").issue();
+        assertThat(unlinked.task()).isEmpty();
+        assertThat(unlinked.workspace()).contains(new JiraDtos.WorkspaceLink("workspace", "Workspace"));
+        assertThat(tasks.findByTaskId("old-task")).contains(link);
+        jira.unlinkTask("connection", "cloud", "1001", "old-task");
+        verify(tasks, times(1)).retire("old-task");
+        verifyNoInteractions(remote, workService);
+    }
+
+    @Test
+    void startDevelopmentSelectsInProgressWithoutGuessingRequiredFields()
+            throws Exception
+    {
+        doReturn(json("""
+                {"transitions":[
+                  {"id":"11","name":"Review","to":{"id":"4","name":"In Review","statusCategory":{"key":"indeterminate"}},"fields":{}},
+                  {"id":"21","name":"Start work","to":{"id":"3","name":"In Progress","statusCategory":{"key":"indeterminate"}},"fields":{}}
+                ]}
+                """)).when(remote).request(eq("connection"), eq("cloud"), startsWith("/rest/api/3/issue/1001/transitions"), eq("GET"), any());
+        doAnswer(ignored -> {
+            JsonNode progressing = ticket();
+            ((ObjectNode) progressing.path("fields").path("status")).put("name", "In Progress");
+            ((ObjectNode) progressing.path("fields").path("status").path("statusCategory")).put("key", "indeterminate");
+            doReturn(progressing).when(remote).request(eq("connection"), eq("cloud"), startsWith("/rest/api/3/issue/1001?"), eq("GET"), any());
+            return json("{}");
+        }).when(remote).request(eq("connection"), eq("cloud"), eq("/rest/api/3/issue/1001/transitions"), eq("POST"), any());
+        assertThat(jira.startDevelopment(ticketIssue("connection")).status().category()).isEqualTo("indeterminate");
+        verify(remote).request("connection", "cloud", "/rest/api/3/issue/1001/transitions", "POST",
+                Optional.of(ImmutableMap.of("transition", ImmutableMap.of("id", "21"), "fields", ImmutableMap.of())));
+    }
+
+    @Test
+    void unavailableOrRequiredTransitionDoesNotWriteToJira()
+            throws Exception
+    {
+        assertThatThrownBy(() -> jira.startDevelopment(ticketIssue("connection"))).hasMessageContaining("Move this ticket to In Progress");
+        doReturn(json("""
+                {"transitions":[{"id":"21","name":"Start work","to":{"id":"3","name":"In Progress","statusCategory":{"key":"indeterminate"}},
+                "fields":{"customfield_1":{"name":"Estimate","required":true,"schema":{"type":"number"}}}}]}
+                """)).when(remote).request(eq("connection"), eq("cloud"), startsWith("/rest/api/3/issue/1001/transitions"), eq("GET"), any());
+        assertThatThrownBy(() -> jira.startDevelopment(ticketIssue("connection"))).hasMessageContaining("required fields");
+        verify(remote, never()).request(anyString(), anyString(), anyString(), eq("POST"), any());
+    }
+
+    @Test
+    void publishedPullRequestCommentsOnceAndDetachedTasksCannotComment()
+            throws Exception
+    {
+        JiraIssueSource source = new JiraIssueSource("connection", "cloud", "1001", "ENG-7", ticketIssue("connection").url(), "A ticket", "", UPDATED);
+        JiraIssueTask link = new JiraIssueTask("task", "workspace", source, "Implement", UPDATED);
+        when(tasks.findByTaskId("task")).thenReturn(Optional.of(link));
+        when(tasks.findBySource("cloud", "1001")).thenReturn(Optional.of(link));
+        doReturn(json("{\"id\":\"55\"}")).when(remote).request(eq("connection"), eq("cloud"), eq("/rest/api/3/issue/1001/comment"), eq("POST"), any());
+        cache.write("connection.cloud.issue.1001", ticketIssue("connection"));
+        String url = "https://github.com/owner/repository/pull/7";
+        jira.pullRequestPublished("task", url, () -> "Keep selections stable by retaining their identifiers while refreshing the list.");
+        jira.pullRequestPublished("task", url, () -> { throw new AssertionError("a posted summary must not be regenerated"); });
+        verify(remote, times(1)).request(eq("connection"), eq("cloud"), eq("/rest/api/3/issue/1001/comment"), eq("POST"), any());
+        assertThat(saved.values()).anySatisfy(value -> assertThat(value).contains("ENG-7", url, "retaining their identifiers"));
+        when(tasks.findBySource("cloud", "1001")).thenReturn(Optional.empty());
+        jira.pullRequestPublished("task", "https://github.com/owner/repository/pull/8", () -> { throw new AssertionError("unlinked task"); });
+        verify(remote, times(1)).request(eq("connection"), eq("cloud"), eq("/rest/api/3/issue/1001/comment"), eq("POST"), any());
+    }
+
+    @Test
+    void uncertainCommentIsNotPostedAgainAndRetainsItsOriginalSummary()
+    {
+        JiraIssueSource source = new JiraIssueSource("connection", "cloud", "1001", "ENG-7", ticketIssue("connection").url(), "A ticket", "", UPDATED);
+        JiraIssueTask link = new JiraIssueTask("task", "workspace", source, "Implement", UPDATED);
+        when(tasks.findByTaskId("task")).thenReturn(Optional.of(link));
+        when(tasks.findBySource("cloud", "1001")).thenReturn(Optional.of(link));
+        when(remote.request(eq("connection"), eq("cloud"), eq("/rest/api/3/issue/1001/comment"), eq("POST"), any()))
+                .thenThrow(new IllegalStateException("Connection lost"));
+        cache.write("connection.cloud.issue.1001", ticketIssue("connection"));
+        String url = "https://github.com/owner/repository/pull/7";
+        assertThatThrownBy(() -> jira.pullRequestPublished("task", url, () -> "Original plan")).hasMessageContaining("Connection lost");
+        assertThatThrownBy(() -> jira.pullRequestPublished("task", url, () -> { throw new AssertionError("summary must stay frozen on retry"); }))
+                .hasMessageContaining("unknown result");
+        verify(remote, times(1)).request(eq("connection"), eq("cloud"), eq("/rest/api/3/issue/1001/comment"), eq("POST"), any());
+    }
+
+    @Test
     void workspaceAssignmentSurvivesRefreshAndIsSharedAcrossConnections()
             throws Exception
     {
@@ -155,7 +253,7 @@ class TestJiraService
         JiraCache reopenedCache = new JiraCache(settings, mapper);
         JiraIssueContextImpl reopenedContext = new JiraIssueContextImpl(new JiraCache(settings, mapper), tasks, workspaces, workItems, recent);
         try (JiraClient reopenedClient = new JiraIntegrationConfiguration().jiraClient(remote, reopenedCache, new JiraActivityLog(reopenedCache), reopenedContext)) {
-            JiraService reopened = new JiraService(reopenedClient, reopenedContext, tasks, workspaces, settingsProvider, workItems, work);
+            JiraService reopened = new JiraService(reopenedClient, reopenedContext, tasks, workspaces, settingsProvider, workItems, work, reopenedCache);
             assertThat(reopened.issue("other", "cloud", "1001").workspace()).contains(new JiraDtos.WorkspaceLink("workspace", "ByteQuay"));
             when(workspaces.findById("workspace")).thenReturn(Optional.of(workspace("workspace", "Renamed")));
             assertThat(reopened.issue("other", "cloud", "1001").workspace()).contains(new JiraDtos.WorkspaceLink("workspace", "Renamed"));

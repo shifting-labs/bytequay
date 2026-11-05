@@ -117,6 +117,31 @@ class TestJiraDevelopment
     }
 
     @Test
+    void movesTodoToInProgressBeforeAdmittingTheTask()
+    {
+        JiraIssue todo = issue(SOURCE.title(), false, "new", NOW);
+        JiraIssue working = issue(SOURCE.title(), false, "indeterminate", NOW.plusSeconds(1));
+        when(jira.refreshIssue("connection", "cloud", "10001")).thenReturn(todo);
+        when(jira.startDevelopment(todo)).thenReturn(working);
+        assertThat(service.start("workspace", taskId, INPUT, "Implement", accepted -> {
+            verify(jira).startDevelopment(todo);
+            assertThat(accepted.updatedAt()).isEqualTo(working.updatedAt());
+            return task;
+        })).isSameAs(task);
+    }
+
+    @Test
+    void doesNotStartWhenTheJiraTransitionFails()
+    {
+        JiraIssue todo = issue(SOURCE.title(), false, "new", NOW);
+        when(jira.refreshIssue("connection", "cloud", "10001")).thenReturn(todo);
+        when(jira.startDevelopment(todo)).thenThrow(new IllegalStateException("Transition unavailable"));
+        assertThatThrownBy(() -> service.start("workspace", taskId, INPUT, "Implement", accepted -> { throw new AssertionError("must not create"); }))
+                .hasMessageContaining("Transition unavailable");
+        verify(taskStore, never()).insert(any());
+    }
+
+    @Test
     void reusesAcceptedSourceWithoutCacheOrConnectionOnRetryAndProjectsOriginalTurn()
     {
         linked.set(new JiraIssueTask(taskId.toString(), "workspace", SOURCE, "Implement selection", NOW));

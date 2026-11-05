@@ -29,6 +29,7 @@ import com.bytequay.agent.spi.DevelopmentResultReport;
 import com.bytequay.app.ci.CiAutofixService;
 import com.bytequay.app.ci.StartCiAutofixCommand;
 import com.bytequay.app.discussion.ReviewFixService;
+import com.bytequay.app.jira.JiraService;
 import com.bytequay.app.service.hosting.HostingConnectionService;
 import com.bytequay.app.service.hosting.HostingIntegrations;
 import com.bytequay.app.workspace.WorkspaceHostingService;
@@ -74,13 +75,15 @@ public class DevelopmentFollowupCoordinator
     private final DevelopmentBranchService branches;
     private final ReviewFixService reviewFixes;
     private final PullRequestReplacementStore replacements;
+    private final JiraService jira;
     private final ConcurrentMap<TaskId, Accepted> accepted = new ConcurrentHashMap<>();
     private final ConcurrentMap<TaskId, PendingPublication> publications = new ConcurrentHashMap<>();
 
     public DevelopmentFollowupCoordinator(AgentTurnService turns, AgentTurnStore turnStore, DevelopmentGitInspector git,
             Executor executor, CiAutofixService ci, WorkspaceHostingService hosting, HostingIntegrations integrations, Clock clock, DevelopmentBranchService branches,
-            ReviewFixService reviewFixes, HostingConnectionService connections, PullRequestReplacementStore replacements)
+            ReviewFixService reviewFixes, HostingConnectionService connections, PullRequestReplacementStore replacements, JiraService jira)
     {
+        this.jira = requireNonNull(jira, "jira is null");
         this.reviewFixes = requireNonNull(reviewFixes, "reviewFixes is null");
         this.replacements = requireNonNull(replacements, "replacements is null");
         this.turns = requireNonNull(turns, "turns is null");
@@ -255,6 +258,10 @@ public class DevelopmentFollowupCoordinator
             }
             boolean alreadyPushed = publication.remoteHeadSha().filter(local.headSha()::equals).isPresent();
             if (!pendingWork && !newlyPublished(baseline, original, publication)) {
+                if (alreadyPushed && currentPr.map(PullRequestIdentity::headSha).filter(local.headSha()::equals).isPresent()) {
+                    action = "Comment on Jira";
+                    commentOnJira(completion, baseline, currentPr.orElseThrow());
+                }
                 publishReviewReplies(completion, baseline, automation);
                 finish(completion);
                 return;
@@ -307,6 +314,8 @@ public class DevelopmentFollowupCoordinator
                 }
                 currentPr = verifiedPr;
             }
+            action = "Comment on Jira";
+            commentOnJira(completion, baseline, currentPr.orElseThrow());
             if (automation.autoCiFix()) {
                 action = "CI Autofix";
                 checkState(owns(completion), "Development automation was stopped");
@@ -330,6 +339,17 @@ public class DevelopmentFollowupCoordinator
         finally {
             accepted.computeIfPresent(completion.task().id(), (id, value) -> value.turnId().equals(completion.turn().id()) ? null : value);
         }
+    }
+
+    private void commentOnJira(DevelopmentTurnCompletion completion, DevelopmentBaseline baseline, PullRequestIdentity pullRequest)
+    {
+        checkState(owns(completion), "Development automation was stopped");
+        jira.pullRequestPublished(completion.task().id().toString(), pullRequest.url(), () -> {
+            var selected = hosting.captureRead(baseline.worktree().workspaceId());
+            checkState(selected.session().access().server().equals(baseline.route().server())
+                            && selected.repository().fullPath().equals(baseline.route().baseRepository().fullName()), "The publication repository changed");
+            return integrations.of(selected.target()).contents().description(selected.target(), pullRequest.pullRequest().number());
+        });
     }
 
     /**
@@ -704,8 +724,8 @@ public class DevelopmentFollowupCoordinator
                 Never run git push, a gh or glab command, or other remote writes; never read or ask for credentials.
 
                 For publicPublication=true, sanitize title/body against private sources using *** or synthetic examples.
-                Derive title and body from the actual change and repository PR template. Fill relevant sections only;
-                leave other sections exactly as the template leaves them. Don't describe added or changed tests; they are in the diff.
+                Derive title and body from the actual change and repository PR template. Explain the plan and implementation
+                approach concisely in the description. Fill relevant sections only; leave other sections exactly as the template leaves them. Don't describe added or changed tests; they are in the diff.
                 Keep local execution details private to this task: commands run, test classes, counts, pass/fail results,
                 build or validation outcomes, logs, tooling, sandbox and environment limitations. Never put these in the PR,
                 including Testing, Validation or Test plan sections. Never add an attribution, co-authorship, or generated-with trailer.

@@ -97,6 +97,7 @@ export type JiraBridge = {
   editJiraComment: (location: JiraLocation, commentId: string, body: string, expectedUpdated: string, mentions: Record<string, string>) => Promise<JiraIssueDetail>;
   setJiraEpic: (location: JiraLocation, isEpic: boolean) => Promise<JiraIssueDetail>;
   assignJiraWorkspace: (location: JiraLocation, workspaceId: string) => Promise<JiraIssueDetail>;
+  unlinkJiraTask: (location: JiraLocation, taskId: string) => Promise<JiraIssueDetail>;
   listJiraAttention: () => Promise<JiraIssue[]>;
   listJiraLinkTypes: (connectionId: string, cloudId: string) => Promise<JiraLinkType[]>;
   /** `outward` reads the ticket at `location` with the type's outward description, as in "blocks `key`". */

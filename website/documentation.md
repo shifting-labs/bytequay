@@ -780,6 +780,15 @@ GitLab activity comes from your watched GitLab projects.
 4. Choose **Start development** to work on a ticket. **Refresh tickets** updates
    the workspace's saved tickets; a failed refresh keeps them visible.
 
+Starting development moves a **To Do** ticket to **In Progress**. If Jira requires
+fields or a workflow choice, change its status first and retry. After the task
+publishes its PR, ByteQuay posts the PR link and a brief excerpt of its plan and
+approach on Jira. Repeated pushes do not add duplicate comments.
+
+Choose **Unlink task** beside **View task** to release the ticket for a fresh
+attempt. The old task, its conversation, checkout, and PR are kept; its future
+PRs no longer post to this ticket. Then choose **Start development** again.
+
 **Open in Jira** handles anything ByteQuay doesn’t.
 
 <a id="gmail-and-google-calendar"></a>

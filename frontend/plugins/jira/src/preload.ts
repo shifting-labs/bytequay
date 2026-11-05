@@ -39,6 +39,7 @@ export function createJiraBridge(ipcRenderer: Pick<IpcRenderer, 'invoke'>): Jira
     editJiraComment: (location, commentId, body, expectedUpdated, mentions) => ipcRenderer.invoke('jira:comment:edit', location, commentId, body, expectedUpdated, mentions),
     setJiraEpic: (location, isEpic) => ipcRenderer.invoke('jira:issue:epic', location, isEpic),
     assignJiraWorkspace: (location, workspaceId) => ipcRenderer.invoke('jira:issue:workspace', location, workspaceId),
+    unlinkJiraTask: (location, taskId) => ipcRenderer.invoke('jira:issue:task:unlink', location, taskId),
     listJiraAttention: () => ipcRenderer.invoke('jira:attention'),
     listJiraLinkTypes: (connectionId, cloudId) => ipcRenderer.invoke('jira:link-types', connectionId, cloudId),
     linkJiraIssue: (location, typeId, outward, key) => ipcRenderer.invoke('jira:issue:link', location, typeId, outward, key),

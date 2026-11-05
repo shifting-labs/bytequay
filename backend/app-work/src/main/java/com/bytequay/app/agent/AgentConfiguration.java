@@ -81,6 +81,7 @@ import com.bytequay.app.ci.ReadCiMemoryCommand;
 import com.bytequay.app.context.RepositoryGuidelineReader;
 import com.bytequay.app.discussion.ReviewFixService;
 import com.bytequay.app.git.command.GitCommandRunner;
+import com.bytequay.app.jira.JiraService;
 import com.bytequay.app.memory.MemoryDelivery;
 import com.bytequay.app.memory.RecipeChecks;
 import com.bytequay.app.service.credentials.CredentialService;
@@ -436,9 +437,10 @@ public class AgentConfiguration
     public DevelopmentFollowupCoordinator developmentFollowupCoordinator(AgentTurnService turns, AgentTurnStore turnStore,
             DevelopmentGitInspector git,
             CiAutofixService ci, WorkspaceHostingService hosting, HostingIntegrations integrations, Clock agentClock, DevelopmentBranchService branches,
-            @Qualifier(IO_EXECUTOR) Executor ioExecutor, ReviewFixService reviewFixes, HostingConnectionService connections, PullRequestReplacementStore replacements)
+            @Qualifier(IO_EXECUTOR) Executor ioExecutor, ReviewFixService reviewFixes, HostingConnectionService connections, PullRequestReplacementStore replacements,
+            JiraService jira)
     {
-        return new DevelopmentFollowupCoordinator(turns, turnStore, git, ioExecutor, ci, hosting, integrations, agentClock, branches, reviewFixes, connections, replacements);
+        return new DevelopmentFollowupCoordinator(turns, turnStore, git, ioExecutor, ci, hosting, integrations, agentClock, branches, reviewFixes, connections, replacements, jira);
     }
 
     @Bean

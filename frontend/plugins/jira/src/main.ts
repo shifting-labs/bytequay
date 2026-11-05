@@ -73,6 +73,8 @@ export function registerJiraIpc({ ipc, backend }: JiraMainHost): void {
     backend(`${jiraIssuePath(location)}/epic`, jsonInit('PUT', { isEpic })));
   ipc.handle('jira:issue:workspace', (_event, location: JiraLocation, workspaceId: string) =>
     backend(`${jiraIssuePath(location)}/workspace`, jsonInit('PUT', { workspaceId })));
+  ipc.handle('jira:issue:task:unlink', (_event, location: JiraLocation, taskId: string) =>
+    backend(`${jiraIssuePath(location)}/task/${encodeURIComponent(taskId)}`, { method: 'DELETE' }));
   ipc.handle('jira:attention', () => backend(`/api/jira/attention`));
   ipc.handle('jira:link-types', (_event, connectionId: string, cloudId: string) =>
     backend(`${jiraSitePath(connectionId, cloudId)}/link-types`, { method: 'POST' }));

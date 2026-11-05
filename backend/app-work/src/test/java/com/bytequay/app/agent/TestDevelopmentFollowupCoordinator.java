@@ -40,6 +40,7 @@ import com.bytequay.agent.spi.ReviewThreadReply;
 import com.bytequay.app.ci.CiAutofixService;
 import com.bytequay.app.ci.StartCiAutofixCommand;
 import com.bytequay.app.discussion.ReviewFixService;
+import com.bytequay.app.jira.JiraService;
 import com.bytequay.app.service.hosting.HostingConnectionService;
 import com.bytequay.app.service.hosting.HostingIntegrations;
 import com.bytequay.app.workspace.WorkspaceHostingService;
@@ -97,7 +98,9 @@ import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -129,10 +132,11 @@ class TestDevelopmentFollowupCoordinator
     private final Set<String> held = new HashSet<>();
     private final DevelopmentBranchService branches = mock(DevelopmentBranchService.class);
     private final ReviewFixService reviewFixes = mock(ReviewFixService.class);
+    private final JiraService jira = mock(JiraService.class);
     private final PullRequestReplacementStore replacements = mock(PullRequestReplacementStore.class);
     private List<ReviewThreadReply> reviewReplies = ImmutableList.of();
     private final DevelopmentFollowupCoordinator coordinator = new DevelopmentFollowupCoordinator(
-            turns, turnStore, git, pending::add, ci, hosting, dispatch, clock, branches, reviewFixes, connections, replacements);
+            turns, turnStore, git, pending::add, ci, hosting, dispatch, clock, branches, reviewFixes, connections, replacements, jira);
     private final TaskId taskId = TaskId.random();
     private final TaskWorktree worktree = new TaskWorktree(taskId, "workspace", new RepositoryIdentity("owner", "repo"),
             Path.of("/tmp", taskId.toString()), "bytequay/task/" + taskId, BASE);
@@ -639,6 +643,28 @@ class TestDevelopmentFollowupCoordinator
         verify(turns).finishDevelopmentContinuation(taskId, source.id());
         verify(turns, never()).failDevelopmentContinuation(any(), any(), anyString());
         verify(ci, never()).startDevelopment(any(), any(), any(), any());
+        verify(jira).pullRequestPublished(eq(taskId.toString()), eq(pr(HEAD, true).url()), any());
+    }
+
+    @Test
+    void jiraCommentFailureKeepsThePublishedPrAndRetriesWithoutCreatingAnother()
+    {
+        prepare(local(BASE, false), local(HEAD, false), DRAFT_ONLY, true);
+        trackedRemote(Optional.empty(), Optional.empty());
+        generated(CREATE_DRAFT_PR, true, () -> coordinator.publishDraftPullRequest(taskId.toString(), "Keep selection", "Retain identifiers across refreshes."));
+        doThrow(new IllegalStateException("Jira is unavailable")).when(jira).pullRequestPublished(anyString(), anyString(), any());
+
+        advance();
+
+        verify(turns).failDevelopmentContinuation(eq(taskId), eq(source.id()), contains("Comment on Jira: Jira is unavailable"));
+        verifyCreated(route.headRepository(), route.headBranch(), route.baseBranch(), "Keep selection", "Retain identifiers across refreshes.", true);
+        clearInvocations(writes, jira, turns);
+        doNothing().when(jira).pullRequestPublished(anyString(), anyString(), any());
+        prepare(local(HEAD, false), local(HEAD, false), DRAFT_ONLY, true);
+        advance();
+        verify(jira).pullRequestPublished(eq(taskId.toString()), eq(pr(HEAD, true).url()), any());
+        verifyNoInteractions(writes);
+        verify(turns).finishDevelopmentContinuation(taskId, source.id());
     }
 
     @Test
@@ -1043,7 +1069,7 @@ class TestDevelopmentFollowupCoordinator
         var rejected = new DevelopmentFollowupCoordinator(turns, turnStore, git, ignored -> {
             throw new RejectedExecutionException("stopped");
         },
-                ci, hosting, dispatch, clock, branches, reviewFixes, connections, replacements);
+                ci, hosting, dispatch, clock, branches, reviewFixes, connections, replacements, jira);
         rejected.completed(outcome);
         verify(turns).failDevelopmentContinuation(eq(taskId), eq(source.id()), contains("Could not start"));
     }

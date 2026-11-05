@@ -248,6 +248,12 @@ public class JiraController
         return jira.assignWorkspace(connectionId, cloudId, issueId, request.workspaceId());
     }
 
+    @DeleteMapping(ISSUE + "/task/{taskId}")
+    public JiraDtos.Detail unlinkTask(@PathVariable String connectionId, @PathVariable String cloudId, @PathVariable String issueId, @PathVariable String taskId)
+    {
+        return jira.unlinkTask(connectionId, cloudId, issueId, taskId);
+    }
+
     @PostMapping(ISSUE + "/local-children")
     public WorkItemView createLocalChild(@PathVariable String connectionId, @PathVariable String cloudId, @PathVariable String issueId, @RequestBody Child request)
     {

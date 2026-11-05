@@ -225,6 +225,10 @@ public class IssueDevelopmentService
             if (taskStore.find(taskId).isPresent()) {
                 throw new AgentConflictException("Task already exists without this Jira source: " + taskId);
             }
+            if ("new".equalsIgnoreCase(fresh.status().category())) {
+                fresh = jira.startDevelopment(fresh);
+                requireRunnable(fresh, input, workspaceId);
+            }
             return create.apply(new JiraIssueSource(input.connectionId(), fresh.cloudId(), fresh.id(), fresh.key(), fresh.url(), fresh.title(), fresh.body(), fresh.updatedAt()));
         });
     }
