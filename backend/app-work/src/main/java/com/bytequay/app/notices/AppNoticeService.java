@@ -28,6 +28,7 @@ import com.bytequay.agent.core.store.AgentTaskStore;
 import com.bytequay.agent.core.store.AgentTurnStore;
 import com.bytequay.agent.core.store.QueuedInputStore;
 import com.bytequay.agent.spi.AgentPermissionPolicy;
+import com.bytequay.agent.spi.DevelopmentResultReport;
 import com.bytequay.app.rules.RuleWork;
 import com.bytequay.app.service.epic.EpicNextWork;
 import com.bytequay.app.service.rules.AgentRule;
@@ -47,6 +48,7 @@ import com.bytequay.core.domain.PullRequestDetail;
 import com.bytequay.core.domain.RuleRun;
 import com.bytequay.core.review.AgentReview;
 import com.bytequay.core.review.AgentReviewStore;
+import com.bytequay.core.review.ReviewFinding;
 import com.bytequay.core.review.ReviewRun;
 import com.bytequay.core.review.ReviewRunOverview;
 import com.bytequay.core.store.ArtifactStore;
@@ -65,6 +67,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -88,6 +91,10 @@ public class AppNoticeService
     private static final String RULE_NOTICE = "rule:";
     private static final String RULE_RESULT_NOTICE = "rule-result:";
     private static final String RULES = "rules";
+    /** The review tools' severities, most severe first. */
+    private static final List<String> SEVERITIES = ImmutableList.of("critical", "high", "medium", "low");
+    /** How much of an agent's own outcome report a finished card carries; the task holds all of it. */
+    private static final int REPORTED = 400;
 
     private final AgentTaskStore tasks;
     private final AgentTurnStore turns;
@@ -458,19 +465,58 @@ public class AppNoticeService
                 .map(finding -> finding.id() + ":" + finding.version() + ":" + finding.state() + ":" + finding.outdated()).sorted().collect(joining(";"));
         String source = findings + ":" + origin.authorization().orElseThrow() + ":" + origin.key();
         String id = "review-result:" + run.id() + ":" + run.version() + ":" + UUID.nameUUIDFromBytes(source.getBytes(UTF_8));
-        return Optional.of(notice(task, Optional.of(review), overview, latest, id, AppNotice.Kind.TURN_FINISHED,
-                "The private review is ready. Read the full review for its findings and verification.", run.endedAt().orElseThrow()));
+        return Optional.of(notice(task, Optional.of(review), overview, latest, id, AppNotice.Kind.TURN_FINISHED, found(review, run), run.endedAt().orElseThrow()));
     }
 
     /**
-     * A development turn whose task has a pull request names it and where it stands rather than calling it ready, since a draft or
-     * failing checks are not done; the Finished card then opens the pull request.
+     * A finished turn says what the user decides from: a review what it found, and a development turn where its pull request stands, since
+     * a draft or failing checks are not done, and what the agent reported. The Finished card then opens the pull request.
      */
     private AppNotice finished(AgentTask task, Optional<AgentReview> review, Optional<ReviewRunOverview> overview, AgentTurn turn)
     {
         Optional<PullRequest> delivered = review.isPresent() ? Optional.empty() : ownership.linkedPullRequest(task);
-        return notice(task, review, overview, Optional.of(turn), "finished:" + turn.id(), AppNotice.Kind.TURN_FINISHED,
-                delivered.map(AppNoticeService::standing).orElse("The latest response is ready to read."), turn.endedAt().orElseThrow(), Optional.empty(), delivered);
+        String message = review.flatMap(this::reviewed).or(() -> reported(delivered.map(AppNoticeService::standing), turn)).orElse("The latest response is ready to read.");
+        return notice(task, review, overview, Optional.of(turn), "finished:" + turn.id(), AppNotice.Kind.TURN_FINISHED, message, turn.endedAt().orElseThrow(),
+                Optional.empty(), delivered);
+    }
+
+    /** The pull request's standing, then the agent's own account of the outcome from its readiness report. */
+    private static Optional<String> reported(Optional<String> standing, AgentTurn turn)
+    {
+        Optional<String> said = turn.developmentResult().flatMap(DevelopmentResultReport::message).filter(text -> !text.isBlank()).map(text -> clip(text, REPORTED));
+        if (standing.isPresent() && said.isPresent()) {
+            return Optional.of(standing.orElseThrow() + ". " + said.orElseThrow());
+        }
+        return standing.or(() -> said);
+    }
+
+    /** What the review's latest accepted report found, when it has one. */
+    private Optional<String> reviewed(AgentReview review)
+    {
+        return reviews.listRuns(review.id()).stream().filter(run -> !run.explanationOnly()).reduce((first, last) -> last)
+                .filter(run -> run.state() == ReviewRun.State.ACCEPTED).map(run -> found(review, run));
+    }
+
+    /** The open findings at the reviewed revision, by severity, and the most severe one with where it is; or that none are open. */
+    private String found(AgentReview review, ReviewRun run)
+    {
+        List<ReviewFinding> open = reviews.listFindings(review.id()).stream()
+                .filter(finding -> finding.state() == ReviewFinding.State.OPEN && !finding.outdated() && finding.validatedHeadSha().equals(run.sourceRevision()))
+                .sorted(comparing(AppNoticeService::rank).thenComparingInt(ReviewFinding::ordinal)).toList();
+        String partial = run.coverage().filter(coverage -> !coverage.complete()).map(_ -> " Coverage is incomplete.").orElse("");
+        if (open.isEmpty()) {
+            return "No open findings." + partial;
+        }
+        String severities = SEVERITIES.stream().map(severity -> open.stream().filter(finding -> finding.severity().filter(severity::equalsIgnoreCase).isPresent()).count()
+                + " " + severity).filter(count -> !count.startsWith("0 ")).collect(joining(", "));
+        ReviewFinding top = open.getFirst();
+        return open.size() + (open.size() == 1 ? " open finding" : " open findings") + (severities.isEmpty() ? "" : " (" + severities + ")") + ". "
+                + clip(top.title(), 160) + top.anchor().map(anchor -> " · " + anchor.path() + ":" + anchor.startLine()).orElse("") + "." + partial;
+    }
+
+    private static int rank(ReviewFinding finding)
+    {
+        return finding.severity().map(severity -> SEVERITIES.indexOf(severity.toLowerCase(Locale.ROOT))).filter(index -> index >= 0).orElse(SEVERITIES.size());
     }
 
     private static String standing(PullRequest pullRequest)

@@ -71,6 +71,7 @@ import com.bytequay.core.domain.Workspace;
 import com.bytequay.core.hosting.HostingServer;
 import com.bytequay.core.review.AgentReview;
 import com.bytequay.core.review.AgentReviewStore;
+import com.bytequay.core.review.ReviewAnchor;
 import com.bytequay.core.review.ReviewCommit;
 import com.bytequay.core.review.ReviewFinding;
 import com.bytequay.core.review.ReviewRun;
@@ -574,6 +575,35 @@ class TestAppNoticeService
     }
 
     @Test
+    void aFinishedTurnCarriesTheAgentsOwnAccountOfItsOutcome()
+    {
+        show(task, turn().withDevelopmentResult(new DevelopmentResultReport(true, Optional.of("Added the parser and its tests.")))
+                .finish(TurnState.COMPLETED, AgentMetrics.empty(), Optional.empty(), NOW.plusSeconds(10)));
+        when(ownership.linkedPullRequest(any())).thenReturn(Optional.of(linked(true, PullRequestDetail.CiStatus.PENDING, "open")));
+        assertThat(service.current()).singleElement().extracting(AppNotice::message).isEqualTo("Draft PR #58 · checks running. Added the parser and its tests.");
+        when(ownership.linkedPullRequest(any())).thenReturn(Optional.empty());
+        assertThat(service.current()).singleElement().extracting(AppNotice::message).isEqualTo("Added the parser and its tests.");
+    }
+
+    @Test
+    void aReviewResultSaysWhatItFound()
+    {
+        AgentReview review = automaticReview();
+        show(task);
+        showRuns(review, reviewRun(review, ReviewRun.State.ACCEPTED));
+        when(reviews.listFindings(review.id())).thenReturn(ImmutableList.of());
+        assertThat(service.current(ImmutableList.of(task.id())).getFirst().message()).isEqualTo("No open findings.");
+
+        ReviewFinding medium = finding("medium", 2, "Unchecked cast", "Medium", "src/Cast.java", 12);
+        ReviewFinding high = finding("high", 3, "Stale recovery state", "High", "src/Recovery.java", 40);
+        ReviewFinding resolved = finding("resolved", 1, "Missing null check", "Critical", "src/Load.java", 7)
+                .withState(ReviewFinding.State.RESOLVED, Optional.empty(), NOW.plusSeconds(20));
+        when(reviews.listFindings(review.id())).thenReturn(ImmutableList.of(medium, high, resolved));
+        assertThat(service.current(ImmutableList.of(task.id())).getFirst().message())
+                .isEqualTo("2 open findings (1 high, 1 medium). Stale recovery state · src/Recovery.java:40.");
+    }
+
+    @Test
     void aRunningTurnTheWatchdogFindsStuckWaitsOnTheUserOnceForEachTimeItGetsStuck()
     {
         AgentTurn turn = turn();
@@ -944,6 +974,13 @@ class TestAppNoticeService
         when(tasks.find(task.id())).thenReturn(Optional.of(task));
         when(reviews.listOpenReviews()).thenReturn(ImmutableList.of(review));
         return review;
+    }
+
+    private static ReviewFinding finding(String id, int ordinal, String title, String severity, String path, int line)
+    {
+        return new ReviewFinding(id, "review", "run", ordinal, title, "Why it matters.", Optional.empty(), Optional.of(severity),
+                Optional.of(new ReviewAnchor(path, "RIGHT", line, line, ImmutableList.of())), ImmutableList.of(), 1, ReviewFinding.State.OPEN, Optional.empty(), "head",
+                false, 0, NOW, NOW, ImmutableList.of(), ReviewFinding.Origin.AUTOMATIC, Optional.empty());
     }
 
     private static ReviewRun reviewRun(AgentReview review, ReviewRun.State state)
