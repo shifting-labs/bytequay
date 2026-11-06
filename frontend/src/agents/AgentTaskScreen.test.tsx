@@ -1681,6 +1681,8 @@ describe('agent task detail', () => {
     expect(markup).toContain('<span class="agt-ask__label">Both</span>');
     expect(markup).toContain('<span class="agt-ask__detail">Fix them together.</span>');
     expect(markup).toContain('role="radio" aria-checked="false"');
+    // The user can always answer in their own words.
+    expect(markup).toMatch(/<input[^>]*aria-label="Your own answer: Which issue should I work on\?"/);
     expect(markup).not.toContain('Allow once: Allow Claude AskUserQuestion');
     expect(markup).not.toContain('"multiSelect"');
     // Nothing is sent until a question is answered.

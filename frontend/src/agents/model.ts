@@ -471,10 +471,11 @@ export function approvalQuestions(row: Pick<ApprovalBlock, 'scope' | 'detail'>):
   });
 }
 
-/** Claude reads answers back keyed by the question it asked; several choices arrive as one joined answer. */
-export function questionAnswers(questions: ApprovalQuestion[], chosen: Record<string, string[]>): Record<string, string> {
+/** Claude reads answers back keyed by the question it asked; picked choices and typed words arrive as one joined answer. */
+export function questionAnswers(questions: ApprovalQuestion[], chosen: Record<string, string[]>, typed: Record<string, string>): Record<string, string> {
   return Object.fromEntries(questions
-    .map((question) => [question.question, (chosen[question.question] ?? []).join(', ')] as const)
+    .map((question) => [question.question, [...(chosen[question.question] ?? []), (typed[question.question] ?? '').trim()]
+      .filter((part) => part !== '').join(', ')] as const)
     .filter(([, answer]) => answer !== ''));
 }
 

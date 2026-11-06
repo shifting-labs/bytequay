@@ -461,12 +461,20 @@ describe('projecting rows', () => {
     expect(questionAnswers(questions, {
       'Which issue should I work on?': ['Both'],
       'Which checks should run?': ['Lint', 'Tests'],
-    })).toEqual({
+    }, {})).toEqual({
       'Which issue should I work on?': 'Both',
       'Which checks should run?': 'Lint, Tests',
     });
+    // A typed answer stands alone or joins the picked choices.
+    expect(questionAnswers(questions, { 'Which checks should run?': ['Lint'] }, {
+      'Which issue should I work on?': ' Only the first ',
+      'Which checks should run?': 'the e2e suite',
+    })).toEqual({
+      'Which issue should I work on?': 'Only the first',
+      'Which checks should run?': 'Lint, the e2e suite',
+    });
     // An unanswered question is left out, so nothing is sent as an empty answer.
-    expect(questionAnswers(questions, { 'Which issue should I work on?': [] })).toEqual({});
+    expect(questionAnswers(questions, { 'Which issue should I work on?': [] }, { 'Which checks should run?': '  ' })).toEqual({});
     // Only the question tool's own approval draws the card, and only while its input is readable.
     expect(approvalQuestions({ ...asked, scope: ['Bash'] })).toEqual([]);
     expect(approvalQuestions({ ...asked, detail: '{"questions":[{"question":"Cut?"}]}' })).toEqual([]);

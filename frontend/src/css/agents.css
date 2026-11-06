@@ -2135,6 +2135,15 @@
   background: var(--bg-info);
 }
 
+.agt-ask__other {
+  width: 100%;
+  margin-top: 6px;
+}
+
+.agt-ask__other.is-picked {
+  border-color: var(--fg-link);
+}
+
 .agt-ask__detail {
   font-size: 12px;
   line-height: 1.5;

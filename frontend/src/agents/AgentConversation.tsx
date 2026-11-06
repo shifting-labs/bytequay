@@ -514,12 +514,21 @@ function QuestionView({ block, questions, allow, deny, onDecide }: {
   onDecide?: ApprovalDecider;
 }): React.JSX.Element {
   const [chosen, setChosen] = useState<Record<string, string[]>>({});
-  const answers = questionAnswers(questions, chosen);
-  const pick = (question: ApprovalQuestion, label: string): void => setChosen((current) => {
-    const picked = current[question.question] ?? [];
-    if (!question.multiSelect) return { ...current, [question.question]: [label] };
-    return { ...current, [question.question]: picked.includes(label) ? picked.filter((one) => one !== label) : [...picked, label] };
-  });
+  const [typed, setTyped] = useState<Record<string, string>>({});
+  const answers = questionAnswers(questions, chosen, typed);
+  // On a one-answer question the typed answer is one more choice, so picking one clears the other.
+  const pick = (question: ApprovalQuestion, label: string): void => {
+    if (!question.multiSelect) setTyped((current) => ({ ...current, [question.question]: '' }));
+    setChosen((current) => {
+      const picked = current[question.question] ?? [];
+      if (!question.multiSelect) return { ...current, [question.question]: [label] };
+      return { ...current, [question.question]: picked.includes(label) ? picked.filter((one) => one !== label) : [...picked, label] };
+    });
+  };
+  const type = (question: ApprovalQuestion, text: string): void => {
+    if (!question.multiSelect) setChosen((current) => ({ ...current, [question.question]: [] }));
+    setTyped((current) => ({ ...current, [question.question]: text }));
+  };
   return (
     <div className="agt-appr agt-ask" role="group" aria-label={`Question: ${questions[0].question}`}>
       <div className="agt-appr__head">
@@ -553,6 +562,15 @@ function QuestionView({ block, questions, allow, deny, onDecide }: {
               );
             })}
           </div>
+          <input
+            className={`bq-input agt-ask__other${(typed[question.question] ?? '').trim() === '' ? '' : ' is-picked'}`}
+            placeholder="Or type your own answer"
+            aria-label={`Your own answer: ${question.question}`}
+            // The backend drops an answer over 8 KiB, which would send the question back unanswered.
+            maxLength={4000}
+            value={typed[question.question] ?? ''}
+            onChange={(event) => type(question, event.target.value)}
+          />
         </div>
       ))}
       <div className="agt-decisions">
