@@ -414,12 +414,8 @@ export function AgentTaskBody({
   const ciUnavailable = ciMessageUnavailable(state);
   const automationActive = state.task?.developmentContinuationUnfinished === true;
   const currentCi = state.task?.developmentCi?.status === 'FINISHED' ? null : state.task?.developmentCi;
+  // Shown only on the composer's automation chip: the stopped step turns red and its hover says why.
   const automationFailure = !automationActive && state.developmentProgress?.message.startsWith('Automation stopped.') ? state.developmentProgress.message : null;
-  const ciEndedAt = Date.parse(state.task?.developmentCi?.terminalAt ?? '');
-  const sourceStartedAt = state.turn?.id === state.latestTurnId ? Date.parse(state.turn.createdAt) : NaN;
-  // A new source turn can fail CI attachment before replacing the previous run.
-  const recordedCiFailure = state.task?.developmentCi?.status === 'FINISHED' && sourceStartedAt < ciEndedAt
-    && automationFailure?.startsWith('Automation stopped. CI Autofix:') ? automationFailure : null;
   const terminal = status === 'completed' || status === 'failed';
   const waiting = state.historyPages.length > 0 ? (pendingApprovals?.length ?? 0) > 0
     : turns.some((turn) => turn.blocks.some((block) => block.kind === 'approval' && block.actionable && block.outcome === null));
@@ -592,10 +588,6 @@ export function AgentTaskBody({
 
       {(automationActive || currentCi != null) && ciPollingError !== null && <div className="agt-notice" role="alert">{ciPollingError}</div>}
       {(automationActive || currentCi != null) && ciApprovalError !== null && <div className="agt-notice" role="alert">{ciApprovalError}</div>}
-
-      {automationFailure !== null && recordedCiFailure === null && <div className="agt-notice" role="alert">
-        {automationFailure}
-      </div>}
 
       {currentCi?.status === 'PAUSED' && currentCi.canMessage && currentCi.summary !== null
         && <div className="agt-barrier" role="status">{renderMarkdown(currentCi.summary, repository)}</div>}
