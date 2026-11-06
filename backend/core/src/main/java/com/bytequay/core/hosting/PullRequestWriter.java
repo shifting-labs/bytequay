@@ -52,6 +52,12 @@ public interface PullRequestWriter
     /** Turns an open request back into a draft. */
     void markDraft(HostingTarget target, int number);
 
+    /**
+     * Brings an open request's branch up to date with its base, from the head commit {@code headSha} the caller saw: by merging the base in,
+     * or by rebasing onto it. The host finishes it in the background.
+     */
+    void updateBranch(HostingTarget target, int number, String headSha, boolean rebase);
+
     void updateMetadata(HostingTarget target, int number, Optional<List<String>> assignees, Optional<List<String>> labels);
 
     void updateReviewer(HostingTarget target, int number, String login, boolean requested);

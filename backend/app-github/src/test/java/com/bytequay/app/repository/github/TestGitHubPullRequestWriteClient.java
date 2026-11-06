@@ -37,6 +37,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
@@ -186,6 +187,33 @@ class TestGitHubPullRequestWriteClient
                 .andRespond(withSuccess("{\"data\":{\"convertPullRequestToDraft\":{\"pullRequest\":{\"id\":\"PR_exact\",\"isDraft\":true}}}}", MediaType.APPLICATION_JSON));
 
         client.convertToDraft("pat", "PR_exact");
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void updatesTheBranchFromTheHeadTheCallerSaw(boolean rebase)
+    {
+        String query = "mutation($id:ID!,$head:GitObjectID!,$method:PullRequestBranchUpdateMethod!){updatePullRequestBranch(input:{pullRequestId:$id,"
+                + "expectedHeadOid:$head,updateMethod:$method}){pullRequest{id}}}";
+        graphServer.expect(requestTo("https://api.github.test/graphql"))
+                .andExpect(method(HttpMethod.POST)).andExpect(header("Authorization", "Bearer pat"))
+                .andExpect(jsonPath("$.query").value(query))
+                .andExpect(jsonPath("$.variables.id").value("PR_exact"))
+                .andExpect(jsonPath("$.variables.head").value("abc123"))
+                .andExpect(jsonPath("$.variables.method").value(rebase ? "REBASE" : "MERGE"))
+                .andRespond(withSuccess("{\"data\":{\"updatePullRequestBranch\":{\"pullRequest\":{\"id\":\"PR_exact\"}}}}", MediaType.APPLICATION_JSON));
+
+        client.updatePullRequestBranch("pat", "PR_exact", "abc123", rebase);
+    }
+
+    @Test
+    void reportsGitHubsReasonWhenItRefusesTheBranchUpdate()
+    {
+        graphServer.expect(requestTo("https://api.github.test/graphql"))
+                .andRespond(withSuccess("{\"errors\":[{\"type\":\"UNPROCESSABLE\",\"message\":\"expected head sha didn't match\"}]}", MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> client.updatePullRequestBranch("pat", "PR_exact", "abc123", false))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("GitHub did not update the branch: UNPROCESSABLE: expected head sha didn't match");
     }
 
     @ParameterizedTest

@@ -247,6 +247,17 @@ final class PullRequestActions
         afterWrite(route, () -> recent.pullRequestAction(rowId.apply(route).orElseThrow(), RecentReason.EDITED, 0));
     }
 
+    void updateBranch(PullRequestRead route, String headSha, boolean rebase)
+    {
+        try {
+            integrations.of(route.target()).writer().updateBranch(route.target(), route.number(), headSha, rebase);
+        }
+        finally {
+            afterWrite(route, () -> invalidatePullRequestDetail(route));
+        }
+        afterWrite(route, () -> recent.pullRequestAction(rowId.apply(route).orElseThrow(), RecentReason.EDITED, 0));
+    }
+
     void markReadyForReview(PullRequestRead route)
     {
         try {

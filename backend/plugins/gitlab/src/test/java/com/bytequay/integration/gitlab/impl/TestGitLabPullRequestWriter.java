@@ -414,6 +414,22 @@ class TestGitLabPullRequestWriter
     }
 
     @Test
+    void rebasesOnlyFromTheHeadTheCallerSaw()
+    {
+        responses.put("GET " + PREFIX, "{\"sha\":\"" + HEAD + "\"}");
+        responses.put("PUT " + PREFIX + "/rebase", "{\"rebase_in_progress\":true}");
+        statuses.put("PUT " + PREFIX + "/rebase", 202);
+
+        writer.updateBranch(target(), 7, HEAD, true);
+        assertThat(received).extracting(Request::key).containsExactly("GET " + PREFIX, "PUT " + PREFIX + "/rebase");
+
+        received.clear();
+        assertThatThrownBy(() -> writer.updateBranch(target(), 7, BASE, true)).isInstanceOf(HostingFailure.class).hasMessageContaining("new commits");
+        assertThatThrownBy(() -> writer.updateBranch(target(), 7, HEAD, false)).hasMessage("GitLab can only rebase a merge request's branch onto its base");
+        assertThat(received).extracting(Request::key).containsExactly("GET " + PREFIX);
+    }
+
+    @Test
     void commandOnlyCommentSucceedsWithoutInventingANoteIdentity()
     {
         responses.put("POST " + PREFIX + "/notes", "{\"commands_changes\":{\"state_event\":\"close\"},\"summary\":[\"Closed this merge request.\"]}");

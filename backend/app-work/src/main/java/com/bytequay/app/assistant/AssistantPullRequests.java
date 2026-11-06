@@ -21,7 +21,9 @@ import com.bytequay.app.service.pr.PullRequestService;
 import com.bytequay.core.domain.AgendaTarget;
 import com.bytequay.core.domain.PullRequestDetail;
 import com.bytequay.core.domain.RepoUser;
+import com.bytequay.core.domain.UserWords;
 import com.bytequay.core.domain.Workspace;
+import com.bytequay.core.hosting.HostingProvider;
 import com.bytequay.core.review.ReviewDraft;
 import com.bytequay.core.store.PrDetailStore;
 import com.bytequay.core.store.PullRequestStore;
@@ -167,17 +169,31 @@ class AssistantPullRequests
     AssistantWork.Done approve(String ref)
     {
         Found found = resolve(ref);
-        Optional<String> seen = details.find(found.id()).map(stored -> stored.raw().headSha()).filter(head -> head != null && !head.isBlank());
-        Read pr = open(found);
+        Read pr = openAsSeen(found);
         checkState(Optional.ofNullable(pr.detail().author()).filter(found.route().login()::equalsIgnoreCase).isEmpty(), "You can't approve your own pull request");
         String head = pr.detail().headSha();
-        checkState(head != null && seen.map(head::equals).orElse(true), "New commits arrived since you last saw it; open the pull request to check them");
         ReviewDraft draft = reviews.draft(found.route());
         checkState(draft.reviewPublication().isEmpty(), "A review you sent has no answer yet; open the pull request to settle it first");
         checkState(draft.body().isBlank() && draft.items().isEmpty(), "Your review draft has comments; send it from the pull request");
         ReviewDraft saved = reviews.saveReview(found.route(), draft.version(), draft.body(), "APPROVE");
         reviews.submit(found.route(), saved.version(), saved.body().strip(), "APPROVE", head);
         return pr.done("Approved", Optional.empty());
+    }
+
+    /**
+     * Brings its branch up to date with its base, from the head commit the user last saw: a rebase when their words say rebase, else a merge
+     * of the base. GitLab only rebases, which rewrites the branch's commits, so there it waits for the word. The host finishes it later.
+     */
+    AssistantWork.Done updateBranch(String ref, String words)
+    {
+        Found found = resolve(ref);
+        boolean rebase = UserWords.names(words, "rebase");
+        checkState(rebase || found.route().session().access().server().provider() != HostingProvider.GITLAB,
+                "GitLab can only rebase it, which rewrites its commits; ask to rebase it if you want that");
+        Read pr = openAsSeen(found);
+        service.updateBranch(found.route(), pr.detail().headSha(), rebase);
+        String base = pr.detail().baseRef();
+        return pr.done(rebase ? "Rebasing onto " + base + ":" : "Merging " + base + " into", Optional.of("the host finishes it shortly"));
     }
 
     /** Sets its title or description to the user's own words, as its page's editors do. */
@@ -215,6 +231,16 @@ class AssistantPullRequests
     {
         Read pr = read(found);
         checkState(pr.detail().mergedAt() == null && "open".equals(pr.detail().state()), "That pull request is not open");
+        return pr;
+    }
+
+    /** It open, at the head commit ByteQuay held before reading it again, so commits that arrived since are never acted on unseen. */
+    private Read openAsSeen(Found found)
+    {
+        Optional<String> seen = details.find(found.id()).map(stored -> stored.raw().headSha()).filter(head -> head != null && !head.isBlank());
+        Read pr = open(found);
+        String head = pr.detail().headSha();
+        checkState(head != null && seen.map(head::equals).orElse(true), "New commits arrived since you last saw it; open the pull request to check them");
         return pr;
     }
 

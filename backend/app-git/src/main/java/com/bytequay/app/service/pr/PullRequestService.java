@@ -1746,6 +1746,11 @@ public class PullRequestService
         actions.markDraft(route);
     }
 
+    public void updateBranch(PullRequestRead route, String headSha, boolean rebase)
+    {
+        actions.updateBranch(route, headSha, rebase);
+    }
+
     public void markReadyForReview(String repo, int number)
     {
         actions.markReadyForReview(prepareRead(repo, number));

@@ -369,6 +369,21 @@ public class GitHubPullRequestWriteClient
         }
     }
 
+    /** One mutation, bound to the head the caller saw; GitHub refuses a moved head or a conflicting base, and a lost response is never repeated. */
+    public void updatePullRequestBranch(String pat, String nodeId, String expectedHead, boolean rebase)
+    {
+        requirePat(pat);
+        checkText(nodeId, "nodeId", 255);
+        checkText(expectedHead, "expectedHead", 64);
+        String mutation = "mutation($id:ID!,$head:GitObjectID!,$method:PullRequestBranchUpdateMethod!){updatePullRequestBranch(input:{pullRequestId:$id,"
+                + "expectedHeadOid:$head,updateMethod:$method}){pullRequest{id}}}";
+        JsonNode result = graphqlData(pat, mutation, ImmutableMap.of("id", nodeId, "head", expectedHead, "method", rebase ? "REBASE" : "MERGE"),
+                HttpStatus.BAD_GATEWAY, "GitHub did not update the branch").path("updatePullRequestBranch").path("pullRequest");
+        if (!nodeId.equals(result.path("id").asText())) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "The branch update could not be verified; it will not be retried");
+        }
+    }
+
     /** Creates a pull request using the same authenticated write client as existing PR actions. */
     public CreatedPullRequest createPullRequest(String pat, RepoRef baseRepository, String head, String base, String title, String body, boolean draft)
     {

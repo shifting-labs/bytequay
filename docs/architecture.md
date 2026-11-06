@@ -613,11 +613,15 @@ Epic, add work to one, create a work item titled with the user's words, and
 acknowledge or snooze a Needs attention item, all of it local. On a pull request
 the user could see, it may close or reopen it, mark it ready for review or turn
 it back into a draft, rerun its failed checks, request or take back reviews, add
-or remove labels, approve it, and comment or set its title or description. Each reads the pull request from its
+or remove labels, approve it, update its branch with its base, and comment or
+set its title or description. Each reads the pull request from its
 host again first and writes through the page's own service under the
 workspace's account. Reviewers, labels and text must be in the user's words, a
 number the words give must be that pull request's, and approving goes through
 an empty review draft bound to the head commit ByteQuay held when the user asked.
+Updating a branch is bound to that head too: it merges the base in, or rebases
+only when the user's words say rebase, since a rebase rewrites the branch's
+commits and is GitLab's only way.
 Merging stays the card's click. Each call is logged and leaves a receipt in the
 conversation. The switches that let it act are off by default, except pull
 request work, which is on.

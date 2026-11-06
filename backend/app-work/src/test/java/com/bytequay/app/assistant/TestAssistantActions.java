@@ -442,6 +442,20 @@ class TestAssistantActions
     }
 
     @Test
+    void updatesABranchWithTheUsersOwnWords()
+    {
+        String pr = "pr:owner/repository#58";
+        AgendaTarget opens = AgendaTarget.pull(5, "owner/repository", 58, Optional.of("ws1"));
+        when(pulls.updateBranch(pr, "rebase #58")).thenReturn(new AssistantWork.Done("Rebasing onto main: “Fix the cache”", Optional.empty(), Optional.of(opens),
+                "owner/repository#58"));
+
+        act(message("rebase #58 onto main", ImmutableList.of(), Optional.of(pr)), "{\"op\":\"update_branch\",\"pr\":\"" + pr + "\",\"words\":\"rebase #58\"}");
+
+        assertThat(receipts.getLast().receipt().orElseThrow().operation()).isEqualTo(AssistantReceipt.Operation.UPDATE_BRANCH);
+        verify(pulls).updateBranch(pr, "rebase #58");
+    }
+
+    @Test
     void refusesPullRequestWorkTheUserDidNotAskFor()
     {
         String pr = "pr:owner/repository#31402";

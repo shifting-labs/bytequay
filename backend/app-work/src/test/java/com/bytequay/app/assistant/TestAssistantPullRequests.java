@@ -14,6 +14,7 @@
 package com.bytequay.app.assistant;
 
 import com.bytequay.app.review.ReviewPublicationService;
+import com.bytequay.app.service.hosting.HostingReadSession;
 import com.bytequay.app.service.pr.PullRequestRead;
 import com.bytequay.app.service.pr.PullRequestRoute;
 import com.bytequay.app.service.pr.PullRequestService;
@@ -25,6 +26,8 @@ import com.bytequay.core.domain.RepoUser;
 import com.bytequay.core.domain.RepositoryLabel;
 import com.bytequay.core.domain.StoredPrDetail;
 import com.bytequay.core.domain.Workspace;
+import com.bytequay.core.hosting.HostingAccess;
+import com.bytequay.core.hosting.HostingProvider;
 import com.bytequay.core.hosting.HostingPullRequest;
 import com.bytequay.core.hosting.HostingServer;
 import com.bytequay.core.review.ReviewDraft;
@@ -37,6 +40,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockMakers;
 
+import java.net.URI;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -44,6 +48,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -139,6 +144,38 @@ class TestAssistantPullRequests
     }
 
     @Test
+    void updatesTheBranchFromTheHeadTheUserSaw()
+    {
+        hosted(HostingServer.GITHUB_COM);
+        stored(HEAD);
+        fresh("open", false, "octocat", HEAD, ImmutableList.of());
+        when(service.refreshForAction(route).baseRef()).thenReturn("master");
+
+        assertThat(pulls.updateBranch(REF, "update #58 with master").line()).isEqualTo("Merging master into “Fix the cache”");
+        verify(service).updateBranch(route, HEAD, false);
+        assertThat(pulls.updateBranch(REF, "rebase #58").line()).isEqualTo("Rebasing onto master: “Fix the cache”");
+        verify(service).updateBranch(route, HEAD, true);
+
+        stored("b".repeat(40));
+        assertThatThrownBy(() -> pulls.updateBranch(REF, "rebase #58")).hasMessage("New commits arrived since you last saw it; open the pull request to check them");
+        verify(service, times(2)).updateBranch(any(), anyString(), anyBoolean());
+    }
+
+    @Test
+    void rebasesAGitLabBranchOnlyWhenTheWordsSaySo()
+    {
+        hosted(new HostingServer(HostingProvider.GITLAB, URI.create("https://gitlab.example.com"), URI.create("https://gitlab.example.com/api/v4")));
+        fresh("open", false, "octocat", HEAD, ImmutableList.of());
+        when(service.refreshForAction(route).baseRef()).thenReturn("main");
+
+        assertThatThrownBy(() -> pulls.updateBranch(REF, "update #58 with main"))
+                .hasMessage("GitLab can only rebase it, which rewrites its commits; ask to rebase it if you want that");
+        assertThatThrownBy(() -> pulls.updateBranch(REF, "don't rebase #58")).hasMessageContaining("GitLab can only rebase it");
+        assertThat(pulls.updateBranch(REF, "rebase #58 on main").line()).isEqualTo("Rebasing onto main: “Fix the cache”");
+        verify(service, times(1)).updateBranch(route, HEAD, true);
+    }
+
+    @Test
     void addsTheRepositorysLabelsAndKeepsTheRest()
     {
         fresh("open", false, "octocat", HEAD, ImmutableList.of(new PullRequestDetail.Label("bug", "d73a4a"), new PullRequestDetail.Label("wip", "ededed")));
@@ -215,6 +252,11 @@ class TestAssistantPullRequests
         when(detail.headSha()).thenReturn(head);
         when(detail.labels()).thenReturn(labels);
         when(service.refreshForAction(route)).thenReturn(detail);
+    }
+
+    private void hosted(HostingServer server)
+    {
+        when(route.session()).thenReturn(new HostingReadSession(2, "selected", new HostingAccess(server, "token")));
     }
 
     private void stored(String head)

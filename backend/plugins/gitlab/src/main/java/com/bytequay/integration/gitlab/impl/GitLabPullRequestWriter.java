@@ -188,6 +188,19 @@ public final class GitLabPullRequestWriter
         }
     }
 
+    // GitLab only rebases a merge request's branch; its rebase takes no expected head, so the head is read first.
+    @Override
+    public void updateBranch(HostingTarget target, int number, String headSha, boolean rebase)
+    {
+        checkArgument(rebase, "GitLab can only rebase a merge request's branch onto its base");
+        String path = mergeRequestPath(target, number);
+        GitLabMergeRequestResponse current = get(target.access(), path, GitLabMergeRequestResponse.class);
+        if (!headSha.equals(current.sha())) {
+            throw new HostingFailure(REVISION_CONFLICT, "The merge request has new commits; look at it again");
+        }
+        http.put(target.access(), path + "/rebase", ImmutableMap.of(), Void.class);
+    }
+
     @Override
     public void updateMetadata(HostingTarget target, int number, Optional<List<String>> assignees, Optional<List<String>> labels)
     {

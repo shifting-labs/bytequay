@@ -128,6 +128,12 @@ public class GitHubPullRequestWriter
     }
 
     @Override
+    public void updateBranch(HostingTarget target, int number, String headSha, boolean rebase)
+    {
+        writes.updatePullRequestBranch(target.access().token(), node(target, number), headSha, rebase);
+    }
+
+    @Override
     public void updateMetadata(HostingTarget target, int number, Optional<List<String>> assignees, Optional<List<String>> labels)
     {
         writes.updateIssueMetadata(target.access().token(), ref(target, number), assignees, labels);
