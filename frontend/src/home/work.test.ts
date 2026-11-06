@@ -140,6 +140,15 @@ describe('My work', () => {
     expect(isOwnWork(pullRequestItem(pr({ number: 8, author: 'ana' })), 'me')).toBe(false);
   });
 
+  it('opens each pull request through its workspace or account, not the desktop sign-in', () => {
+    const task = { ...previewTask('ws1', 'task-1'), pullRequest: { number: 7, title: 'Change 7', state: 'open', draft: false } };
+    const hosted = { ...mine(9, { workspaceId: 'gitlab-workspace', accountId: 11 }), workspaceId: 'gitlab-workspace' };
+    const items = myWorkItems({ candidates: [mine(8, { accountId: 11 }), hosted],
+      tasks: [{ task, workspace }], activity: {}, work: [], viewerLogin: 'me' });
+    expect(items.flatMap(item => item.prs.map(each => [each.number, each.workspaceId, each.accountId])).sort())
+      .toEqual([[7, 'ws1', null], [8, null, 11], [9, 'gitlab-workspace', 11]]);
+  });
+
   it('puts issues the viewer opened under In review, and lists one assigned to them only once', () => {
     const assigned = { ...issueAttentionItem(issue(11), 'owner/repository', 'ws1'), kind: 'assigned' as const };
     const items = myWorkItems({ candidates: [assigned], tasks: [], activity: {}, work: [], viewerLogin: 'me',

@@ -249,9 +249,8 @@ function MergeWorkPull({ pr, multiple }: { pr: WorkPr; multiple: boolean }) {
   const [headAttempt, setHeadAttempt] = useState(0);
   const submitted = useRef(false);
   const row = pr.row;
-  const workspaceId = row?.workspaceId;
-  const accountId = row?.accountId;
-  const route = useMemo(() => workspaceId ?? (accountId == null ? undefined : { accountId }), [workspaceId, accountId]);
+  const { workspaceId, accountId } = pr;
+  const route = useMemo(() => workspaceId ?? (accountId === null ? undefined : { accountId }), [workspaceId, accountId]);
   const head = row?.headSha ?? loadedHead;
   const checkingHead = !head && headError === null;
   const failure = error ?? (!head ? headError : null);
@@ -311,7 +310,7 @@ function PrBox({ pr, onOpen }: { pr: WorkPr; onOpen: (target: AgendaTargetDto) =
   const Icon = pr.state === 'draft' ? GitPullRequestDraft : GitPullRequest;
   return (
     <button type="button" className="mw-pr" title={pr.title}
-      onClick={event => { event.stopPropagation(); onOpen({ kind: 'PULL', repo: pr.repo, number: pr.number, workspaceId: null, id: null, connectionId: null, cloudId: null }); }}>
+      onClick={event => { event.stopPropagation(); onOpen({ kind: 'PULL', repo: pr.repo, number: pr.number, workspaceId: pr.workspaceId, accountId: pr.accountId, id: null, connectionId: null, cloudId: null }); }}>
       <span className="mw-pr__line">
         <Icon size={13} className="mw-pr__icon" aria-hidden="true" />
         <span className="mw-pr__name">{pr.repo} #{pr.number}</span>

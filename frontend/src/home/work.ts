@@ -49,6 +49,9 @@ export type WorkPr = {
   state: 'open' | 'draft' | 'merged' | 'closed';
   /** The stored row when the attention list holds it; a task's own record names only its state. */
   row: PullRequestDto | null;
+  /** Where it opens: the workspace that lists it, else the connected account that found it; neither opens through the desktop sign-in. */
+  workspaceId: string | null;
+  accountId: number | null;
 };
 
 export type WorkItem = {
@@ -176,7 +179,8 @@ function workItem(
     const pr = task.pullRequest;
     if (pr == null || prs.has(prKey(workspace.repository, pr.number))) continue;
     const row = rows.get(prKey(workspace.repository, pr.number)) ?? null;
-    prs.set(prKey(workspace.repository, pr.number), { repo: workspace.repository, number: pr.number, title: pr.title, state: prState(row ?? pr), row });
+    prs.set(prKey(workspace.repository, pr.number), { repo: workspace.repository, number: pr.number, title: pr.title, state: prState(row ?? pr), row,
+      workspaceId: row?.workspaceId ?? workspace.id, accountId: row?.accountId ?? null });
   }
   const open = tasks.map(({ task }) => ({ task, state: taskCardState(task, activity[task.id] ?? null) })).filter(entry => entry.task.state === 'OPEN')
     .sort((left, right) => Number(right.state.spinning) - Number(left.state.spinning)
@@ -295,10 +299,12 @@ export function myWorkItems({ candidates, tasks, activity, work, viewerLogin, au
     const named = entry.links.flatMap((link): WorkPr[] => {
       if (link.kind !== 'PULL_REQUEST') return [];
       const row = rows.get(link.key.toLowerCase());
-      if (row !== undefined) return [{ repo: row.repo, number: row.number, title: row.title, state: prState(row), row }];
+      if (row !== undefined) {
+        return [{ repo: row.repo, number: row.number, title: row.title, state: prState(row), row, workspaceId: row.workspaceId ?? entry.workspaceId, accountId: row.accountId ?? null }];
+      }
       const split = link.key.lastIndexOf('#');
       return [{ repo: link.key.slice(0, split), number: Number(link.key.slice(split + 1)), title: link.title, row: null,
-        state: link.state === 'MERGED' ? 'merged' : link.state === 'ENDED' ? 'closed' : 'open' }];
+        state: link.state === 'MERGED' ? 'merged' : link.state === 'ENDED' ? 'closed' : 'open', workspaceId: entry.workspaceId, accountId: null }];
     });
     items.push(workItem({
       key: `work:${entry.id}`, source: 'local', label: '', title: entry.title, updatedAt: entry.updatedAt,
@@ -327,7 +333,8 @@ export function myWorkItems({ candidates, tasks, activity, work, viewerLogin, au
       key: item.key, source: 'pr', label: `${repoName(item.repo)}#${item.number}`, title: item.title, updatedAt: item.updatedAt,
       ended: prState(pr) === 'merged' ? 'Merged' : prState(pr) === 'closed' ? 'Closed' : null,
       target: target('PULL', { repo: item.repo, number: item.number, id: String(pr.id), workspaceId: item.workspaceId, accountId: item.accountId ?? null }),
-    }, claim(linked), [{ repo: item.repo, number: item.number, title: item.title, state: prState(pr), row: pr }], rows, activity, decisions));
+    }, claim(linked), [{ repo: item.repo, number: item.number, title: item.title, state: prState(pr), row: pr, workspaceId: item.workspaceId, accountId: item.accountId ?? null }],
+    rows, activity, decisions));
   }
 
   return items.sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));

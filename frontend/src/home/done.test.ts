@@ -55,11 +55,11 @@ describe('stand-up notes', () => {
       ...mine(1235, { draft: true, ciStatus: 'FAILING' }),
       ...mine(1237, { requestedReviewers: ['ana'] }),
       work({ title: 'Write the design', task: previewTask('ws1', 'task-2') }),
-      work({ ...ticket, prs: [{ repo: 'owner/trino', number: 234, title: 'Support views', state: 'draft', row: null }] }),
+      work({ ...ticket, prs: [{ repo: 'owner/trino', number: 234, title: 'Support views', state: 'draft', row: null, workspaceId: null, accountId: null }] }),
       // Nobody started it, someone else owns it, or all it delivered has ended: none of these is in progress.
       work({ source: 'jira', label: 'ENG-9', title: 'Untouched ticket' }),
       work({ source: 'issue', label: 'trino#7', title: 'Opened for others', authored: true }),
-      work({ ...ticket, label: 'ENG-8', prs: [{ repo: 'owner/trino', number: 200, title: 'Done already', state: 'merged', row: null }] }),
+      work({ ...ticket, label: 'ENG-8', prs: [{ repo: 'owner/trino', number: 200, title: 'Done already', state: 'merged', row: null, workspaceId: null, accountId: null }] }),
     ];
 
     expect(standupText(TODAY, TODAY, items, inProgress)).toBe(`Today:

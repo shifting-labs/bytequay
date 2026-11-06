@@ -31,7 +31,8 @@ function work(rows: PullRequestDto[], overrides: Partial<WorkItem> = {}): WorkIt
     key: `${first.repo}#${first.number}`, source: 'pr', label: `repository#${first.number}`, title: first.title, updatedAt: first.updatedAt,
     target: { kind: 'PULL', repo: first.repo, number: first.number, id: String(first.id), workspaceId: first.workspaceId ?? null, connectionId: null, cloudId: null },
     task: null, running: null, branch: null, prs: rows.map(each => ({ repo: each.repo, number: each.number, title: each.title,
-      state: each.state === 'closed' ? 'closed' : 'open', row: each })), lane: 'ready', next: 'Merge · no conflicts', decision: null,
+      state: each.state === 'closed' ? 'closed' : 'open', row: each, workspaceId: each.workspaceId ?? null, accountId: each.accountId ?? null })),
+    lane: 'ready', next: 'Merge · no conflicts', decision: null,
     keys: [], ended: null, repos: [...new Set(rows.map(each => each.repo))], agents: [], ...overrides,
   };
 }
