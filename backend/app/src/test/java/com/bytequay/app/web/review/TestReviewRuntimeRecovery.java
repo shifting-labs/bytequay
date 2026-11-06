@@ -141,7 +141,7 @@ class TestReviewRuntimeRecovery
                         ImmutableList.of("finding-1"))),
                 Optional.of(new ReviewCoverage(true, ImmutableList.of(), ImmutableList.of("Limited tests"), NOW)), Optional.empty(), ImmutableList.of(), false,
                 ImmutableMap.of(), ImmutableMap.of("e1", evidence), Optional.empty(), 0, NOW, NOW, Optional.empty());
-        ReviewFinding finding = new ReviewFinding("finding-1", REVIEW_ID, "run-1", 1, "Title", "Body", Optional.empty(), Optional.empty(),
+        ReviewFinding finding = new ReviewFinding("finding-1", REVIEW_ID, "run-1", 1, "Title", "Body", Optional.empty(), Optional.empty(), Optional.empty(),
                 ImmutableList.of(evidence), 1, ReviewFinding.State.OPEN, Optional.empty(), "head", false, 0, NOW, NOW, ImmutableList.of(), ReviewFinding.Origin.AUTOMATIC,
                 Optional.empty());
         AgentReviewProjection original = projection(ImmutableList.of(run), ImmutableList.of(finding));
@@ -233,7 +233,7 @@ class TestReviewRuntimeRecovery
     void resolvingRemembersTheReasonForTheFindingsFileOnlyWhenAsked()
             throws Exception
     {
-        ReviewFinding finding = new ReviewFinding("finding-1", REVIEW_ID, "run-1", 1, "Unchecked input", "Body", Optional.empty(),
+        ReviewFinding finding = new ReviewFinding("finding-1", REVIEW_ID, "run-1", 1, "Unchecked input", "Body", Optional.empty(), Optional.empty(),
                 Optional.of(new ReviewAnchor("src/App.java", "RIGHT", 3, 4, ImmutableList.of("parse(input)"))), ImmutableList.of(), 1, ReviewFinding.State.OPEN,
                 Optional.empty(), "a".repeat(40), false, 0, NOW, NOW, ImmutableList.of(), ReviewFinding.Origin.AUTOMATIC, Optional.empty());
         when(reviews.get(REVIEW_ID)).thenReturn(projection(ImmutableList.of(), ImmutableList.of(finding)));

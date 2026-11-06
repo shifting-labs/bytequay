@@ -156,6 +156,13 @@ describe('finding suggestions', () => {
     for (const html of [mine, developer]) expect(html).toContain('>Reopen</button>');
   });
 
+  it('folds the walkthrough apart from the comment', () => {
+    expect(render()).not.toContain('Walkthrough');
+    const html = render({ ...finding, walkthrough: 'Input: `parse(null)`.\n\n```java\nreturn reader.read(input);\n```' });
+    expect(html).toContain('Walkthrough</button>');
+    expect(html).not.toContain('reader.read(input)');
+  });
+
   it('folds the repository memories the reviewer cited', () => {
     expect(render()).not.toContain('Memory used');
     const html = render({ ...finding, memories: [{ id: 'm12', line: 'Document every new table property. (PR #31188 @alice)' }] });

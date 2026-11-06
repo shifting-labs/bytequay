@@ -16,6 +16,7 @@ package com.bytequay.app.review;
 import com.bytequay.core.review.ReviewInvalidRequestException;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -64,14 +65,14 @@ final class ReviewCommentForm
         int wordLimit = nit ? MAX_NIT_WORDS : MAX_WORDS;
         if (words > wordLimit) {
             throw new ReviewInvalidRequestException("body: " + words + " prose words exceeds " + wordLimit
-                    + "; polish before saving. Preserve the trigger, consequence and material conditions; move supporting test detail into evidence");
+                    + "; polish before saving. Preserve the trigger, consequence and material conditions; move the step-by-step example into the walkthrough");
         }
         String plain = INLINE_CODE.matcher(prose).replaceAll("code").strip();
         List<String> sentences = sentences(plain);
         int sentenceLimit = nit ? MAX_NIT_SENTENCES : MAX_SENTENCES;
         if (sentences.size() > sentenceLimit) {
             throw new ReviewInvalidRequestException("body: " + sentences.size() + " sentences exceeds " + sentenceLimit
-                    + "; keep the request and the reason it needs, and move the rest into evidence");
+                    + "; keep the request and the reason it needs, and move the rest into the walkthrough");
         }
         Matcher hedge = HEDGE.matcher(plain);
         if (hedge.find()) {
@@ -84,7 +85,30 @@ final class ReviewCommentForm
         }
     }
 
+    /**
+     * Every finding about lines except a nit owes the user a walkthrough to read before posting: an example followed
+     * through the code. Its wording is not measured, but it must show code.
+     */
+    static void checkWalkthrough(String title, boolean lines, Optional<String> walkthrough)
+    {
+        if (!lines || title.regionMatches(true, 0, "Nit:", 0, 4)) {
+            return;
+        }
+        String text = walkthrough.orElseThrow(() -> new ReviewInvalidRequestException("walkthrough: required for a finding about lines, apart from a Nit:. "
+                + "Follow one concrete example input through the code: each step as path:line with the code and the value it holds, "
+                + "where the result differs from the expected one and whether that ran or was traced, then the fixed code"));
+        withoutFencedCode(text, "walkthrough");
+        if (text.lines().map(String::stripLeading).noneMatch(line -> line.startsWith("```") || line.startsWith("~~~"))) {
+            throw new ReviewInvalidRequestException("walkthrough: show the code each step runs in fenced code blocks");
+        }
+    }
+
     private static String withoutFencedCode(String body)
+    {
+        return withoutFencedCode(body, "body");
+    }
+
+    private static String withoutFencedCode(String body, String field)
     {
         StringBuilder prose = new StringBuilder();
         String fence = "";
@@ -101,7 +125,7 @@ final class ReviewCommentForm
             }
         }
         if (!fence.isEmpty()) {
-            throw new ReviewInvalidRequestException("body: close the code fence before saving the comment");
+            throw new ReviewInvalidRequestException(field + ": close the code fence before saving the comment");
         }
         return prose.toString();
     }

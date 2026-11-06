@@ -658,6 +658,15 @@ Each refusal names the measured figure or the phrase, so the agent rewrites the
 comment instead of the rule being advice. The user's own edits to a saved
 comment are never checked.
 
+The comment stays short because the explanation has its own field. Every finding
+about lines, apart from a `Nit:`, carries a `walkthrough`: the reviewer follows
+one concrete input through the code step by step, each step as a location, its
+code and the value it holds, to the line where the actual result departs from
+the expected one, says whether that ran or was traced, and ends with the fixed
+code. The card shows it folded under the comment; publication never sends it.
+`review_save_finding` refuses a missing walkthrough and one without fenced code,
+and does not judge its wording. A revision replaces it with the revision's own.
+
 ## UI and trust boundaries
 
 Review details show only what the reader acts on: verdicts on the user's own

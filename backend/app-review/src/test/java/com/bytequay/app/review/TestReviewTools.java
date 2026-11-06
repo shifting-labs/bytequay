@@ -148,6 +148,15 @@ class TestReviewTools
 {
     private static final Logger log = LoggerFactory.getLogger(TestReviewTools.class);
 
+    private static final String WALKTHROUGH = """
+            Input: `parse(null)`.
+
+            ```java
+            return reader.read(input);
+            ```
+
+            Expected an empty result; actual: NullPointerException, traced from source.
+            """;
     private static final String REVIEW_ID = "review-1";
     private static final String RUN_ID = "run-1";
     private static final String TASK_ID = "e4469e62-6122-4c61-b279-459a6ad35f20";
@@ -981,7 +990,8 @@ class TestReviewTools
         assertThat(finish.description()).contains("Caveats about evidence strength stay with the candidate").doesNotContain("Put unavailable tests");
         assertThat(finish.description()).contains("at most 8 refs", "SUPPORTED must include every ref cited by its saved finding");
         ReviewTool finding = bridge.tools().stream().filter(tool -> tool.name().equals("review_save_finding")).findFirst().orElseThrow();
-        assertThat(finding.description()).contains("Polish before saving", "full reproduction code, commands and results in captured evidence");
+        assertThat(finding.description()).contains("Polish before saving", "Retain full reproduction code, commands and output in captured evidence",
+                "Put the example in walkthrough, which the user reads in ByteQuay and is never posted");
         assertThat(finding.description()).contains("A Question: title, without severity, is the last resort", "select at most 12 final comments in review_finish");
         assertThat(finding.description()).contains("at most 8 decisive evidence entries", "reuse their refs in this candidate's SUPPORTED assessment");
         assertContextToolSchema();
@@ -1086,7 +1096,29 @@ class TestReviewTools
         assertThat(stored.state()).isEqualTo(ReviewFinding.State.OPEN);
         assertThat(stored.anchor()).contains(new ReviewAnchor(DIFF_PATH, "RIGHT", 2, 2, ImmutableList.of("beta")));
         assertThat(stored.evidence()).extracting(ReviewEvidence::ref).containsExactly("E1");
+        assertThat(stored.walkthrough()).contains(WALKTHROUGH.strip());
         assertThat(store.findRun(RUN_ID).orElseThrow().version()).isPositive();
+    }
+
+    @Test
+    void findingAboutLinesWalksAnExampleThroughTheCode()
+    {
+        readSource();
+        Map<String, Object> finding = finding("first", "Missing null check", "A2", ImmutableList.of(evidence("E1")));
+
+        JsonNode missing = call("review_save_finding", with(finding, "missing", "walkthrough", ""));
+        assertThat(missing.at("/error/field").asText()).isEqualTo("walkthrough");
+        assertThat(missing.at("/error/message").asText()).contains("concrete example input");
+        assertThat(call("review_save_finding", with(finding, "prose", "walkthrough", "Input: null. It throws.")).at("/error/message").asText())
+                .contains("fenced code blocks");
+        JsonNode unclosed = call("review_save_finding", with(finding, "open", "walkthrough", "```java\nreturn reader.read(input);"));
+        assertThat(unclosed.at("/error/field").asText()).isEqualTo("walkthrough");
+        assertThat(unclosed.at("/error/message").asText()).contains("close the code fence");
+        assertThat(store.listFindings(REVIEW_ID)).isEmpty();
+
+        Map<String, Object> nit = with(with(finding, "nit", "title", "Nit: rename the reader"), "nit", "body", "Rename `reader` to `parser`.");
+        assertThat(call("review_save_finding", with(nit, "nit", "walkthrough", "")).path("status").asText()).isEqualTo("accepted");
+        assertThat(store.listFindings(REVIEW_ID).getFirst().walkthrough()).isEmpty();
     }
 
     @Test
@@ -1433,6 +1465,7 @@ class TestReviewTools
                 "startAnchor", "A2",
                 "validation", "The source establishes a reachable unchecked input and no caller guard prevents it.",
                 "body", "Validate the added line before it is used. A null input reaches the parser unchecked.",
+                "walkthrough", WALKTHROUGH,
                 "title", "Missing null check",
                 "operationKey", "save-1");
         assertThat(call("review_save_finding", reordered).toString()).isEqualTo(first.toString());
@@ -2381,7 +2414,7 @@ class TestReviewTools
     {
         store.updateRun(run(RUN_ID, 1, PATCH, false));
         ReviewFinding original = resolvedFinding();
-        ReviewFinding carried = new ReviewFinding("carried", REVIEW_ID, "earlier-run", 1, original.title(), original.body(), original.severity(),
+        ReviewFinding carried = new ReviewFinding("carried", REVIEW_ID, "earlier-run", 1, original.title(), original.body(), Optional.empty(), original.severity(),
                 original.anchor(), original.evidence(), 1, ReviewFinding.State.OPEN, Optional.empty(), "a".repeat(40), true, 0, NOW, NOW,
                 ImmutableList.of(), ReviewFinding.Origin.AUTOMATIC, Optional.empty());
         store.insertFinding(carried);
@@ -2423,7 +2456,7 @@ class TestReviewTools
         ReviewFinding original = resolvedFinding();
         for (int index = 1; index <= 31; index++) {
             store.insertFinding(new ReviewFinding("carried-" + index, REVIEW_ID, "earlier-run", index, "Concern " + index,
-                    original.body(), original.severity(), original.anchor(), original.evidence(), 1, ReviewFinding.State.OPEN,
+                    original.body(), Optional.empty(), original.severity(), original.anchor(), original.evidence(), 1, ReviewFinding.State.OPEN,
                     Optional.empty(), "a".repeat(40), true, 0, NOW, NOW, ImmutableList.of(), ReviewFinding.Origin.AUTOMATIC, Optional.empty()));
         }
         bridge = tools.bridge(TASK_ID).orElseThrow();
@@ -3040,7 +3073,8 @@ class TestReviewTools
 
     private static Map<String, Object> validated(Map<String, Object> finding)
     {
-        return ImmutableMap.<String, Object>builder().putAll(finding).put("validation", "Source comparison confirms equivalent behavior and the proposed benefit").buildOrThrow();
+        return ImmutableMap.<String, Object>builder().putAll(finding).put("validation", "Source comparison confirms equivalent behavior and the proposed benefit")
+                .put("walkthrough", WALKTHROUGH).buildOrThrow();
     }
 
     private static Map<String, Object> finish(String key, List<Map<String, Object>> validations)
@@ -3202,6 +3236,7 @@ class TestReviewTools
                 "title", title,
                 "body", "Validate the added line before it is used. A null input reaches the parser unchecked.",
                 "validation", "The source establishes a reachable unchecked input and no caller guard prevents it.",
+                "walkthrough", WALKTHROUGH,
                 "startAnchor", startAnchor,
                 "evidence", evidence);
     }
@@ -3292,6 +3327,7 @@ class TestReviewTools
                 1,
                 "Missing null check",
                 "The added line is used without any validation.",
+                Optional.empty(),
                 Optional.of("Low"),
                 Optional.of(new ReviewAnchor(DIFF_PATH, "RIGHT", 2, 2, ImmutableList.of("beta"))),
                 ImmutableList.of(new ReviewEvidence("E1", DIFF_PATH + " L1-L3", "source read from the frozen head", "2  beta", "shows the missing check")),

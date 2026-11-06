@@ -28,6 +28,8 @@ import static java.util.Objects.requireNonNull;
  * One finding with its stable identity, its frozen location, and the local decisions made
  * about it. Agent revisions move {@code revision}; a user resolution is a state no agent can undo.
  *
+ * @param walkthrough the private explanation the user reads before posting: an example input traced through the code
+ *        step by step to the result that differs from the expected one, then the fix; it is never posted
  * @param anchor the diff lines the finding is about, or empty for a finding about the whole pull
  *        request, such as a commit message or the description, which has no lines
  * @param validatedHeadSha the head at which the agent last supported this claim with evidence;
@@ -44,6 +46,7 @@ public record ReviewFinding(
         int ordinal,
         String title,
         String body,
+        Optional<String> walkthrough,
         Optional<String> severity,
         Optional<ReviewAnchor> anchor,
         List<ReviewEvidence> evidence,
@@ -70,6 +73,7 @@ public record ReviewFinding(
         checkArgument(ordinal > 0, "ordinal is not positive");
         requireNonNull(title, "title is null");
         requireNonNull(body, "body is null");
+        requireNonNull(walkthrough, "walkthrough is null");
         requireNonNull(severity, "severity is null");
         requireNonNull(anchor, "anchor is null");
         evidence = ImmutableList.copyOf(evidence);
@@ -107,6 +111,7 @@ public record ReviewFinding(
     public ReviewFinding revised(
             String updatedTitle,
             String updatedBody,
+            Optional<String> updatedWalkthrough,
             Optional<String> updatedSeverity,
             Optional<ReviewAnchor> updatedAnchor,
             List<ReviewEvidence> updatedEvidence,
@@ -116,6 +121,7 @@ public record ReviewFinding(
         return toBuilder()
                 .title(updatedTitle)
                 .body(updatedBody)
+                .walkthrough(updatedWalkthrough)
                 .severity(updatedSeverity)
                 .anchor(updatedAnchor)
                 .evidence(updatedEvidence)

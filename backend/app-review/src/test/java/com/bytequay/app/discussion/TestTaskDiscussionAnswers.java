@@ -949,7 +949,8 @@ class TestTaskDiscussionAnswers
 
     private static ReviewFinding finding(String title)
     {
-        return new ReviewFinding("finding-" + title.length(), REVIEW, "run-1", 1, title, "Body of " + title, Optional.of("major"), Optional.empty(), ImmutableList.of(), 1,
+        return new ReviewFinding("finding-" + title.length(), REVIEW, "run-1", 1, title, "Body of " + title, Optional.empty(), Optional.of("major"), Optional.empty(),
+                ImmutableList.of(), 1,
                 ReviewFinding.State.OPEN, Optional.empty(), "a".repeat(40), false, 0, NOW, NOW, ImmutableList.of(), ReviewFinding.Origin.AUTOMATIC, Optional.empty());
     }
 

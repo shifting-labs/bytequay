@@ -194,6 +194,7 @@ class TestReviewPublicationService
     {
         ReviewFinding lines = finding(FINDING_ID, 1, "src/Service.java", 118, 131, "Guard the null case");
         ReviewFinding whole = new ReviewFinding("f-whole", REVIEW_ID, RUN_ID, 2, "Nit: commit subject", "Commit message: name the behavior, not the file.", Optional.empty(),
+                Optional.empty(),
                 Optional.empty(), ImmutableList.of(), 1, ReviewFinding.State.OPEN, Optional.empty(), REVIEWED_HEAD, false, 0, NOW, NOW,
                 ImmutableList.of(), ReviewFinding.Origin.AUTOMATIC, Optional.empty());
         reviews.put(lines);
@@ -216,10 +217,10 @@ class TestReviewPublicationService
     @Test
     void aWholePullRequestFindingASubmittedReviewCarriedIsNeverOfferedAgain()
     {
-        reviews.put(new ReviewFinding("f-whole", REVIEW_ID, RUN_ID, 1, "Nit: commit subject", "Commit message: name the behavior.", Optional.empty(),
+        reviews.put(new ReviewFinding("f-whole", REVIEW_ID, RUN_ID, 1, "Nit: commit subject", "Commit message: name the behavior.", Optional.empty(), Optional.empty(),
                 Optional.empty(), ImmutableList.of(), 1, ReviewFinding.State.OPEN, Optional.empty(), REVIEWED_HEAD, false, 0, NOW, NOW,
                 ImmutableList.of(), ReviewFinding.Origin.AUTOMATIC, Optional.empty()));
-        reviews.put(new ReviewFinding("f-removed", REVIEW_ID, RUN_ID, 2, "Nit: description", "Describe the migration.", Optional.empty(),
+        reviews.put(new ReviewFinding("f-removed", REVIEW_ID, RUN_ID, 2, "Nit: description", "Describe the migration.", Optional.empty(), Optional.empty(),
                 Optional.empty(), ImmutableList.of(), 1, ReviewFinding.State.OPEN, Optional.empty(), REVIEWED_HEAD, false, 0, NOW, NOW,
                 ImmutableList.of(), ReviewFinding.Origin.AUTOMATIC, Optional.empty()));
         ReviewDraft added = service.addFinding(ROUTE, 0, REVIEW_ID, "f-whole");
@@ -277,7 +278,8 @@ class TestReviewPublicationService
             assertThat(item.findingId()).contains(FINDING_ID);
             assertThat(item.findingRevision()).hasValue(1);
         });
-        ReviewFinding revised = finding.revised(finding.title(), "New claim after acceptance", finding.severity(), finding.anchor(), finding.evidence(), REVIEWED_HEAD, NOW);
+        ReviewFinding revised = finding.revised(finding.title(), "New claim after acceptance", Optional.empty(), finding.severity(), finding.anchor(), finding.evidence(),
+                REVIEWED_HEAD, NOW);
         reviews.put(revised);
         ReviewDraft cleared = service.removeItem(ROUTE, draft.version(), lastItemId(draft));
         assertThatThrownBy(() -> service.addFinding(ROUTE, cleared.version(), REVIEW_ID, FINDING_ID))
@@ -304,6 +306,7 @@ class TestReviewPublicationService
     {
         ReviewFinding original = finding(FINDING_ID, 1, "src/Service.java", 118, 131, "A discussion claim");
         reviews.put(new ReviewFinding(original.id(), original.reviewId(), original.runId(), original.ordinal(), original.title(), original.body(),
+                Optional.empty(),
                 original.severity(), original.anchor(), original.evidence(), original.revision(), original.state(), original.stateReason(), original.validatedHeadSha(),
                 original.outdated(), original.version(), original.createdAt(), original.updatedAt(), original.memories(), ReviewFinding.Origin.DISCUSSION, Optional.empty()));
         reviews.setRun(run(ReviewRun.State.ACCEPTED).withStep(ReviewStep.explanation(), NOW));
@@ -321,14 +324,15 @@ class TestReviewPublicationService
         ReviewFinding original = finding(FINDING_ID, 1, "src/Service.java", 118, 131, "Original finding");
         reviews.put(original);
         reviews.setRun(acceptedReport(original, true, true));
-        ReviewFinding revised = original.revised(original.title(), "Clarified after discussion", original.severity(), original.anchor(), original.evidence(), REVIEWED_HEAD, NOW);
+        ReviewFinding revised = original.revised(original.title(), "Clarified after discussion", Optional.empty(), original.severity(), original.anchor(), original.evidence(),
+                REVIEWED_HEAD, NOW);
         reviews.put(revised);
 
         ReviewDraft promoted = service.addFinding(ROUTE, 0, REVIEW_ID, FINDING_ID);
         assertThat(promoted.items().getFirst().findingRevision()).hasValue(2);
         assertThat(promoted.items().getFirst().body()).isEqualTo("Finding 1\n\nClarified after discussion");
         ReviewDraft edited = service.editItem(ROUTE, promoted.version(), lastItemId(promoted), "My own wording", true);
-        reviews.put(revised.revised(revised.title(), "Another clarification", revised.severity(), revised.anchor(), revised.evidence(), REVIEWED_HEAD, NOW));
+        reviews.put(revised.revised(revised.title(), "Another clarification", Optional.empty(), revised.severity(), revised.anchor(), revised.evidence(), REVIEWED_HEAD, NOW));
 
         assertThat(service.draft(ROUTE)).isEqualTo(edited);
         assertThat(edited.items().getFirst().body()).isEqualTo("My own wording");
@@ -359,6 +363,7 @@ class TestReviewPublicationService
     {
         ReviewFinding original = finding(FINDING_ID, 1, "src/Service.java", 118, 131, "Reassessed claim");
         ReviewFinding carried = new ReviewFinding(original.id(), original.reviewId(), "failed-run", original.ordinal(), original.title(), original.body(),
+                Optional.empty(),
                 original.severity(), original.anchor(), original.evidence(), original.revision(), original.state(), original.stateReason(), original.validatedHeadSha(),
                 false, original.version(), original.createdAt(), original.updatedAt(), original.memories(), original.origin(), Optional.empty());
         reviews.put(carried);
@@ -396,7 +401,7 @@ class TestReviewPublicationService
         ReviewFinding pending = finding(FINDING_ID, 1, "src/Service.java", 118, 131, "Guard the null case")
                 .pendingReassessment(NOW);
         reviews.put(pending);
-        reviews.put(pending.revised("Null guard", "Guard the null case", Optional.of("medium"), pending.anchor(),
+        reviews.put(pending.revised("Null guard", "Guard the null case", Optional.empty(), Optional.of("medium"), pending.anchor(),
                 ImmutableList.of(new ReviewEvidence("E1", "Frozen source", "reviewed head", "return value;", "Confirmed the null path")), REVIEWED_HEAD, NOW));
         ReviewDraft draft = service.addFinding(ROUTE, 0, REVIEW_ID, FINDING_ID);
 
@@ -450,7 +455,7 @@ class TestReviewPublicationService
         reviews.put(resolved.withState(ReviewFinding.State.RESOLVED, Optional.of("fixed it"), NOW));
         reviews.put(withdrawn.withState(ReviewFinding.State.WITHDRAWN, Optional.of("misread the diff"), NOW));
         reviews.put(outdated.pendingReassessment(NOW));
-        reviews.put(revised.revised("Revised title", "Rewritten body", Optional.empty(), revised.anchor(), ImmutableList.of(), REVIEWED_HEAD, NOW));
+        reviews.put(revised.revised("Revised title", "Rewritten body", Optional.empty(), Optional.empty(), revised.anchor(), ImmutableList.of(), REVIEWED_HEAD, NOW));
         reviews.findings.remove(removed.id());
 
         assertThat(service.draft(ROUTE)).isEqualTo(draft);
@@ -629,7 +634,7 @@ class TestReviewPublicationService
         ReviewFinding original = finding(FINDING_ID, 1, "src/Service.java", 118, 131, "Guard the null case");
         reviews.put(original);
         ReviewDraft draft = service.addFinding(ROUTE, 0, REVIEW_ID, FINDING_ID);
-        reviews.put(original.revised("New title", "Different wording", Optional.empty(),
+        reviews.put(original.revised("New title", "Different wording", Optional.empty(), Optional.empty(),
                 Optional.of(new ReviewAnchor("src/Service.java", "RIGHT", 119, 132, ImmutableList.of())), ImmutableList.of(), CURRENT_HEAD, NOW));
         when(pullRequests.createReviewComment(eq(ROUTE), any())).thenReturn(posted());
 
@@ -869,7 +874,7 @@ class TestReviewPublicationService
     @Test
     void aReviewFoundOnGitHubCountsAsSubmittedAndIsNeverSentAgain()
     {
-        reviews.put(new ReviewFinding("f-whole", REVIEW_ID, RUN_ID, 1, "Nit: commit subject", "Commit message: name the behavior.", Optional.empty(),
+        reviews.put(new ReviewFinding("f-whole", REVIEW_ID, RUN_ID, 1, "Nit: commit subject", "Commit message: name the behavior.", Optional.empty(), Optional.empty(),
                 Optional.empty(), ImmutableList.of(), 1, ReviewFinding.State.OPEN, Optional.empty(), REVIEWED_HEAD, false, 0, NOW, NOW,
                 ImmutableList.of(), ReviewFinding.Origin.AUTOMATIC, Optional.empty()));
         ReviewDraft added = service.addFinding(ROUTE, 0, REVIEW_ID, "f-whole");
@@ -894,7 +899,7 @@ class TestReviewPublicationService
     @Test
     void reviewTextStaysAsSentWhileItsSendRuns()
     {
-        reviews.put(new ReviewFinding("f-whole", REVIEW_ID, RUN_ID, 1, "Nit: commit subject", "Commit message: name the behavior.", Optional.empty(),
+        reviews.put(new ReviewFinding("f-whole", REVIEW_ID, RUN_ID, 1, "Nit: commit subject", "Commit message: name the behavior.", Optional.empty(), Optional.empty(),
                 Optional.empty(), ImmutableList.of(), 1, ReviewFinding.State.OPEN, Optional.empty(), REVIEWED_HEAD, false, 0, NOW, NOW,
                 ImmutableList.of(), ReviewFinding.Origin.AUTOMATIC, Optional.empty()));
         when(pullRequests.getPullRequestDetail(ROUTE)).thenReturn(detail());
@@ -1317,6 +1322,7 @@ class TestReviewPublicationService
     {
         ReviewFinding original = finding(FINDING_ID, 1, "src/A.java", 1, 1, "Provisional claim");
         ReviewFinding provisional = new ReviewFinding(original.id(), original.reviewId(), "running-run", original.ordinal(), original.title(), original.body(),
+                Optional.empty(),
                 original.severity(), original.anchor(), original.evidence(), original.revision(), original.state(), original.stateReason(),
                 original.validatedHeadSha(), false, original.version(), original.createdAt(), original.updatedAt(), ImmutableList.of(), ReviewFinding.Origin.AUTOMATIC,
                 Optional.empty());
@@ -1361,6 +1367,7 @@ class TestReviewPublicationService
                 ordinal,
                 "Finding " + ordinal,
                 body,
+                Optional.empty(),
                 Optional.of("major"),
                 Optional.of(new ReviewAnchor(path, "RIGHT", startLine, endLine, ImmutableList.of("  return value;"))),
                 ImmutableList.of(),

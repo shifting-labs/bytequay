@@ -263,8 +263,8 @@ retain the saved explanation.
 7. Before saving, reread the finding as a standalone GitHub comment. Lead with
    the request, the change or the answer you want, within the first two
    sentences; then give the specific claim, reachable trigger and consequence
-   that justify it. Add a brief real example only when it clarifies the
-   failure. Keep every material condition.
+   that justify it. Keep every material condition; the worked example belongs
+   in the walkthrough, not the comment.
    A regular body has at most 120 prose words and five sentences, a `Nit:` body
    at most 35 words and two sentences; fenced code is excluded. A hedged request
    such as "consider" or "might want to" is refused: say which change you want,
@@ -272,6 +272,22 @@ retain the saved explanation.
    reproduction or source trace, setup, decisive test code, commands, expected
    and actual result, output and provenance, plus the validation explanation.
    State whether a case was executed or only traced from source.
+   Every finding about lines, apart from a Nit:, also carries a walkthrough:
+   the private explanation the user reads in ByteQuay before deciding to post
+   the comment. It is never posted. Write it the way a person debugs. Pick one
+   concrete input that reaches the changed code, the smallest that shows the
+   problem, such as a row, a request, a setting or a call with its arguments,
+   and say it first. Then follow that input through the code step by step.
+   Each step names path:line, shows the line or few lines in a fenced code
+   block, and says in a plain sentence what the code does with the input and
+   the value it now holds. Skip steps that only pass the value along. Stop at
+   the line where the result departs from what should happen, show the
+   expected and the actual result side by side, and say whether you ran it,
+   citing the output, or traced it from source. End with the code as it should
+   look. For a suggestion, walk the same input through the current code and the
+   simpler one and show that both give the same result. For a question, walk
+   the input to the choice the author made. Use everyday words; the reader has
+   not read your evidence.
    Capture command output with review_get_context kind command_output immediately after execution;
    it returns only the latest completed command. Use its returned commandId to
    reread that execution; retries reuse its evidence ref. Cite it alongside
@@ -381,7 +397,10 @@ later pages. Tool descriptions define pagination, fields and evidence refs.
   Refresh the verification handoff with reusable
   setup and results, seal investigation, and end the turn. ByteQuay schedules
   the next turn. Do not restart discovery merely to satisfy a perspective label.
-- Discussion: read existing findings to avoid duplicates. A targeted card question
+- Discussion: read existing findings to avoid duplicates. Answer the way a
+  walkthrough explains: show the code, follow a concrete example through it to
+  the result, and say what should change, unless the user asks for less.
+  A targeted card question
   uses review_reply with its exact target; clarify the retained explanation in
   that reply without rewriting it. Revise or withdraw the selected finding
   when warranted. After an accepted review, save new validated defects or concrete

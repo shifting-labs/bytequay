@@ -250,7 +250,8 @@ class TestReviewReplayService
                 AgentReview.State.OPEN, false, Optional.empty(), Optional.empty(), Optional.empty(), 0, MemoryFixtures.NOW, MemoryFixtures.NOW, Optional.empty(),
                 Optional.of(new AgentReview.Replay("replay", NUMBER, reviewId.equals("review-with"), FIRST_REVIEW)));
         List<ReviewFinding> scopedFindings = Arrays.stream(findings)
-                .map(finding -> new ReviewFinding(finding.id(), reviewId, "run-" + reviewId, finding.ordinal(), finding.title(), finding.body(), finding.severity(),
+                .map(finding -> new ReviewFinding(finding.id(), reviewId, "run-" + reviewId, finding.ordinal(), finding.title(), finding.body(), Optional.empty(),
+                        finding.severity(),
                         finding.anchor(), finding.evidence(), finding.revision(), finding.state(), finding.stateReason(), finding.validatedHeadSha(), finding.outdated(),
                         finding.version(), finding.createdAt(), finding.updatedAt(), finding.memories(), finding.origin(), Optional.empty()))
                 .collect(toImmutableList());
@@ -274,7 +275,7 @@ class TestReviewReplayService
 
     private ReviewFinding finding(String id, String path, int startLine, int endLine)
     {
-        return new ReviewFinding(id, "review", "run", 1, "Missing documentation", "The property is not documented.", Optional.of("Medium"),
+        return new ReviewFinding(id, "review", "run", 1, "Missing documentation", "The property is not documented.", Optional.empty(), Optional.of("Medium"),
                 Optional.of(new ReviewAnchor(path, "RIGHT", startLine, endLine, ImmutableList.of("line"))), ImmutableList.of(), 1, ReviewFinding.State.OPEN,
                 Optional.empty(), firstHead, false, 0, MemoryFixtures.NOW, MemoryFixtures.NOW, ImmutableList.of(), ReviewFinding.Origin.AUTOMATIC, Optional.empty());
     }

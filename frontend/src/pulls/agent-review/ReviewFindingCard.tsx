@@ -80,6 +80,7 @@ export default function ReviewFindingCard({
   busy?: boolean;
   defaultOpen?: boolean;
 }) {
+  const [walkthroughOpen, setWalkthroughOpen] = useState(false);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [originalOpen, setOriginalOpen] = useState(false);
@@ -187,6 +188,15 @@ export default function ReviewFindingCard({
   const body = <MarkdownBody body={finding.body} repository={review.repo} suggestion={suggestion} />;
   const details = (
     <div className="agr-finding__details">
+    {finding.walkthrough != null && (
+      <div className="agr-evidence">
+        <button type="button" className="agr-evidence__toggle" aria-expanded={walkthroughOpen}
+          onClick={() => setWalkthroughOpen(value => !value)}>
+          <Chevron open={walkthroughOpen} />Walkthrough
+        </button>
+        {walkthroughOpen && <div className="agr-evidence__item"><MarkdownBody body={finding.walkthrough} repository={review.repo} /></div>}
+      </div>
+    )}
     {finding.evidence.length > 0 && (
       <div className="agr-evidence">
         <button type="button" className="agr-evidence__toggle" aria-expanded={evidenceOpen}

@@ -779,7 +779,7 @@ class TestLocalReviewService
 
     private static ReviewFinding finding(String id, String reviewId)
     {
-        return new ReviewFinding(id, reviewId, "run", 1, "Title", "Body", Optional.empty(), Optional.empty(), ImmutableList.of(), 1, ReviewFinding.State.OPEN,
+        return new ReviewFinding(id, reviewId, "run", 1, "Title", "Body", Optional.empty(), Optional.empty(), Optional.empty(), ImmutableList.of(), 1, ReviewFinding.State.OPEN,
                 Optional.empty(), "b".repeat(40), false, 0, Instant.EPOCH, Instant.EPOCH, ImmutableList.of(), ReviewFinding.Origin.AUTOMATIC, Optional.empty());
     }
 

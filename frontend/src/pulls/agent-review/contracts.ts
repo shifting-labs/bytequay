@@ -87,6 +87,8 @@ export type ReviewFindingDto = {
   origin: 'AUTOMATIC' | 'DISCUSSION';
   title: string;
   body: string;
+  /** The reviewer's private example traced through the code to the wrong result, then the fix; never posted. */
+  walkthrough?: string | null;
   severity: string | null;
   /** The diff lines the finding is about. All null for a finding about the whole pull request, such as a commit message. */
   path: string | null;
@@ -423,6 +425,7 @@ function parseFinding(value: unknown): ReviewFindingDto {
     origin: oneOf(finding.origin, ['AUTOMATIC', 'DISCUSSION'] as const, 'finding origin'),
     title: text(finding.title, 'finding title'),
     body: text(finding.body, 'finding body'),
+    walkthrough: optionalText(finding.walkthrough),
     severity: optionalText(finding.severity),
     ...(optionalText(finding.path) === null
       ? { path: null, side: null, startLine: null, endLine: null, range: null }

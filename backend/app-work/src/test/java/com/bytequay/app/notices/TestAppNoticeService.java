@@ -430,7 +430,7 @@ class TestAppNoticeService
         show(task);
         showRuns(review, reviewRun(review, ReviewRun.State.ACCEPTED));
         ReviewFinding finding = new ReviewFinding("finding", review.id(), "run", 1, "Stale recovery state", "An interrupted write leaves the prior state.",
-                Optional.of("P1"), Optional.empty(), ImmutableList.of(), 1, ReviewFinding.State.OPEN, Optional.empty(), "head", false, 0, NOW, NOW,
+                Optional.empty(), Optional.of("P1"), Optional.empty(), ImmutableList.of(), 1, ReviewFinding.State.OPEN, Optional.empty(), "head", false, 0, NOW, NOW,
                 ImmutableList.of(), ReviewFinding.Origin.AUTOMATIC, Optional.empty());
         when(reviews.listFindings(review.id())).thenReturn(ImmutableList.of(finding));
         AppNotice original = service.current(ImmutableList.of(task.id())).getFirst();

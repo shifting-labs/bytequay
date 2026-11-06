@@ -118,6 +118,7 @@ import static com.bytequay.app.review.ReviewToolDefinitions.MAX_SELECTED_QUESTIO
 import static com.bytequay.app.review.ReviewToolDefinitions.MAX_TEXT;
 import static com.bytequay.app.review.ReviewToolDefinitions.MAX_TITLE;
 import static com.bytequay.app.review.ReviewToolDefinitions.MAX_VERDICT_EXPLANATION;
+import static com.bytequay.app.review.ReviewToolDefinitions.MAX_WALKTHROUGH;
 import static com.bytequay.app.utils.Locks.withLock;
 import static com.bytequay.core.review.ReviewCandidateValidation.Outcome.NEEDS_EVIDENCE;
 import static com.bytequay.core.review.ReviewCandidateValidation.Outcome.SUPPORTED;
@@ -647,6 +648,7 @@ public class ReviewTools
         String title = text(arguments, "title", MAX_TITLE, true);
         String body = text(arguments, "body", MAX_TEXT, true);
         ReviewCommentForm.check(title, body);
+        Optional<String> walkthrough = Optional.of(text(arguments, "walkthrough", MAX_WALKTHROUGH, false)).filter(value -> !value.isEmpty());
         Optional<String> severity = Optional.ofNullable(arguments.get("severity")).filter(JsonNode::isTextual).map(JsonNode::asText)
                 .map(value -> SEVERITIES.stream().filter(candidate -> candidate.equalsIgnoreCase(value)).findFirst()
                         .orElseThrow(() -> new ReviewInvalidRequestException("severity: use critical, high, medium or low")));
@@ -705,7 +707,7 @@ public class ReviewTools
                 updatedAnchor = existing.anchor().map(anchor -> anchors.remap(anchor)
                         .orElseThrow(() -> new ReviewInvalidRequestException("startAnchor: the old location no longer maps; read the current diff and supply new anchors")));
             }
-            saved = existing.revised(title, body, severity, updatedAnchor, ImmutableList.copyOf(evidence), call.run().sourceRevision(), now());
+            saved = existing.revised(title, body, walkthrough, severity, updatedAnchor, ImmutableList.copyOf(evidence), call.run().sourceRevision(), now());
             insert = false;
         }
         else {
@@ -739,6 +741,7 @@ public class ReviewTools
                     findings.size() + 1,
                     title,
                     body,
+                    walkthrough,
                     severity,
                     anchor,
                     ImmutableList.copyOf(evidence),
@@ -754,6 +757,7 @@ public class ReviewTools
                     call.run().active() ? ReviewFinding.Origin.AUTOMATIC : ReviewFinding.Origin.DISCUSSION, Optional.empty());
             insert = true;
         }
+        ReviewCommentForm.checkWalkthrough(title, saved.anchor().isPresent(), walkthrough);
         if (saved.anchor().isEmpty() && severity.isPresent()) {
             throw new ReviewInvalidRequestException("severity: a defect needs the lines it is in; a pull_request finding is a suggestion or a nit");
         }
@@ -1922,7 +1926,7 @@ public class ReviewTools
             ReviewFinding finding = store.findFinding(target).filter(value -> value.reviewId().equals(call.review().id()))
                     .orElseThrow(() -> new ReviewInvalidRequestException("target: unknown finding in this review"));
             return objectMapper.createObjectNode().put("findingId", finding.id()).put("sourceRunId", finding.runId())
-                    .put("revision", finding.revision()).put("title", finding.title()).put("body", finding.body())
+                    .put("revision", finding.revision()).put("title", finding.title()).put("body", finding.body()).put("walkthrough", finding.walkthrough().orElse(""))
                     .put("state", finding.state().name()).put("outdated", finding.outdated()).put("validatedHeadSha", finding.validatedHeadSha())
                     .put("severity", finding.severity().orElse("")).putPOJO("anchor", finding.anchor().orElse(null))
                     .putPOJO("historicalEvidence", finding.evidence().stream().map(item -> ImmutableMap.of(

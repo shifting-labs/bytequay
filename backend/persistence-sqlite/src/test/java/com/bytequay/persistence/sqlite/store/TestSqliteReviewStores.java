@@ -257,6 +257,7 @@ class TestSqliteReviewStores
 
         // A finding about the whole pull request has no lines, and keeps none through storage; the memories it cites survive.
         ReviewFinding whole = new ReviewFinding("finding-whole", "review-1", "run-1", 2, "Nit: commit subject", "Commit message: name the behavior.", Optional.empty(),
+                Optional.empty(),
                 Optional.empty(), ImmutableList.of(CONTEXT_EVIDENCE), 1, ReviewFinding.State.OPEN, Optional.empty(), finding.validatedHeadSha(), false, 0, NOW, NOW,
                 ImmutableList.of(), ReviewFinding.Origin.DISCUSSION, Optional.empty())
                 .withMemories(ImmutableList.of(new ReviewFinding.MemoryCitation("m12", "Name the behavior in commit subjects. (PR #31201 @alice)")));
@@ -278,7 +279,7 @@ class TestSqliteReviewStores
         ReviewFinding carried = pending.carried(Optional.empty(), NEXT_HEAD_SHA, NOW.plusSeconds(13));
         assertThat(carried.revision()).as("carrying identical changes is not a new assessment").isEqualTo(fixed.revision());
         assertThat(carried.outdated()).isFalse();
-        ReviewFinding revised = store.updateFinding(carried.revised("Updated title", "Updated evidence", Optional.of("P2"), Optional.empty(),
+        ReviewFinding revised = store.updateFinding(carried.revised("Updated title", "Updated evidence", Optional.empty(), Optional.of("P2"), Optional.empty(),
                 ImmutableList.of(CONTEXT_EVIDENCE), NEXT_HEAD_SHA, NOW.plusSeconds(14)));
         entityManager.clear();
         assertThat(store.findFinding(fixed.id())).contains(revised);
@@ -287,7 +288,8 @@ class TestSqliteReviewStores
         assertThat(revised.state()).isEqualTo(ReviewFinding.State.RESOLVED);
         assertThat(revised.resolvedByTaskId()).as("reassessment preserves the developer's resolution").contains("developer-task");
         assertThat(revised.memories()).isEqualTo(fixed.memories());
-        assertThatThrownBy(() -> new ReviewFinding("finding-open", "review-1", "run-1", 3, "Title", "Body", Optional.empty(), Optional.empty(), ImmutableList.of(), 1,
+        assertThatThrownBy(() -> new ReviewFinding("finding-open", "review-1", "run-1", 3, "Title", "Body", Optional.empty(), Optional.empty(), Optional.empty(),
+                ImmutableList.of(), 1,
                 ReviewFinding.State.OPEN, Optional.empty(), finding.validatedHeadSha(), false, 0, NOW, NOW, ImmutableList.of(), ReviewFinding.Origin.AUTOMATIC,
                 Optional.of("developer-task")))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -892,6 +894,7 @@ class TestSqliteReviewStores
                 1,
                 "Published counter never increments",
                 "The loop publishes every finding but leaves `published` at zero, so the caller reports nothing was sent.",
+                Optional.of("Input: two findings.\n\n```java\npublish(finding);\n```\n\nExpected `published` to be 2; actual 0."),
                 Optional.of("critical"),
                 Optional.of(anchor),
                 ImmutableList.of(CONTEXT_EVIDENCE, COMMAND_EVIDENCE),

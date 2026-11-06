@@ -93,7 +93,8 @@ class TestReviewPrompts
                 "original explanation is historical", "clarify the retained explanation");
         assertThat(ReviewPrompts.INSTRUCTION).contains("Defects, concrete suggestions, questions and useful nits may coexist", "BLOCKED", "around 70%");
         assertThat(ReviewPrompts.INSTRUCTION).contains("A question is the last resort", "It starts with \"Question:\" and omits severity",
-                "Do not reject a candidate only because no written contract is violated", "Select at most twelve");
+                "Do not reject a candidate only because no written contract is violated", "Select at most twelve",
+                "also carries a walkthrough");
         assertThat(ReviewPrompts.INSTRUCTION).contains("Default to two concurrent read-only children", "Expand to three or four only when the saved map",
                 "Keep at most four children running", "The parent allocates every batch", "After each batch, reassess uncovered responsibilities",
                 "when the provider supports it", "not a limit of two child batches");

@@ -61,6 +61,9 @@ public class AgentReviewFindingEntity
     @Column(nullable = false, columnDefinition = "TEXT")
     private String body;
 
+    @Column(columnDefinition = "TEXT")
+    private String walkthrough;
+
     private String severity;
 
     @Column(name = "anchor_json", nullable = false, columnDefinition = "TEXT")
@@ -123,6 +126,7 @@ public class AgentReviewFindingEntity
         ordinal = finding.ordinal();
         title = finding.title();
         body = finding.body();
+        walkthrough = finding.walkthrough().orElse(null);
         severity = finding.severity().orElse(null);
         anchorJson = REVIEW.write(finding.anchor().orElse(null), "finding anchor");
         evidenceJson = REVIEW.write(finding.evidence(), "finding evidence");
@@ -147,6 +151,7 @@ public class AgentReviewFindingEntity
                 ordinal,
                 title,
                 body,
+                Optional.ofNullable(walkthrough),
                 Optional.ofNullable(severity),
                 Optional.ofNullable(REVIEW.read(anchorJson, ReviewAnchor.class, "finding anchor")),
                 REVIEW.read(evidenceJson, EVIDENCE, "finding evidence"),

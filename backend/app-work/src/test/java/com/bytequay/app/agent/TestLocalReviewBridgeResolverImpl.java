@@ -185,7 +185,8 @@ class TestLocalReviewBridgeResolverImpl
         List<AgentFinding> findings = IntStream.range(0, 300)
                 .mapToObj(index -> {
                     String filler = index == 0 ? "x" : "\u0001";
-                    return new AgentFinding(review, new ReviewFinding("finding-" + index, "own", "run", index + 1, filler.repeat(4096), filler.repeat(60_000), Optional.of("high"),
+                    return new AgentFinding(review, new ReviewFinding("finding-" + index, "own", "run", index + 1, filler.repeat(4096), filler.repeat(60_000), Optional.empty(),
+                            Optional.of("high"),
                             Optional.of(new ReviewAnchor(filler.repeat(4096), "RIGHT", 1, 2, ImmutableList.of(filler.repeat(60_000)))), evidence, 1, ReviewFinding.State.RESOLVED,
                             Optional.of(filler.repeat(60_000)), "b".repeat(40), false, 0, Instant.EPOCH, Instant.EPOCH, ImmutableList.of(), ReviewFinding.Origin.AUTOMATIC,
                             Optional.empty()),
@@ -350,7 +351,7 @@ class TestLocalReviewBridgeResolverImpl
 
     private static ReviewFinding finding(String id, String reviewId, int ordinal, ReviewFinding.State state, List<ReviewEvidence> evidence)
     {
-        return new ReviewFinding(id, reviewId, "run", ordinal, "Title of " + id, "Body of " + id, Optional.of("medium"),
+        return new ReviewFinding(id, reviewId, "run", ordinal, "Title of " + id, "Body of " + id, Optional.empty(), Optional.of("medium"),
                 Optional.of(new ReviewAnchor("Example.java", "RIGHT", 10, 11, ImmutableList.of("first", "second"))), evidence, 1, state,
                 state == ReviewFinding.State.OPEN ? Optional.empty() : Optional.of("Reason"), "b".repeat(40), false, 0, Instant.EPOCH, Instant.EPOCH,
                 ImmutableList.of(), ReviewFinding.Origin.AUTOMATIC, Optional.empty());

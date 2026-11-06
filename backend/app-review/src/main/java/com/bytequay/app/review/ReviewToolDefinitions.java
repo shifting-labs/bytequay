@@ -27,6 +27,7 @@ import java.util.function.Function;
 final class ReviewToolDefinitions
 {
     static final int MAX_TEXT = 6000;
+    static final int MAX_WALKTHROUGH = 8000;
     static final int MAX_TITLE = 200;
     static final int MAX_KEY = 100;
     static final int MAX_EVIDENCE = 8;
@@ -172,7 +173,10 @@ final class ReviewToolDefinitions
                         + "Polish before saving: at most 120 prose words and five sentences, or 35 words and two sentences for a Nit:, excluding fenced code. "
                         + "Lead with the request, a question or the change you want, within the first two sentences, and do not hedge it. "
                         + "Preserve the trigger, consequence and uncertainty. "
-                        + "Keep the example brief; retain full reproduction code, commands and results in captured evidence. For an exact replacement, "
+                        + "Put the example in walkthrough, which the user reads in ByteQuay and is never posted: one concrete input followed through the code "
+                        + "step by step, each step as path:line with the code in a fenced block and the value it holds, then where the actual result differs "
+                        + "from the expected one, whether that was executed or traced from source, and the fixed code. Every finding about lines needs one, apart from a Nit:. "
+                        + "Retain full reproduction code, commands and output in captured evidence. For an exact replacement, "
                         + "include one ```suggestion block replacing the complete RIGHT-side startAnchor/endAnchor range. "
                         + "Revisions require findingId and expectedRevision; nothing is published. "
                         + "Save every supported claim, deduplicating shared root causes by findingId; "
@@ -185,6 +189,7 @@ final class ReviewToolDefinitions
                         .put("expectedRevision", ImmutableMap.of("type", "integer", "minimum", 1))
                         .put("title", ImmutableMap.of("type", "string", "minLength", 1, "maxLength", MAX_TITLE))
                         .put("body", ImmutableMap.of("type", "string", "minLength", 1, "maxLength", MAX_TEXT))
+                        .put("walkthrough", ImmutableMap.of("type", "string", "maxLength", MAX_WALKTHROUGH))
                         .put("validation", ImmutableMap.of("type", "string", "minLength", 1, "maxLength", 2000))
                         .put("severity", ImmutableMap.of("type", "string", "enum", ImmutableList.of("critical", "high", "medium", "low")))
                         .put("startAnchor", ImmutableMap.of("type", "string"))

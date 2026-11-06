@@ -1291,7 +1291,7 @@ class TestAgentReviewService
         String runId = fixture.store.listRuns(reviewId).getLast().id();
         ReviewFinding original = finding("finding-1", reviewId, runId, 1, ReviewFinding.State.OPEN);
         ReviewFinding revised = fixture.store.insertFinding(
-                original.revised("Reset the parser again", "Body", Optional.of("major"), original.anchor(), ImmutableList.of(), HEAD, NOW));
+                original.revised("Reset the parser again", "Body", Optional.empty(), Optional.of("major"), original.anchor(), ImmutableList.of(), HEAD, NOW));
 
         assertThat(revised.revision()).isEqualTo(2);
         assertThatThrownBy(() -> fixture.service.ask(reviewId, Optional.of(revised.id()), Optional.empty(), 1, "Still true?", "ask-1107"))
@@ -2216,7 +2216,8 @@ class TestAgentReviewService
                 candidate.findingId().stream().collect(toImmutableList()), "Select the supported defect", ImmutableList.of());
         fixture.store.updateRun(validating.replaceCurrentStep(validating.currentStep().orElseThrow().withValidation(report), NOW).withCoverage(coverage(), NOW));
         fixture.store.updateFinding(switch (change) {
-            case "revision" -> finding.revised("Different claim", "Different behavior", Optional.empty(), finding.anchor(), ImmutableList.of(), validating.headSha(), NOW);
+            case "revision" -> finding.revised("Different claim", "Different behavior", Optional.empty(), Optional.empty(), finding.anchor(), ImmutableList.of(),
+                    validating.headSha(), NOW);
             case "withdrawn" -> finding.withState(ReviewFinding.State.WITHDRAWN, Optional.of("The caller handles this case"), NOW);
             case "outdated" -> finding.pendingReassessment(NOW);
             case "head" -> finding.carried(finding.anchor(), NEW_HEAD, NOW);
@@ -2420,7 +2421,8 @@ class TestAgentReviewService
 
         ReviewEvidence evidence = new ReviewEvidence("E1", "src/App.java", "frozen head", "Parser state is reset", "The original trigger remains");
         ReviewFinding mapped = fixture.store.findFinding(originalFinding.id()).orElseThrow();
-        ReviewFinding revalidated = mapped.revised(mapped.title(), mapped.body(), mapped.severity(), mapped.anchor(), ImmutableList.of(evidence), baseline.headSha(), NOW);
+        ReviewFinding revalidated = mapped.revised(mapped.title(), mapped.body(), Optional.empty(), mapped.severity(), mapped.anchor(), ImmutableList.of(evidence),
+                baseline.headSha(), NOW);
         fixture.store.updateFinding(revalidated);
         ReviewRun evidenced = fixture.store.updateRun(baseline.withEvidence("E1", evidence, NOW));
         ReviewInvestigation assessment = new ReviewInvestigation("Parser lifetime", ImmutableList.of("src/App.java"), ImmutableList.of("E1"),
@@ -2462,7 +2464,7 @@ class TestAgentReviewService
         assertThat(pending.validatedHeadSha()).isEqualTo(HEAD);
         assertThat(pending.anchor()).isEqualTo(originalFinding.anchor());
         ReviewAnchor reassessedAnchor = new ReviewAnchor("src/App.java", "RIGHT", 12, 12, ImmutableList.of("added"));
-        ReviewFinding reassessed = fixture.store.updateFinding(pending.revised(pending.title(), pending.body(), pending.severity(),
+        ReviewFinding reassessed = fixture.store.updateFinding(pending.revised(pending.title(), pending.body(), Optional.empty(), pending.severity(),
                 Optional.of(reassessedAnchor), pending.evidence(), incremental.headSha(), NOW));
         assertThat(reassessed.validatedHeadSha()).isEqualTo(NEW_HEAD);
         assertThat(reassessed.anchor()).contains(reassessedAnchor);
@@ -3559,7 +3561,8 @@ class TestAgentReviewService
 
         Fixture revised = new Fixture();
         ReviewFinding original = acceptReviewWithOneSupportedFinding(revised);
-        revised.store.updateFinding(original.revised(original.title(), "A discussion reworded the claim", original.severity(), original.anchor(), original.evidence(), HEAD, NOW));
+        revised.store.updateFinding(original.revised(original.title(), "A discussion reworded the claim", Optional.empty(), original.severity(), original.anchor(),
+                original.evidence(), HEAD, NOW));
         pushRebasedHead(revised, "+added");
 
         revised.service.update(original.reviewId());
@@ -3818,6 +3821,7 @@ class TestAgentReviewService
                 ordinal,
                 "Reset the parser",
                 "The parser keeps state across files",
+                Optional.empty(),
                 Optional.of("major"),
                 Optional.of(new ReviewAnchor("src/App.java", "RIGHT", 3, 3, ImmutableList.of("added"))),
                 ImmutableList.of(),
