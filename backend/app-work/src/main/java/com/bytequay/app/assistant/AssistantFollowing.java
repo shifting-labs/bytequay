@@ -36,6 +36,7 @@ import com.bytequay.agent.spi.AgentSessionContext;
 import com.bytequay.agent.spi.AgentTurnResult;
 import com.bytequay.agent.spi.ProviderApprovalDecision;
 import com.bytequay.agent.spi.SessionAccess;
+import com.bytequay.app.agent.TaskPublicationService;
 import com.bytequay.app.notices.AppNotice;
 import com.bytequay.app.notices.AppNoticeService;
 import com.bytequay.app.service.settings.SetupSettingsService;
@@ -60,6 +61,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
@@ -100,11 +102,14 @@ class AssistantFollowing
             The app's card state is authoritative. A finished turn is not proof that the user's goal is complete.
             Do not invent checks, evidence, approvals, or actions. Mention relevant actions already authorized by rules.
             Evidence is bounded; say when a conclusion cannot be established from it.
-            Return only JSON {"summary":"short plain Markdown without links","attention":"NONE","reason":"why this delivery is appropriate","nextStep":"NONE"}.
+            Return only JSON {"summary":"short plain Markdown without links","attention":"NONE","reason":"why this delivery is appropriate","nextStep":"NONE",
+            "handBack":"NONE"}.
             attention is NONE, DECISION, RISK, or REQUESTED_NOTIFICATION. Every summary remains available even when attention is NONE.
             Use NONE for ordinary completion, progress, waiting, routine approvals already handled, and a review with no useful new findings.
             Use DECISION only for a genuine unanswered blocker, RISK only for a serious unresolved problem or uncertain external outcome.
             Use REQUESTED_NOTIFICATION only when an activated rule explicitly asks for notification and this result meets that request.
+            handBack names a step the result leaves for the user to do by hand, such as running a command: PUSH when it is pushing the task's
+            branch, CLOSE when it is closing the task's pull request, OTHER for any other such step, else NONE. Any handBack is a blocker: use DECISION.
             nextStep is NONE or SAFE_CONTINUE. SAFE_CONTINUE is only for a directly requested task whose evidence clearly shows unfinished
             routine LOCAL verification or repair within its original request, requiring no new decision or permission scope.
             Never propose continuing a finished goal, a review, a stopped task, an uncertain external action, or work needing a user decision.
@@ -127,6 +132,7 @@ class AssistantFollowing
     private final SetupSettingsService setup;
     private final AgentDriverRegistry drivers;
     private final AgentResourceService resources;
+    private final ObjectProvider<TaskPublicationService> publications;
     private final Clock clock;
     private final ExecutorService executor;
     private final Semaphore capacity = new Semaphore(2);
@@ -135,8 +141,8 @@ class AssistantFollowing
 
     AssistantFollowing(AssistantFollowStore follows, AssistantStore conversations, AgentTaskStore tasks, AgentTurnStore turns, TaskLogStore logs,
             WorkItemStore workItems, AgentApprovalStore approvals, AgentReviewStore reviews, AssistantContinuation continuation, ObjectMapper mapper,
-            AppNoticeService notices, SetupSettingsService setup, AgentDriverRegistry drivers, AgentResourceService resources, Clock clock,
-            @Qualifier(IO_EXECUTOR) ExecutorService executor)
+            AppNoticeService notices, SetupSettingsService setup, AgentDriverRegistry drivers, AgentResourceService resources,
+            ObjectProvider<TaskPublicationService> publications, Clock clock, @Qualifier(IO_EXECUTOR) ExecutorService executor)
     {
         this.follows = requireNonNull(follows, "follows is null");
         this.conversations = requireNonNull(conversations, "conversations is null");
@@ -152,6 +158,7 @@ class AssistantFollowing
         this.setup = requireNonNull(setup, "setup is null");
         this.drivers = requireNonNull(drivers, "drivers is null");
         this.resources = requireNonNull(resources, "resources is null");
+        this.publications = requireNonNull(publications, "publications is null");
         this.clock = requireNonNull(clock, "clock is null");
         this.executor = requireNonNull(executor, "executor is null");
     }
@@ -534,7 +541,10 @@ class AssistantFollowing
             return;
         }
         AssistantReport report = resultReport(job);
+        // A step left for the user to do by hand is a blocker, never something to continue past on their behalf.
+        HandBack handBack = assessment.map(Interpretation::handBack).orElse(HandBack.NONE);
         if (setup.preferences().assistantEnabled() && !job.requested() && job.conversationId().isPresent() && report.state() == AssistantReport.State.RESULT_READY
+                && handBack == HandBack.NONE
                 && assessment.filter(answer -> answer.nextStep() == NextStep.SAFE_CONTINUE && answer.attention() == Attention.NONE).isPresent()) {
             AssistantContinuation.Outcome outcome = continuation.continueWork(job);
             if (outcome == AssistantContinuation.Outcome.STARTED || outcome == AssistantContinuation.Outcome.ALREADY_ACCEPTED) {
@@ -561,9 +571,18 @@ class AssistantFollowing
             Interpretation answer = assessment.orElseThrow();
             report = report.assessed(answer.summary());
             if (report.delivery() != AssistantReport.Delivery.INTERRUPT) {
-                boolean interrupt = !job.requested() && (answer.attention() == Attention.DECISION || answer.attention() == Attention.RISK
+                boolean interrupt = !job.requested() && (answer.attention() == Attention.DECISION || answer.attention() == Attention.RISK || handBack != HandBack.NONE
                         || job.conversationId().isEmpty() && answer.attention() == Attention.REQUESTED_NOTIFICATION);
                 report = report.delivered(interrupt ? AssistantReport.Delivery.INTERRUPT : AssistantReport.Delivery.PASSIVE, answer.reason());
+            }
+            // The offer is a button whose fixed words only the user's click sends; the task's own tools then do the step and check it again.
+            Optional<AssistantReport.Offer> offer = switch (handBack) {
+                case PUSH -> Optional.of(AssistantReport.Offer.PUSH);
+                case CLOSE -> Optional.of(AssistantReport.Offer.CLOSE);
+                case NONE, OTHER -> Optional.empty();
+            };
+            if (offer.isPresent() && publications.getObject().offered(TaskId.valueOf(job.taskId())).isPresent()) {
+                report = report.offering(offer.orElseThrow());
             }
         }
         if (job.interpret() && assessment.isEmpty()) {
@@ -593,7 +612,7 @@ class AssistantFollowing
         }
         return new AssistantReport(report.state(), report.noticeId(), report.target(), report.sourceTurnId(), report.assessment(), report.evidence(),
                 ImmutableList.<AssistantRuleAction>builder().addAll(report.ruleActions()).addAll(receipts.values()).build(), report.outcome(),
-                report.delivery(), report.deliveryReason());
+                report.delivery(), report.deliveryReason(), report.offer());
     }
 
     private void closeFollowIfEnded(AssistantAssessment job)
@@ -617,7 +636,10 @@ class AssistantFollowing
 
     private enum NextStep { NONE, SAFE_CONTINUE }
 
-    private record Interpretation(String summary, Attention attention, String reason, NextStep nextStep) {}
+    private enum HandBack { NONE, PUSH, CLOSE, OTHER }
+
+    /** The assessor's answer; an answer without handBack left nothing to the user. */
+    private record Interpretation(String summary, Attention attention, String reason, NextStep nextStep, HandBack handBack) {}
 
     private record Snapshot(String taskId, String fingerprint, String line, AssistantReport report, boolean interpret) {}
 }

@@ -84,6 +84,12 @@ public class TaskPublicationService
         return replacements.eligible(id);
     }
 
+    /** An eligible task whose provider sessions take these tools: Claude's, or Codex's past its first tool contract. */
+    public Optional<AgentTask> offered(TaskId id)
+    {
+        return eligible(id).filter(task -> task.laneId().usesClaude() || task.sessionReference().stream().noneMatch(reference -> reference.contractVersion() == 1));
+    }
+
     /**
      * Pushes the task branch's committed head. The lease names the remote head read now, and it may replace only commits the task once had,
      * as delivery's own push does; commits it never had are someone else's work.

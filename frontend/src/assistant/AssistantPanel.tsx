@@ -647,7 +647,27 @@ function Report({ item, notice, conversation, onAnswered, onOpenNotice, onClearN
   }
   else entry = <DurableReportCard report={report} activity={activity} text={item.text} onOpen={() => onShow(report.target)} />;
   return <div className="assistant-work-report">{entry}
+    {onReply !== undefined && report.offer != null && <LetByteQuay offer={report.offer} onSend={words => onReply(words, `offer:${item.id}`)} />}
     {onReply !== undefined && <ReplyToTask onSend={onReply} />}
+  </div>;
+}
+
+/** The words an offer sends: the step the result left to the user, named so the task's own tool may do it at once. */
+const OFFERED: Record<'PUSH' | 'CLOSE', { label: string; words: string }> = {
+  PUSH: { label: 'Let ByteQuay push it', words: "Push this task's committed branch with push_task_branch." },
+  CLOSE: { label: 'Let ByteQuay close it', words: "Close this task's pull request with close_task_pull_request." },
+};
+
+/** One click sends the task the offer's words; one key per report, so a second click reaches the task once. */
+function LetByteQuay({ offer, onSend }: { offer: 'PUSH' | 'CLOSE'; onSend: (words: string) => Promise<boolean> }) {
+  const [state, setState] = useState<'idle' | 'sending' | 'sent'>('idle');
+  if (state === 'sent') return null;
+  const send = () => {
+    setState('sending');
+    void onSend(OFFERED[offer].words).then(sent => setState(sent ? 'sent' : 'idle'));
+  };
+  return <div className="assistant-reply-to">
+    <button type="button" className="assistant-button" disabled={state === 'sending'} onClick={send}>{OFFERED[offer].label}</button>
   </div>;
 }
 

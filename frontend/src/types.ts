@@ -1664,6 +1664,8 @@ export type AssistantReportDto = {
   outcome: string | null;
   evidence: string[];
   ruleActions: AssistantRuleActionDto[];
+  /** A step the result left to the user by hand that ByteQuay can do: one click sends the task fixed words for it. */
+  offer?: 'PUSH' | 'CLOSE' | null;
 };
 
 /** A Needs attention mark as the backend keeps it; home/attention.ts turns it into the list's own entry. */

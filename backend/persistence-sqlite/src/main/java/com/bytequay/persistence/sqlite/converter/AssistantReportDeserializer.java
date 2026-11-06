@@ -47,9 +47,10 @@ final class AssistantReportDeserializer
         return new AssistantReport(state, stored.noticeId(), stored.target(), stored.sourceTurnId(), stored.assessment(),
                 Optional.ofNullable(stored.evidence()).orElse(ImmutableList.of()), Optional.ofNullable(stored.ruleActions()).orElse(ImmutableList.of()), stored.outcome(),
                 Optional.ofNullable(stored.delivery()).orElseGet(() -> AssistantReport.deliveryFor(state)),
-                Optional.ofNullable(stored.deliveryReason()).orElseGet(() -> AssistantReport.reasonFor(state)));
+                Optional.ofNullable(stored.deliveryReason()).orElseGet(() -> AssistantReport.reasonFor(state)), stored.offer());
     }
 
     private record StoredReport(String state, String noticeId, AgendaTarget target, Optional<String> sourceTurnId, Optional<String> assessment,
-            List<String> evidence, List<AssistantRuleAction> ruleActions, Optional<String> outcome, AssistantReport.Delivery delivery, String deliveryReason) {}
+            List<String> evidence, List<AssistantRuleAction> ruleActions, Optional<String> outcome, AssistantReport.Delivery delivery, String deliveryReason,
+            Optional<AssistantReport.Offer> offer) {}
 }

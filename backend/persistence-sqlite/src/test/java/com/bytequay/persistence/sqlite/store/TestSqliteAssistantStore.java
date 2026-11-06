@@ -398,6 +398,20 @@ class TestSqliteAssistantStore
     }
 
     @Test
+    void aReportsOfferSurvivesReload()
+    {
+        AssistantReport report = new AssistantReport(AssistantReport.State.RESULT_READY, "turn:1", AgendaTarget.of(AgendaTarget.Kind.TASK, "workspace", "task-1"))
+                .offering(AssistantReport.Offer.PUSH);
+        store.save(AssistantConversation.start(CONVERSATION, "Push the fix", AT));
+        follows.save(new AssistantAssessment("result-2", Optional.of(CONVERSATION), "task-1", "turn-1", AT, "Result ready", report, "", true, false,
+                AssistantAssessment.State.PUBLISHED));
+        entities.flush();
+        entities.clear();
+
+        assertThat(follows.assessment("result-2").orElseThrow().report().offer()).contains(AssistantReport.Offer.PUSH);
+    }
+
+    @Test
     void inboxPermissionReceiptsAreQueriedWithoutAChatIdentity()
     {
         AssistantReport report = new AssistantReport(AssistantReport.State.PROGRESS, "approval:1", AgendaTarget.of(AgendaTarget.Kind.TASK, "workspace", "task-1"),

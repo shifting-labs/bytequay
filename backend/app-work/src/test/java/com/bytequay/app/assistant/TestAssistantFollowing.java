@@ -43,6 +43,7 @@ import com.bytequay.agent.spi.AgentTurnCommand;
 import com.bytequay.agent.spi.AgentTurnResult;
 import com.bytequay.agent.spi.RunningTurn;
 import com.bytequay.agent.spi.SessionAccess;
+import com.bytequay.app.agent.TaskPublicationService;
 import com.bytequay.app.notices.AppNotice;
 import com.bytequay.app.notices.AppNoticeService;
 import com.bytequay.app.service.settings.SetupPreferences;
@@ -68,6 +69,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -120,6 +122,8 @@ class TestAssistantFollowing
     private final SetupSettingsService setup = mock(SetupSettingsService.class);
     private final AgentDriverRegistry drivers = mock(AgentDriverRegistry.class);
     private final AgentResourceService resources = mock(AgentResourceService.class);
+    private final ObjectProvider<TaskPublicationService> publications = mock();
+    private final TaskPublicationService publication = mock(TaskPublicationService.class);
     private final ExecutorService executor = mock(ExecutorService.class);
     private final List<Runnable> queued = new ArrayList<>();
     private final AgentTask task = mock(AgentTask.class, withSettings().mockMaker(INLINE));
@@ -163,6 +167,7 @@ class TestAssistantFollowing
         when(session.reference()).thenReturn(new AgentSessionRef(new AgentLaneId("claude"), 1, "background-session"));
         when(running.completion()).thenReturn(CompletableFuture.completedFuture(answer("The observed checks passed.", true)));
         doAnswer(call -> queued.add(call.getArgument(0))).when(executor).execute(any());
+        when(publications.getObject()).thenReturn(publication);
         conversations.save(AssistantConversation.start(CONVERSATION, "Fix the test", NOW.minus(Duration.ofDays(40))));
         follows.save(new AssistantFollow(CONVERSATION, TASK.toString(), NOW.minus(Duration.ofDays(40)), 0, "Fix the test"));
         following = create();
@@ -171,7 +176,7 @@ class TestAssistantFollowing
     private AssistantFollowing create()
     {
         return new AssistantFollowing(follows, conversations, tasks, turns, logs, workItems, approvals, reviews, continuation, new ObjectMapper(), notices, setup,
-                drivers, resources, Clock.fixed(NOW, ZoneOffset.UTC), executor);
+                drivers, resources, publications, Clock.fixed(NOW, ZoneOffset.UTC), executor);
     }
 
     @Test
@@ -460,6 +465,42 @@ class TestAssistantFollowing
     }
 
     @Test
+    void aStepLeftToTheUserByHandIsABlockerThatByteQuayOffersToDo()
+    {
+        when(running.completion()).thenReturn(CompletableFuture.completedFuture(handedBack("Run git push to publish the branch", "PUSH")));
+        when(publication.offered(TASK)).thenReturn(Optional.of(task));
+        following.poll(conversations::add);
+        queued.removeFirst().run();
+        assertThat(conversations.items(CONVERSATION)).singleElement().satisfies(item -> {
+            assertThat(item.report().orElseThrow().delivery()).isEqualTo(AssistantReport.Delivery.INTERRUPT);
+            assertThat(item.report().orElseThrow().offer()).contains(AssistantReport.Offer.PUSH);
+        });
+        verify(continuation, never()).continueWork(any());
+    }
+
+    @Test
+    void aHandedBackStepByteQuayCannotDoStillInterruptsWithoutAnOffer()
+    {
+        when(running.completion()).thenReturn(CompletableFuture.completedFuture(handedBack("Close the pull request with gh", "CLOSE")));
+        when(publication.offered(TASK)).thenReturn(Optional.empty());
+        following.poll(conversations::add);
+        queued.removeFirst().run();
+        AssistantReport report = conversations.items(CONVERSATION).getLast().report().orElseThrow();
+        assertThat(report.delivery()).isEqualTo(AssistantReport.Delivery.INTERRUPT);
+        assertThat(report.offer()).isEmpty();
+
+        when(turn.version()).thenReturn(2L);
+        when(running.completion()).thenReturn(CompletableFuture.completedFuture(handedBack("Install the CLI and log in", "OTHER")));
+        when(publication.offered(TASK)).thenReturn(Optional.of(task));
+        following.poll(conversations::add);
+        queued.removeFirst().run();
+        report = conversations.items(CONVERSATION).getLast().report().orElseThrow();
+        assertThat(report.delivery()).isEqualTo(AssistantReport.Delivery.INTERRUPT);
+        assertThat(report.offer()).isEmpty();
+        verify(continuation, never()).continueWork(any());
+    }
+
+    @Test
     void routineUnfinishedWorkContinuesQuietlyAndExhaustedRecoveryNeedsAttention()
     {
         when(running.completion()).thenReturn(CompletableFuture.completedFuture(interpretation("The requested regression check is still missing", "NONE", "SAFE_CONTINUE")));
@@ -712,6 +753,14 @@ class TestAssistantFollowing
     {
         return new AgentTurnResult(AgentTurnResult.State.COMPLETED, Optional.of("{\"summary\":\"" + text + "\",\"attention\":\"" + attention
                 + "\",\"reason\":\"Delivery reflects the observed outcome.\",\"nextStep\":\"" + nextStep + "\"}"), Optional.empty(), Duration.ofSeconds(1), true);
+    }
+
+    // An assessor that misses the blocker rule still says NONE and SAFE_CONTINUE; the app treats the hand-back as the blocker itself.
+    private static AgentTurnResult handedBack(String text, String step)
+    {
+        return new AgentTurnResult(AgentTurnResult.State.COMPLETED, Optional.of("{\"summary\":\"" + text + "\",\"attention\":\"NONE\","
+                + "\"reason\":\"The result asks the user to act.\",\"nextStep\":\"SAFE_CONTINUE\",\"handBack\":\"" + step + "\"}"), Optional.empty(),
+                Duration.ofSeconds(1), true);
     }
 
     private static AgentTurnResult answer(String text, boolean notifyUser)

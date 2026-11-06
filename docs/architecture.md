@@ -655,8 +655,13 @@ another transcript. It checks source freshness before publishing. Changed
 sources supersede the old job; missing or invalid model output keeps the
 app-owned result without an interpretation. Every accepted interpretation remains readable. The report separately records
 passive or interrupt delivery and its reason. Directly requested completion is
-passive by default; real blockers and serious risks interrupt. A rule’s explicit
-notification intent can also request an interruption. Pending summaries appear as
+passive by default; real blockers and serious risks interrupt. A step the result
+leaves to the user by hand is a blocker the app enforces whatever the attention
+level, and it never continues automatically. When that step is pushing the task
+branch or closing its pull request and the task has those tools, the card offers
+to do it: the user's click sends the task fixed words through the report's reply,
+and the task's own tools act on them. A rule’s explicit notification intent can
+also request an interruption. Pending summaries appear as
 passive Progress, then update the same source card. Quiet assessments remain in
 the originating chat and Results without popup, native alert, unread urgency, or
 Dock badge. The current server snapshot invalidates superseded results, including

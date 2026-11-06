@@ -42,8 +42,7 @@ public class TaskPublicationBridgeResolver
     public Optional<TaskPublicationBridge> resolve(String taskId)
     {
         TaskId id = TaskId.valueOf(taskId);
-        return publications.getObject().eligible(id)
-                .filter(task -> task.laneId().usesClaude() || task.sessionReference().stream().noneMatch(reference -> reference.contractVersion() == 1))
+        return publications.getObject().offered(id)
                 .flatMap(task -> turns.findActive(id))
                 .filter(turn -> turn.developmentOrigin().isEmpty() && turn.cancellationRequestedAt().isEmpty())
                 .map(turn -> new TaskPublicationBridge(said -> publications.getObject().push(id, turn.id(), said),

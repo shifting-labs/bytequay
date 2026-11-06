@@ -259,6 +259,14 @@ class TestTaskPublicationService
     }
 
     @Test
+    void offersTheToolsOnlyToAnEligibleTask()
+    {
+        assertThat(service.offered(id)).contains(task);
+        when(replacements.eligible(id)).thenReturn(Optional.empty());
+        assertThat(service.offered(id)).isEmpty();
+    }
+
+    @Test
     void onlyTheTasksOpenConversationMayAct()
     {
         when(replacements.eligible(id)).thenReturn(Optional.empty());

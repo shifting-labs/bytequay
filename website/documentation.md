@@ -254,6 +254,11 @@ needed attention. **Ask about this** opens a private, read-only discussion of th
 saved result; it does not restart the task. Choose **Rules** in the composer to inspect
 and activate your rules, or type **@rules** to have the Assistant suggest new ones.
 
+A result that leaves you a step to do by hand, such as running a command, needs
+your attention instead of staying quiet. When that step is pushing the task's
+branch or closing its PR, **Let ByteQuay push it** or **Let ByteQuay close it**
+sends the task those words, and it does the step itself.
+
 When an active rule finishes a private PR review, the Assistant reads its saved
 findings in the background and decides whether you need an interruption.
 The **Result ready** card includes a short summary, the rule that started it,

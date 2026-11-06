@@ -1124,11 +1124,13 @@ const report = (id: string, state: AssistantReportDto['state'], noticeId: string
 });
 
 async function reportsWhatItsTasksRaised(): Promise<void> {
+  // The result left a push to the user, which ByteQuay can do for them.
+  const ready = report('k2', 'RESULT_READY', 'finished:turn-9', '“Expose snapshot id in metadata” is ready', 't9');
   const view = mount({ ...VIEW, items: [VIEW.items[0], VIEW.items[2],
     report('k1', 'APPROVAL_REQUIRED', 'approval:a1', '“Metadata cache” asked for your approval: Run the focused Maven test', 'task-1'),
     report('k6', 'ATTENTION', 'stuck:turn-9:1', '“Expose snapshot id in metadata” looks stuck: Quiet 14 min', 't9'),
     report('k0', 'ATTENTION', 'failed:turn-8', '“Expose snapshot id in metadata” failed: The turn stopped before it finished.', 't9'),
-    report('k2', 'RESULT_READY', 'finished:turn-9', '“Expose snapshot id in metadata” is ready', 't9')] });
+    { ...ready, report: ready.report === null ? null : { ...ready.report, offer: 'PUSH' } }] });
   try {
     await settle();
     enter(type(view.host, 'How is the snapshot id task going?'));
@@ -1155,6 +1157,13 @@ async function reportsWhatItsTasksRaised(): Promise<void> {
     assert(JSON.stringify(view.calls.replied.map(call => call.slice(1, 3))) === '[["k2","also update the README"]]',
       `The reply goes to the report's task: ${JSON.stringify(view.calls.replied)}`);
     assert(talk.querySelector('.assistant-reply-to textarea') === null && view.calls.closed === 0, 'A sent reply puts its box away and the Assistant stays');
+    const offered = () => [...talk.querySelectorAll<HTMLButtonElement>('.assistant-reply-to .assistant-button')].filter(button => button.textContent === 'Let ByteQuay push it');
+    assert(offered().length === 1, 'The result that left a push to the user offers to do it');
+    offered()[0].click();
+    await settle();
+    assert(JSON.stringify(view.calls.replied.at(-1)?.slice(1)) === JSON.stringify(['k2', "Push this task's committed branch with push_task_branch.", 'offer:k2']),
+      `One click sends the task the push in words its tool takes, keyed to the report: ${JSON.stringify(view.calls.replied.at(-1))}`);
+    assert(offered().length === 0, 'A sent offer goes away');
     element<HTMLButtonElement>('.assistant-card[data-card="approval:a1"] button[aria-label="Allow once: Run the focused Maven test"]', talk,
       'A decision a task raised shows where it was asked, with the task’s own buttons').click();
     await settle();

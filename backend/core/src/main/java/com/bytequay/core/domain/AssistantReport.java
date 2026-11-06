@@ -22,11 +22,18 @@ import static com.bytequay.core.domain.Checks.checkOptionalText;
 import static com.bytequay.core.domain.Checks.checkText;
 import static java.util.Objects.requireNonNull;
 
-/** App-owned card facts with an optional read-only interpretation. Interpretation never changes the card's state or authority. */
+/**
+ * App-owned card facts with an optional read-only interpretation. Interpretation never changes the card's state or authority.
+ *
+ * @param offer a step the result handed back to the user that ByteQuay can do for them, which only the user's click sends to the task
+ */
 public record AssistantReport(State state, String noticeId, AgendaTarget target, Optional<String> sourceTurnId, Optional<String> assessment,
-        List<String> evidence, List<AssistantRuleAction> ruleActions, Optional<String> outcome, Delivery delivery, String deliveryReason)
+        List<String> evidence, List<AssistantRuleAction> ruleActions, Optional<String> outcome, Delivery delivery, String deliveryReason, Optional<Offer> offer)
 {
     public enum Delivery { PASSIVE, INTERRUPT }
+
+    /** Pushing the task's branch, or closing its pull request, through the task's own ByteQuay tools. */
+    public enum Offer { PUSH, CLOSE }
 
     public enum State
     {
@@ -43,6 +50,7 @@ public record AssistantReport(State state, String noticeId, AgendaTarget target,
         checkOptionalText(outcome, "outcome");
         requireNonNull(delivery, "delivery is null");
         checkText(deliveryReason, "deliveryReason", 500);
+        requireNonNull(offer, "offer is null");
         evidence = ImmutableList.copyOf(evidence);
         ruleActions = ImmutableList.copyOf(ruleActions);
     }
@@ -50,7 +58,7 @@ public record AssistantReport(State state, String noticeId, AgendaTarget target,
     public AssistantReport(State state, String noticeId, AgendaTarget target, Optional<String> sourceTurnId, Optional<String> assessment,
             List<String> evidence, List<AssistantRuleAction> ruleActions, Optional<String> outcome)
     {
-        this(state, noticeId, target, sourceTurnId, assessment, evidence, ruleActions, outcome, deliveryFor(state), reasonFor(state));
+        this(state, noticeId, target, sourceTurnId, assessment, evidence, ruleActions, outcome, deliveryFor(state), reasonFor(state), Optional.empty());
     }
 
     public AssistantReport(State state, String noticeId, AgendaTarget target)
@@ -60,12 +68,17 @@ public record AssistantReport(State state, String noticeId, AgendaTarget target,
 
     public AssistantReport assessed(String text)
     {
-        return new AssistantReport(state, noticeId, target, sourceTurnId, Optional.of(text), evidence, ruleActions, outcome, delivery, deliveryReason);
+        return new AssistantReport(state, noticeId, target, sourceTurnId, Optional.of(text), evidence, ruleActions, outcome, delivery, deliveryReason, offer);
     }
 
     public AssistantReport delivered(Delivery value, String reason)
     {
-        return new AssistantReport(state, noticeId, target, sourceTurnId, assessment, evidence, ruleActions, outcome, value, reason);
+        return new AssistantReport(state, noticeId, target, sourceTurnId, assessment, evidence, ruleActions, outcome, value, reason, offer);
+    }
+
+    public AssistantReport offering(Offer value)
+    {
+        return new AssistantReport(state, noticeId, target, sourceTurnId, assessment, evidence, ruleActions, outcome, delivery, deliveryReason, Optional.of(value));
     }
 
     public static Delivery deliveryFor(State state)
