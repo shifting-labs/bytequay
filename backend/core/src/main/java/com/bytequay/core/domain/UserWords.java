@@ -55,6 +55,17 @@ public final class UserWords
         return negated(normal(message), normal(words));
     }
 
+    /**
+     * Whether the words name the action as a whole word and do not themselves say not to do it: "push" in "push it", but not in "pushed",
+     * "push-back" or "don't push". Words that only need to appear in a message could otherwise be any two letters of it.
+     */
+    public static boolean names(String words, String action)
+    {
+        String said = normal(words);
+        String named = normal(action);
+        return Pattern.compile("(?<![\\w-])" + Pattern.quote(named) + "(?![\\w-])").matcher(said).find() && !negated(said, named);
+    }
+
     /** Lower case, plain apostrophes and single spaces, as the checks compare text. */
     public static String normal(String text)
     {

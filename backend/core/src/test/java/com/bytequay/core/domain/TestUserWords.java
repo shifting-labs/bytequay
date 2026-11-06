@@ -33,4 +33,17 @@ class TestUserWords
         assertThat(UserWords.negated("don't push to main", "don't push to main")).isFalse();
         assertThat(UserWords.negated("ship it", "push to main")).isFalse();
     }
+
+    @Test
+    void namesAnActionOnlyAsAWholeWordItDoesNotRefuse()
+    {
+        assertThat(UserWords.names("Push it to the remote", "push")).isTrue();
+        assertThat(UserWords.names("rename it to fix-cache", "fix-cache")).isTrue();
+        assertThat(UserWords.names("it", "push")).isFalse();
+        assertThat(UserWords.names("it is pushed", "push")).isFalse();
+        assertThat(UserWords.names("close-out notes", "close")).isFalse();
+        assertThat(UserWords.names("rename it to fix-cache-2", "fix-cache")).isFalse();
+        assertThat(UserWords.names("don't push", "push")).isFalse();
+        assertThat(UserWords.names("don't merge, rebase it", "rebase")).isTrue();
+    }
 }

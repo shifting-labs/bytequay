@@ -28,7 +28,6 @@ import com.bytequay.core.store.PullRequestTaskStore;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
-import java.util.regex.Pattern;
 
 import static java.util.Objects.requireNonNull;
 
@@ -64,7 +63,7 @@ public class TaskTurnWords
      */
     public Optional<String> authorize(TaskId taskId, TurnId turnId, Optional<String> words, String action)
     {
-        if (words.filter(said -> names(said, action)).isEmpty()) {
+        if (words.filter(said -> UserWords.names(said, action)).isEmpty()) {
             return Optional.empty();
         }
         Optional<AgentTurn> turn = turns.findActive(taskId).filter(active -> active.id().equals(turnId) && active.cancellationRequestedAt().isEmpty());
@@ -76,14 +75,6 @@ public class TaskTurnWords
         return logs.findLatest(taskId, event -> event.turnId().filter(turnId::equals).isPresent() && event.source().equals(AgentEventSource.root())
                         && event.payload() instanceof AgentEventPayload.UserMessage message && UserWords.unsaid(message.text(), said).isEmpty(), SEARCHED_EVENTS)
                 .map(_ -> said);
-    }
-
-    // "push" in "push it", but not in "pushed", "push-back" or "don't push": any two words of the message would otherwise authorize.
-    private static boolean names(String words, String action)
-    {
-        String said = UserWords.normal(words);
-        String named = UserWords.normal(action);
-        return Pattern.compile("(?<![\\w-])" + Pattern.quote(named) + "(?![\\w-])").matcher(said).find() && !UserWords.saysNot(said, named);
     }
 
     // The first message of a task started from an issue, a ticket or a pull request carries their titles and bodies beside any words of the user's.
