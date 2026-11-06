@@ -37,7 +37,7 @@ public record ReviewValidation(
         List<ReviewThreadVerdict> threadVerdicts)
 {
     /** The most findings one run presents; supported findings beyond it stay in the details. */
-    public static final int MAX_SELECTED = 12;
+    public static final int MAX_SELECTED = 20;
 
     public ReviewValidation
     {

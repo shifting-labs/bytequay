@@ -571,7 +571,11 @@ Keep the existing classification vocabulary. Bugs, useful suggestions, and pure
 nits have different evidence and presentation requirements. A useful test or design
 improvement may coexist with a defect. Nits are not suppressed merely because
 another finding exists; pure wording preferences remain lowest priority and need
-an actionable benefit.
+an actionable benefit. Defects take Critical, High, Medium or Low. A shown
+consequence that is only small, rare or bounded is supported as a Low defect or
+a nit rather than rejected; rejection is for a claim the evidence disproves, a
+preference with no concrete cost, or behavior the change neither causes nor
+touches.
 
 A question is the fourth kind and the last resort. Its title starts with
 `Question:` and it has no severity. It carries an observation verified in current
@@ -606,17 +610,20 @@ assignment seals them. Keep the existing maximum of two evidence follow-ups.
 Missing proof at that limit means unresolved/incomplete, not rejected. Reassess
 each carried OPEN finding against current source; preserve user RESOLVED state.
 
-### Apply the twelve-finding limit after ranking
+### Select every supported finding after ranking
 
-Twelve is the final presentation limit for new automatic findings from a run
-(`ReviewValidation.MAX_SELECTED`).
+Twenty is the final presentation limit for new automatic findings from a run
+(`ReviewValidation.MAX_SELECTED`). It is a bound, not a filter: the rules ask
+the reviewer to select every supported finding and to leave one out only when a
+selected finding already says it or the question limit applies.
 Saving a supported draft does not consume a presentation slot:
 
 1. Save supported finding drafts with their evidence, bounded by the recorded
    candidate pool. A save alone does not make a draft a selected result.
 2. `ReviewValidation.selectedFindingIds` contains the ranked selection, with a
-   required `selectionExplanation`. At final validation, select at most twelve
-   supported findings originating in this run, at most two of them questions.
+   required `selectionExplanation`. At final validation, select every
+   supported finding originating in this run, at most twenty and at most two of
+   them questions.
    Existing carried findings retain their lifecycle and history.
 3. Check that every selected ID belongs to this review/run and is backed by a
    current supported candidate and exact revision. Verify these conditions again
@@ -818,8 +825,8 @@ candidate identity, an early map citing frozen source, supplemental evidence,
 map-only first checkpoints, rejection of discoveries before a saved map, paired map
 revisions, seal-time replacement rejection, missing/blocked perspectives, exact
 sealed evidence, carried findings, shared-root-cause mapping, late discoveries, final selection, and
-publication boundaries. The late-selection regression records twelve earlier drafts
-before a stronger supported finding arrives. Related cases cover discussion revisions,
+publication boundaries. The late-selection regression records as many earlier drafts
+as the limit before a stronger supported finding arrives. Related cases cover discussion revisions,
 follow-up findings, unselected-result navigation, and independent outgoing drafts.
 
 For material implementation changes, run `mvn verify` in `backend/`, then frontend

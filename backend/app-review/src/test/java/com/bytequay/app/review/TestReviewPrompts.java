@@ -83,7 +83,7 @@ class TestReviewPrompts
                 .contains("Save every supported finding draft", "selectedFindingIds", "selectionExplanation", "Unselected support is not rejection",
                         "NEEDS_EVIDENCE", "Reuse completed checks", "Do not rewrite the change explanation or call review_save_summary",
                         "Do not reject a candidate only because no written contract is violated", "A Question: finding is the last resort",
-                        "follow nextPage until you have read every one", "Settle them quickly", "select at most 12 new automatic findings",
+                        "follow nextPage until you have read every one", "Settle them quickly", "select every supported new automatic finding, at most 20",
                         "At most 2 of the selected findings may be questions");
         assertThat(ReviewPrompts.stepGuidance(run(COLLECT_EVIDENCE)))
                 .contains("Preserve candidate numbering", "review_record_discovery before filtering", "Reuse the saved map",
@@ -93,8 +93,8 @@ class TestReviewPrompts
                 "original explanation is historical", "clarify the retained explanation");
         assertThat(ReviewPrompts.INSTRUCTION).contains("Defects, concrete suggestions, questions and useful nits may coexist", "BLOCKED", "around 70%");
         assertThat(ReviewPrompts.INSTRUCTION).contains("A question is the last resort", "It starts with \"Question:\" and omits severity",
-                "Do not reject a candidate only because no written contract is violated", "Select at most twelve",
-                "also carries a walkthrough");
+                "Do not reject a candidate only because no written contract is violated", "Select every\n   supported new automatic finding",
+                "Give actual defects\n   Critical, High, Medium or Low severity", "also carries a walkthrough");
         assertThat(ReviewPrompts.INSTRUCTION).contains("Default to two concurrent read-only children", "Expand to three or four only when the saved map",
                 "Keep at most four children running", "The parent allocates every batch", "After each batch, reassess uncovered responsibilities",
                 "when the provider supports it", "not a limit of two child batches");

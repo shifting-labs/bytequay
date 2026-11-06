@@ -199,8 +199,9 @@ final class ReviewPrompts
                     + "and a preference with no concrete cost is rejected as that. When more than a dozen wait, give read-only children the leads of a few files each "
                     + "to confirm or refute with path and line, then read the decisive lines yourself before each verdict. "
                     + "Try to disprove each claim. Save every supported finding draft; merge shared root causes without erasing candidates. "
-                    + "Rank the complete supported pool, select at most " + ReviewValidation.MAX_SELECTED
-                    + " new automatic findings with selectedFindingIds and selectionExplanation, "
+                    + "Rank the complete supported pool and select every supported new automatic finding, at most " + ReviewValidation.MAX_SELECTED
+                    + ", with selectedFindingIds and selectionExplanation; "
+                    + "leave one out only when a selected finding already says it or the question limit below applies, and name which, "
                     + "then seal review_finish for the assigned investigationStep. Unselected support is not rejection. "
                     + "At most " + ReviewToolDefinitions.MAX_SELECTED_QUESTIONS + " of the selected findings may be questions. "
                     + "Use NEEDS_EVIDENCE with a specific missing proposition, next check, and resolving criterion if another inspection is necessary. "

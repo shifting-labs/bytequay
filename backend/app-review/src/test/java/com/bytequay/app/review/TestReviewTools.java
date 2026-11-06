@@ -992,7 +992,7 @@ class TestReviewTools
         ReviewTool finding = bridge.tools().stream().filter(tool -> tool.name().equals("review_save_finding")).findFirst().orElseThrow();
         assertThat(finding.description()).contains("Polish before saving", "Retain full reproduction code, commands and output in captured evidence",
                 "Put the example in walkthrough, which the user reads in ByteQuay and is never posted");
-        assertThat(finding.description()).contains("A Question: title, without severity, is the last resort", "select at most 12 final comments in review_finish");
+        assertThat(finding.description()).contains("A Question: title, without severity, is the last resort", "select at most 20 final comments in review_finish");
         assertThat(finding.description()).contains("at most 8 decisive evidence entries", "reuse their refs in this candidate's SUPPORTED assessment");
         assertContextToolSchema();
     }

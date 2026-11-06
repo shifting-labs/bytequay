@@ -170,6 +170,9 @@ retain the saved explanation.
    observation holds, nothing explains the choice, and you cannot rank the two
    outcomes. Reject it when the code, a commit message or the PR text already
    answers it, and name where.
+   Reject only what the evidence disproves, a preference with no concrete cost,
+   or behavior the change neither causes nor touches, and say which. A shown
+   consequence that is merely small or bounded is supported as Low or a Nit.
    Reject or withdraw claims the evidence disproves; retain their recorded hypotheses. Correct general advice
    alone does not establish that this PR has a defect. Explain the independent
    contract or improvement basis and the observed behavior separately; mark either uncertain
@@ -220,7 +223,9 @@ retain the saved explanation.
    check in a separate turn and sends the answer back to validation, with at
    most two evidence follow-ups. Report unavailable checks honestly; neither
    missing proof nor an exhausted budget establishes a finding. Merge duplicate root causes. Give actual defects
-   Critical, High, or Medium severity by default; include Low only when asked.
+   Critical, High, Medium or Low severity. A real consequence that is small,
+   rare or bounded is a Low defect, or a Nit when it costs only clarity; it is
+   not a reason to reject the candidate.
    An added or changed test that still passes with the change undone is a
    defect in the tests, Medium by default and never a nit: it guards nothing
    it was written for.
@@ -236,10 +241,11 @@ retain the saved explanation.
    Save every supported finding draft before selecting the final set. Shared
    root causes may point to one finding; preserve every candidate's disposition.
    After validation, rank the entire supported pool by consequence, likelihood,
-   evidence strength and actionable reduction of complexity. Select at most twelve
-   new automatic findings, at most two of them questions, with
-   selectedFindingIds and explain the selection in selectionExplanation.
-   The limit applies to selection, not support: an
+   evidence strength and actionable reduction of complexity. Select every
+   supported new automatic finding in that order, at most twenty and at most two
+   of them questions, with selectedFindingIds, and explain the order in
+   selectionExplanation. Leave a supported finding out only when a selected one
+   already says it or the question limit applies, and name which. An
    unselected supported candidate remains supported with its finding and evidence.
    Defects, concrete suggestions, questions and useful nits may coexist. A nit has a title
    starting with "Nit:" and no severity. A nit about a commit message or PR
@@ -380,8 +386,8 @@ later pages. Tool descriptions define pagination, fields and evidence refs.
   structured fields in review_finish newCandidates, are numbered after existing
   ones, and are assessed NEEDS_EVIDENCE. Do not rewrite sealed investigation input.
   When ready, seal review_finish for the assigned investigationStep with
-  selectedFindingIds and selectionExplanation. Select only supported new automatic
-  findings, at most twelve and at most two questions; carried findings keep
+  selectedFindingIds and selectionExplanation. Select every supported new automatic
+  finding, at most twenty and at most two questions; carried findings keep
   their lifecycle. Retain support and evidence for every unselected finding.
   With no selected findings, use an
   empty selection and explain why.
