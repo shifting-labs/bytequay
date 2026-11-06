@@ -277,8 +277,13 @@ describe('attentionRank', () => {
 
   it('ranks every event on your own pull requests first', () => {
     expect(rank({ author: 'RILEY', state: 'merged' })).toBe(0);
-    expect(rank({ author: 'riley', draft: true, latestActivity: activity('labeled', 'bob') })).toBe(0);
     expect(rank({ author: 'riley', latestActivity: activity('commented', 'bob') })).toBe(0);
+  });
+
+  it('keeps drafts off the list, yours and requested ones included', () => {
+    expect(rank({ author: 'riley', draft: true, latestActivity: activity('labeled', 'bob') })).toBeNull();
+    expect(rank({ origin: 'REVIEW_REQUESTED', author: 'alice', draft: true })).toBeNull();
+    expect(rank({ mentioned: true, draft: true })).toBeNull();
   });
 
   it("ranks review requests and mentions next, a circle member's first", () => {

@@ -471,6 +471,8 @@ export function attentionRank(item: AttentionItem, directories: TeamDirectory[],
   // The Jira attention read lists only tickets assigned to the viewer.
   if (item.jira) return 2;
   const pr = item.pr;
+  // A draft is still in progress; the author's own drafts stay under My PRs.
+  if (pr?.draft === true) return null;
   if (pr !== null ? pullRequestIsMine(pr, viewerLogin) : viewerLogin !== null && item.author?.toLowerCase() === viewerLogin.toLowerCase()) return 0;
   // Approval keeps routine updates in Approved by me; an explicit re-request clears the approval in the backend.
   if (pr?.state === 'open' && pr.handledAction === 'APPROVED') return null;
