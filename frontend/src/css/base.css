@@ -987,6 +987,10 @@ samp {
 }
 
 
+.app-sidebar__update .app-sidebar__item { color: var(--accent); }
+.app-sidebar__update-error { margin: 4px 10px 8px; font-size: 11px; line-height: 1.4; color: var(--fg-dim); }
+.app-sidebar.is-collapsed .app-sidebar__update-error { display: none; }
+
 .app-sidebar__hint {
   color: var(--fg-dim);
   font-size: 11.5px;

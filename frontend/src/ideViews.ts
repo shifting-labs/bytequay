@@ -635,6 +635,12 @@ export class IdeViews {
     }
   }
 
+  flushStorage(): void {
+    for (const editor of this.editors.values()) {
+      if (!editor.contents.isDestroyed()) editor.contents.session.flushStorageData();
+    }
+  }
+
   dispose(): void {
     clearInterval(this.timer);
     this.queryPump.abort();

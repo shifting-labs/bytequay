@@ -34,7 +34,7 @@ type MockView = {
     loadURL: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn>; send: Mock<unknown[], void>;
     isFocused: Mock<[], boolean>; focus: ReturnType<typeof vi.fn>;
     emit: (name: string, ...args: unknown[]) => void;
-    session: { protocol: { handle: ReturnType<typeof vi.fn> }; fetch: ReturnType<typeof vi.fn>; webRequest: { onBeforeRequest: ReturnType<typeof vi.fn> } };
+    session: { flushStorageData: ReturnType<typeof vi.fn>; protocol: { handle: ReturnType<typeof vi.fn> }; fetch: ReturnType<typeof vi.fn>; webRequest: { onBeforeRequest: ReturnType<typeof vi.fn> } };
   };
 };
 vi.mock('electron', async () => {
@@ -66,7 +66,7 @@ vi.mock('electron', async () => {
           if (name === 'ide:idle-check' && desktop.idleReplies) desktop.handlers.get('ide:report')?.(
             { sender: this.contents, senderFrame: this.contents.mainFrame }, { unsaved: { files: [], drafts: 0 }, busy: false, idleCheckId: id });
         }), setWindowOpenHandler: vi.fn(),
-        session: { fetch: vi.fn().mockImplementation(async () => new Response('avatar')), protocol: { handle: vi.fn().mockImplementation((scheme: string) => this.handled.add(scheme)),
+        session: { flushStorageData: vi.fn(), fetch: vi.fn().mockImplementation(async () => new Response('avatar')), protocol: { handle: vi.fn().mockImplementation((scheme: string) => this.handled.add(scheme)),
           isProtocolHandled: vi.fn(async (scheme: string) => this.handled.has(scheme)),
           unhandle: vi.fn().mockImplementation((scheme: string) => { if (!this.handled.delete(scheme)) throw new Error(`Failed to unhandle protocol: ${scheme}`); }) }, setPermissionRequestHandler: vi.fn(),
           setPermissionCheckHandler: vi.fn(), webRequest: { onBeforeRequest: vi.fn() } },
@@ -755,4 +755,16 @@ it('hosts hidden queries after the macOS window closes and releases the backgrou
   expect((await answer).result.status).toBe('READY');
   await vi.advanceTimersByTimeAsync(135_000);
   expect(desktop.backgrounds[0].destroy).toHaveBeenCalledOnce();
+});
+
+it('flushes retained editor storage before an update without discarding the editors', async () => {
+  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(connection)));
+  await invoke('ide:resume', parent(), host);
+  const editor = desktop.views[0].contents;
+  views.flushStorage();
+  expect(editor.session.flushStorageData).toHaveBeenCalledTimes(1);
+  expect(editor.close).not.toHaveBeenCalled();
+  editor.destroyed = true;
+  views.flushStorage();
+  expect(editor.session.flushStorageData).toHaveBeenCalledTimes(1);
 });

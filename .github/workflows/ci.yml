@@ -107,6 +107,9 @@ jobs:
       - name: Check packaged dictation helper
         run: node scripts/test-packaged-dictation.mjs
 
+      - name: Test macOS update manifest
+        run: node --test scripts/macos-update-manifest.test.mjs
+
   frontend-test:
     name: Frontend tests · ${{ matrix.shard }} of 3
     runs-on: macos-latest

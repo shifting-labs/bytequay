@@ -187,6 +187,10 @@ export function spawnBackend(): void {
     process.stderr.write(chunk);
   });
   child.on('error', (e) => {
+    if (stopping) {
+      console.warn('Could not signal the local backend to stop', e);
+      return;
+    }
     failure = `Could not start ByteQuay’s bundled Java runtime. Reinstall ByteQuay from the release package.\n\n${e.message}`;
     backendUrl = null;
     child = null;
@@ -215,8 +219,27 @@ export function killBackend(): void {
   backendUrl = null;
   if (child && !child.killed) {
     child.kill('SIGTERM');
-    child = null;
   }
+}
+
+/** A signal is not an exit: the updater must wait for Spring to close SQLite and its agent processes. */
+export function stopBackend(): Promise<void> {
+  const process = child;
+  if (!process) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timeout);
+      process.removeListener('exit', finish);
+      process.removeListener('error', failed);
+    };
+    const finish = () => { cleanup(); resolve(); };
+    const failed = (error: Error) => { cleanup(); reject(error); };
+    const timeout = setTimeout(() => failed(new Error('The local backend has not finished shutting down.')), 60_000);
+    process.once('exit', finish);
+    process.once('error', failed);
+    try { killBackend(); }
+    catch (error) { failed(error instanceof Error ? error : new Error(String(error))); }
+  });
 }
 
 export async function waitForBackendReady(timeoutMs = 30_000): Promise<boolean> {

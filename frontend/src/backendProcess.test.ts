@@ -208,4 +208,42 @@ describe('backend port discovery', () => {
     expect(child.kill).toHaveBeenCalledWith('SIGTERM');
     expect(mocks.showErrorBox).not.toHaveBeenCalled();
   });
+
+  it('waits for backend exit rather than treating a shutdown signal as completion', async () => {
+    const backend = await import('./backendProcess');
+    backend.spawnBackend();
+    let stopped = false;
+    const stopping = backend.stopBackend().then(() => { stopped = true; });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(stopped).toBe(false);
+    child.emit('exit', 0, null);
+    await stopping;
+    expect(stopped).toBe(true);
+    await backend.stopBackend();
+    expect(child.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses to claim shutdown on timeout, then can wait for the same backend on retry', async () => {
+    const backend = await import('./backendProcess');
+    backend.spawnBackend();
+    const timeout = expect(backend.stopBackend()).rejects.toThrow('has not finished shutting down');
+    await vi.advanceTimersByTimeAsync(60_000); await timeout;
+    const retry = backend.stopBackend();
+    child.emit('exit', 0, null); await retry;
+    expect(mocks.showErrorBox).not.toHaveBeenCalled();
+  });
+
+  it('retains the backend after a signal failure so a retry cannot mistake it for an exited process', async () => {
+    const backend = await import('./backendProcess');
+    backend.spawnBackend();
+    child.kill.mockImplementationOnce(() => { child.emit('error', new Error('Signal failed')); return false; });
+    await expect(backend.stopBackend()).rejects.toThrow('Signal failed');
+    let stopped = false;
+    const retry = backend.stopBackend().then(() => { stopped = true; });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(stopped).toBe(false);
+    child.emit('exit', 0, null); await retry;
+    expect(stopped).toBe(true);
+  });
 });

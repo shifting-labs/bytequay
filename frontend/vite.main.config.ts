@@ -15,7 +15,10 @@ import { defineConfig } from 'vite';
 
 // https://vitejs.dev/config
 export default defineConfig({
-  define: { __BYTEQUAY_JIRA_AUTH_URL__: JSON.stringify(process.env.BYTEQUAY_JIRA_AUTH_URL?.trim() ?? '') },
+  define: {
+    __BYTEQUAY_JIRA_AUTH_URL__: JSON.stringify(process.env.BYTEQUAY_JIRA_AUTH_URL?.trim() ?? ''),
+    __BYTEQUAY_SIGNED_RELEASE__: process.env.BYTEQUAY_SIGN_RELEASE === '1',
+  },
   // A native module loads from node_modules at runtime; bundling it would lose its prebuilds.
   build: { rollupOptions: { external: ['node-pty'] } },
 });

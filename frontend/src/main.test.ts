@@ -936,3 +936,9 @@ it.each([
 function withHeaders(expected: Record<string, string>) {
   return { asymmetricMatch: (value: unknown) => value instanceof Headers && Object.entries(expected).every(([key, value_]) => value.get(key) === value_) };
 }
+
+it.each(['read', 'install'])('denies update %s requests from a renderer outside the main window', async action => {
+  await startMain();
+  expect(() => desktop.handlers.get(`app:update-${action}`)?.({ sender: {}, senderFrame: {} }))
+    .toThrow('Updates can only be started from ByteQuay.');
+});

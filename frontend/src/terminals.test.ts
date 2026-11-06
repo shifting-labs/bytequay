@@ -79,8 +79,10 @@ describe('code terminals', () => {
       const { terminals, processes, cwd } = setup();
       const sender = new FakeSender();
       expect(terminals.hasLive(sender)).toBe(false);
+      expect(terminals.hasLive()).toBe(false);
       const { terminalId } = await terminals.open(sender, 'task:t1', 80, 24, cwd);
       expect(terminals.hasLive(sender)).toBe(true);
+      expect(terminals.hasLive()).toBe(true);
       vi.setSystemTime(7_200_000);
       expect(terminals.hasLive(sender)).toBe(true);
       terminals.write(new FakeSender(), terminalId, 'ls\r');
@@ -89,6 +91,7 @@ describe('code terminals', () => {
       expect(terminals.hasLive(sender)).toBe(true);
       processes[0].exit({ exitCode: 0 });
       expect(terminals.hasLive(sender)).toBe(false);
+      expect(terminals.hasLive()).toBe(false);
     } finally {
       vi.useRealTimers();
     }

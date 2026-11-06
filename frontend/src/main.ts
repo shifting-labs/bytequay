@@ -25,6 +25,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { spawn as spawnPty } from 'node-pty';
 import { IdeViews } from './ideViews';
+import { AppUpdater } from './updates/AppUpdater';
 import { ArtifactView } from './artifactView';
 import { parseArtifactPage, parseArtifactRows, parseArtifactView } from './artifacts/contracts';
 import { repositoryAvatar } from './repositoryAvatars';
@@ -131,6 +132,7 @@ import {
   reportBackendFailure,
   sessionToken,
   spawnBackend,
+  stopBackend,
   waitForBackendReady,
 } from './backendProcess';
 
@@ -354,6 +356,17 @@ const quickAsk = new QuickAsk(async target => {
   else mainWindow?.webContents.send('assistant:navigate', target);
 });
 const ideViews = new IdeViews(() => mainWindow, sender => codeTerminals.hasLive(sender), () => appNotices.raise());
+const appUpdater = new AppUpdater(() => mainWindow, async () => {
+  const tasks = parseRunningTasks(await backendJson(`${backendBase()}/agent/tasks/running`));
+  return tasks.some(task => task.status === 'RUNNING' || task.status === 'WAITING') || codeTerminals.hasLive();
+}, async () => {
+  stopDesktopServices();
+  // Drafts are written on every edit; flush their storage before closing any editor or renderer.
+  mainWindow?.webContents.session.flushStorageData();
+  ideViews.flushStorage();
+  await stopBackend();
+  ideViews.dispose();
+});
 const artifactView = new ArtifactView(() => mainWindow,
   target => backendJson(workspaceUrl(target.workspaceId, `/artifacts/${encodeURIComponent(target.artifactId)}/pages/${encodeURIComponent(target.pageId)}`))
     .then(parseArtifactPage), () => appNotices.raise());
@@ -680,6 +693,14 @@ function registerIpc(): void {
     if (action === 'zoom') mainWindow.setFullScreen(!mainWindow.isFullScreen());
   });
   ipcMain.handle('app:version', () => ({ version: app.getVersion() }));
+  for (const action of ['read', 'install'] as const) {
+    ipcMain.handle(`app:update-${action}`, event => {
+      if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+        throw new Error('Updates can only be started from ByteQuay.');
+      }
+      return action === 'read' ? appUpdater.read() : appUpdater.install();
+    });
+  }
   ipcMain.handle('find:start', (_event, text: string, options: Electron.FindInPageOptions, tabId?: string) => {
     if (tabId !== undefined) browserTabs.find(tabId, text, options);
     else mainWindow?.webContents.findInPage(text, options);
@@ -2248,6 +2269,7 @@ app.on('ready', async () => {
   if (quitting) return;
   startupComplete = true;
   await ensureWindow();
+  appUpdater.start();
   if (backendReady) startBackendServices();
   else backendRecoveryTimer = setTimeout(() => { void recoverBackend(); }, 5_000);
 });
@@ -2270,7 +2292,8 @@ app.on('web-contents-created', (_event, contents) => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
-app.on('before-quit', () => {
+function stopDesktopServices(): void {
+  if (quitting) return;
   quitting = true;
   clearTimeout(backendRecoveryTimer);
   stopLab();
@@ -2281,6 +2304,10 @@ app.on('before-quit', () => {
   agentSubscriptions.stopAll();
   codeTerminals.stopAll();
   dictation.clearRecordings();
+}
+app.on('before-quit', () => {
+  appUpdater.stop();
+  stopDesktopServices();
   ideViews.dispose();
   killBackend();
 });

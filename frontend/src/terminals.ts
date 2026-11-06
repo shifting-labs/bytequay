@@ -135,8 +135,8 @@ export class CodeTerminals {
   }
 
   /** A silent shell or pending launch still owns work; inactivity cannot prove its processes stopped. */
-  hasLive(sender: TerminalSender): boolean {
-    return [...this.terminals.values(), ...this.opening.values()].some(terminal => terminal.sender === sender);
+  hasLive(sender?: TerminalSender): boolean {
+    return [...this.terminals.values(), ...this.opening.values()].some(terminal => sender === undefined || terminal.sender === sender);
   }
 
   stopAll(): void {

@@ -56,6 +56,9 @@ function streamSubscriber(prefix: 'agent' | 'review'): Bridge['subscribeAgentTas
 const invoke = (channel: string) => (...args: unknown[]) => ipcInvoke(channel, ...args);
 
 const bridge: Bridge = {
+  readAppUpdate: invoke('app:update-read'),
+  installAppUpdate: invoke('app:update-install'),
+  onAppUpdate: callback => subscribe('app:update-changed', callback),
   onAppNavigation: callback => subscribe('app:navigate', callback),
   onAppNoticeOpen: callback => subscribe('notices:open-task', callback),
   setNoticeSource: invoke('notices:source'),

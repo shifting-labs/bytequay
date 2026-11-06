@@ -18,6 +18,7 @@ import {
   Pin, Sparkles, Sun, Tags, ToggleRight, TriangleAlert, Users,
 } from 'lucide-react';
 import UsageMeter from './usage/UsageMeter';
+import UpdateButton from './updates/UpdateButton';
 import { JiraIcon } from '@bytequay/jira/renderer';
 import RepoAvatar, { HostMark, shortWorkspaceName } from './RepoAvatar';
 import type { PullRequestDto, WorkspaceDto } from './types';
@@ -398,6 +399,7 @@ export default function AppSidebar({
       </>}
       {settingsBody === null && <div className="app-sidebar__spacer" />}
       <nav className="app-sidebar__nav app-sidebar__nav--bottom" aria-label="Application settings">
+        <UpdateButton />
         <UsageMeter />
         {lab.enabled && row({
           key: 'lab',

@@ -33,6 +33,17 @@ Packaged apps own their Java runtime alongside the backend JAR. The release
 build creates it from JDK 25 for the target Mac architecture, and Electron
 starts that bundled executable directly. Installed system Java does not
 determine app startup; runtime updates ship with ByteQuay releases.
+
+Signed macOS builds check public GitHub release metadata in Electron main at
+startup and hourly. Only the main window's top-level renderer can request an
+update. A click checks running work and, if needed, obtains one confirmation
+before starting Electron's native updater against a version-pinned release feed.
+Squirrel verifies the signed application; a verified download triggers automatic
+restart after editor storage is flushed and the backend exits. Failed downloads
+leave the current app running. Development, unsigned, and Mac App Store builds
+do not use this updater. The release job emits architecture-specific metadata
+only after signature, notarization, and ZIP checks pass.
+
 The IDE's Java language server uses a suitable installed JDK when available
 and otherwise shares the backend's Java runtime, avoiding a second bundled JRE.
 

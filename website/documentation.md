@@ -36,6 +36,20 @@ release notes.
    For GitLab, follow [Set up a GitLab workspace](#set-up-a-gitlab-workspace).
 4. In a GitHub workspace, open **Pull requests**, select a PR, and inspect **WorkBench → Changes**.
 
+### Update ByteQuay
+
+When a newer release is available, **Update to v…** appears at the bottom of the
+sidebar. Click it to download, verify, and restart automatically. If tasks or
+terminal sessions are running, ByteQuay asks once before starting. **Cancel**
+leaves them running; **Update and restart** allows the restart to interrupt them,
+including work started during the download. Interrupted work is not automatically
+resumed by the updater.
+
+If downloading or verification fails, the current app keeps running and the
+button offers **Retry**. When you are up to date, the update button is hidden.
+Older versions without this button need one manual installation of a release
+that includes the updater. In-app updates are available in signed macOS downloads.
+
 ### Choose your setup
 
 1. **Code hosting:** for GitHub, choose **Use my GitHub CLI login** after
