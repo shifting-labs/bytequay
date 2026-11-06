@@ -34,8 +34,10 @@ import com.bytequay.agent.spi.AgentLaneId;
 import com.bytequay.agent.spi.AgentPermissionPolicy;
 import com.bytequay.agent.spi.AgentSessionContext;
 import com.bytequay.agent.spi.AgentTurnResult;
+import com.bytequay.agent.spi.DevelopmentResultReport;
 import com.bytequay.agent.spi.ProviderApprovalDecision;
 import com.bytequay.agent.spi.SessionAccess;
+import com.bytequay.agent.spi.TaskPublicationBridge;
 import com.bytequay.app.agent.TaskPublicationService;
 import com.bytequay.app.notices.AppNotice;
 import com.bytequay.app.notices.AppNoticeService;
@@ -46,6 +48,7 @@ import com.bytequay.core.domain.AssistantFollow;
 import com.bytequay.core.domain.AssistantItem;
 import com.bytequay.core.domain.AssistantReport;
 import com.bytequay.core.domain.AssistantRuleAction;
+import com.bytequay.core.domain.UserWords;
 import com.bytequay.core.domain.WorkItem;
 import com.bytequay.core.domain.WorkItemLink;
 import com.bytequay.core.review.AgentReview;
@@ -339,7 +342,25 @@ class AssistantFollowing
                 .orElseGet(() -> target(task));
         AssistantReport report = new AssistantReport(state, noticeId, target, review.flatMap(run -> run.turnIds().stream().reduce((first, last) -> last))
                 .or(() -> turn.map(value -> value.id().toString())), Optional.empty(), evidence, ruleActions, Optional.empty());
+        if (noticeId.startsWith("question:")) {
+            report = askedOffer(task, notice).map(report::offering).orElse(report);
+        }
         return Optional.of(new Snapshot(task.id().toString(), fingerprint, line, report, interpret));
+    }
+
+    /**
+     * A finished turn that asks whether ByteQuay should push its branch or close its pull request names the task tool for it, as the tool's
+     * instruction asks; that question gets the same one-click answer as a result that left the step to the user.
+     */
+    private Optional<AssistantReport.Offer> askedOffer(AgentTask task, Optional<AppNotice> notice)
+    {
+        String asked = notice.flatMap(AppNotice::turnId).map(TurnId::valueOf).flatMap(turns::find).flatMap(AgentTurn::developmentResult)
+                .flatMap(DevelopmentResultReport::message).orElse("");
+        boolean push = UserWords.names(asked, TaskPublicationBridge.PUSH_TOOL_NAME);
+        if (push == UserWords.names(asked, TaskPublicationBridge.CLOSE_TOOL_NAME) || publications.getObject().offered(task.id()).isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(push ? AssistantReport.Offer.PUSH : AssistantReport.Offer.CLOSE);
     }
 
     private static AgendaTarget target(AgentTask task)

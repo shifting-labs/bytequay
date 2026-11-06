@@ -41,6 +41,7 @@ import com.bytequay.agent.spi.AgentSessionContext;
 import com.bytequay.agent.spi.AgentSessionRef;
 import com.bytequay.agent.spi.AgentTurnCommand;
 import com.bytequay.agent.spi.AgentTurnResult;
+import com.bytequay.agent.spi.DevelopmentResultReport;
 import com.bytequay.agent.spi.RunningTurn;
 import com.bytequay.agent.spi.SessionAccess;
 import com.bytequay.app.agent.TaskPublicationService;
@@ -501,6 +502,21 @@ class TestAssistantFollowing
     }
 
     @Test
+    void aQuestionThatNamesOneTaskToolOffersItsOneClickAnswer()
+    {
+        when(turns.find(TURN)).thenReturn(Optional.of(turn));
+        when(publication.offered(TASK)).thenReturn(Optional.of(task));
+        assertThat(askedOffer("Nothing changed. Should I push it with push_task_branch?")).contains(AssistantReport.Offer.PUSH);
+        assertThat(askedOffer("Should I close it with close_task_pull_request?")).contains(AssistantReport.Offer.CLOSE);
+        assertThat(askedOffer("Should I keep going?")).isEmpty();
+        assertThat(askedOffer("Don't use push_task_branch yet; should I wait?")).isEmpty();
+        assertThat(askedOffer("Should I use push_task_branch or close_task_pull_request?")).isEmpty();
+        when(publication.offered(TASK)).thenReturn(Optional.empty());
+        assertThat(askedOffer("Should I push it with push_task_branch?")).isEmpty();
+        assertThat(queued).isEmpty();
+    }
+
+    @Test
     void routineUnfinishedWorkContinuesQuietlyAndExhaustedRecoveryNeedsAttention()
     {
         when(running.completion()).thenReturn(CompletableFuture.completedFuture(interpretation("The requested regression check is still missing", "NONE", "SAFE_CONTINUE")));
@@ -768,6 +784,19 @@ class TestAssistantFollowing
         return new AgentTurnResult(AgentTurnResult.State.COMPLETED, Optional.of("{\"summary\":\"" + text + "\",\"attention\":\""
                 + (notifyUser ? "REQUESTED_NOTIFICATION" : "NONE") + "\",\"reason\":\"Result delivery follows the request.\",\"nextStep\":\"NONE\"}"), Optional.empty(),
                 Duration.ofSeconds(1), true);
+    }
+
+    // A finished turn's question, as a report that is not ready for delivery asks it.
+    private Optional<AssistantReport.Offer> askedOffer(String question)
+    {
+        when(turn.developmentResult()).thenReturn(Optional.of(new DevelopmentResultReport(false, Optional.of(question))));
+        when(notices.current(anyCollection())).thenReturn(ImmutableList.of(new AppNotice("question:" + TURN, AppNotice.Kind.QUESTION, TASK.toString(), "workspace",
+                Optional.of(TURN.toString()), Optional.empty(), "Fix the test", Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), question,
+                "owner/repository", "claude", Optional.empty(), NOW, Optional.empty())));
+        following.poll(conversations::add);
+        AssistantReport report = conversations.items(CONVERSATION).getLast().report().orElseThrow();
+        assertThat(report.state()).isEqualTo(AssistantReport.State.ANSWER_REQUIRED);
+        return report.offer();
     }
 
     private static AppNotice notice(AppNotice.Kind kind, String message)

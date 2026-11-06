@@ -660,7 +660,9 @@ leaves to the user by hand is a blocker the app enforces whatever the attention
 level, and it never continues automatically. When that step is pushing the task
 branch or closing its pull request and the task has those tools, the card offers
 to do it: the user's click sends the task fixed words through the report's reply,
-and the task's own tools act on them. A rule’s explicit notification intent can
+and the task's own tools act on them. A finished turn that instead asks whether
+to push or close names that tool in its question, as the tool's instruction asks,
+and its question card gets the same offer. A rule’s explicit notification intent can
 also request an interruption. Pending summaries appear as
 passive Progress, then update the same source card. Quiet assessments remain in
 the originating chat and Results without popup, native alert, unread urgency, or

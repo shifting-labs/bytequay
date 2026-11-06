@@ -36,7 +36,9 @@ public record TaskPublicationBridge(Function<Optional<String>, Prepared> push, F
             words, and ByteQuay acts at once; otherwise ByteQuay shows an in-app Allow once / Deny card and waits for the answer. ByteQuay pushes the task
             branch's committed head with its own credentials, replacing only commits this task once had, and closes only
             this task's own open pull request. Report the result faithfully. A refusal, denial or expired approval does
-            nothing; do not retry without a new user request. Only the root agent may call these tools.
+            nothing; do not retry without a new user request. If you end the turn asking whether ByteQuay should push or
+            close, name push_task_branch or close_task_pull_request in that question; the user can then answer it with one
+            click. Only the root agent may call these tools.
             """;
 
     public TaskPublicationBridge
