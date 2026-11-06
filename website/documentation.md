@@ -557,7 +557,8 @@ PR description in the repository's own template and style. To ask for one kind,
 put a focus right after the command: **bug** (with a regression test),
 **performance** (with before and after measurements), **cleanup** (same
 behavior, simpler code), **tests**, or **docs**, as in `@contribute performance`.
-Add more words to narrow the
+The composer lists them after the command; type a letter or use the arrow keys
+to pick one, or press Enter to send without one. Add more words to narrow the
 search. If nothing qualifies, the task says so instead of making a change. Your
 automation setting decides how far it goes. Leave **Auto-merge** off for these
 tasks: review and confirm the change yourself before it merges, so the

@@ -227,10 +227,21 @@ export async function runComposer() {
       assert(input.selectionStart === 10 && document.activeElement === input && option() === null, 'Selection keeps caret after command');
       await type('@co');
       assert(view.host.querySelectorAll('[role="option"]').length === 1 && option()?.querySelector('svg') !== null
-        && option()?.textContent === '@contributeFind and fix one small, worthwhile problem', `${surface}: prefix suggests contribute with its icon and description`);
+        && option()?.textContent === '@contributeFind one small, worthwhile improvement', `${surface}: prefix suggests contribute with its icon and description`);
       await key('Enter');
-      assert(value() === '@contribute ' && option() === null && view.host.querySelector('.agt-backport-hint') === null && view.sends.length === 0,
-        'Choosing contribute leaves only the command, without its description');
+      const options = () => [...view.host.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+      assert(value() === '@contribute ' && view.host.querySelector('.agt-backport-hint') === null && view.sends.length === 0
+        && JSON.stringify(options().map(each => each.firstChild?.nextSibling?.textContent)) === '["bug","performance","cleanup","tests","docs"]'
+        && options().every(each => each.getAttribute('aria-selected') === 'false') && !input.hasAttribute('aria-activedescendant'),
+        'Choosing contribute offers the focus words with none chosen');
+      await key('ArrowUp');
+      assert(input.getAttribute('aria-activedescendant')?.endsWith('-docs') === true, 'ArrowUp from no focus chooses the last one');
+      await type('@contribute PER');
+      assert(options().length === 1 && option()?.getAttribute('aria-selected') === 'true', 'A typed letter picks the matching focus');
+      await key('Enter');
+      assert(value() === '@contribute performance ' && option() === null && view.sends.length === 0, 'Enter completes the focus without sending');
+      await type('@contribute flaky');
+      assert(option() === null, 'A word that names no focus closes the list');
       await type('@'); await key('Tab');
       assert(value() === '@backport ' && view.sends.length === 0, 'Tab completes bare @ without sending');
       await type('  @BACKP #1234');
@@ -264,6 +275,8 @@ export async function runComposer() {
       assert(value() === '@backport #1234' && view.sends.length === 0, 'Pill completes existing prefix without sending');
       await key('Enter');
       assert(view.sends.join() === '@backport #1234', 'Normal Enter sends the final request once');
+      await type('@contribute '); await key('Enter');
+      assert(view.sends.join() === '@backport #1234,@contribute ', 'Enter with no focus chosen sends the command');
       if (surface !== 'Home') continue;
       await type('@');
       assert(view.host.querySelectorAll('[role="option"]').length === 5, 'Bare @ lists backport, fix, review, contribute and artifacts on Home');
@@ -276,7 +289,7 @@ export async function runComposer() {
       option()?.click(); await settle();
       assert(value() === '@artifacts ', 'Click completes artifacts');
       await type('@artifacts What is a checkpoint?'); await key('Enter');
-      assert(view.asks.join() === 'What is a checkpoint?' && view.sends.join() === '@backport #1234' && value() === '', 'Enter asks Artifacts instead of creating a task');
+      assert(view.asks.join() === 'What is a checkpoint?' && view.sends.join() === '@backport #1234,@contribute ' && value() === '', 'Enter asks Artifacts instead of creating a task');
     } finally { view.close(); }
   }
   return [{ name: 'Backport discovery, completion and shortcuts on Home and Tasks only' }];

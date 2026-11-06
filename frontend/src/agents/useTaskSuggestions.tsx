@@ -12,7 +12,7 @@
  * limitations under the License.
  */
 import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject, type TextareaHTMLAttributes } from 'react';
-import { CircleDot, FileText, GitBranch, GitPullRequest, ListChecks } from 'lucide-react';
+import { BookOpen, Bug, CircleDot, Eraser, FileText, FlaskConical, Gauge, GitBranch, GitPullRequest, ListChecks } from 'lucide-react';
 import { errorMessage } from '../errorMessage';
 import type { ComposerSuggestionCommand, ComposerSuggestionDto } from '../types';
 import { referenceLabel } from './composerReference';
@@ -21,8 +21,16 @@ const COMMANDS = [
   { name: 'backport', detail: 'Backport a PR through related workspaces', icon: GitBranch },
   { name: 'fix', detail: 'Fix an open issue', icon: CircleDot },
   { name: 'review', detail: 'Review someone else’s open PR', icon: ListChecks },
-  { name: 'contribute', detail: 'Find and fix one small, worthwhile problem', icon: GitPullRequest },
+  { name: 'contribute', detail: 'Find one small, worthwhile improvement', icon: GitPullRequest },
   { name: 'artifacts', detail: 'Ask about this repository in Artifacts', icon: FileText },
+];
+/** The backend's TaskCommand.FOCUSES: the word after @contribute that narrows it to one kind of change. */
+const FOCUSES = [
+  { name: 'bug', detail: 'A problem users hit, with a regression test', icon: Bug },
+  { name: 'performance', detail: 'Faster or leaner, with before and after numbers', icon: Gauge },
+  { name: 'cleanup', detail: 'Simpler code, same behavior', icon: Eraser },
+  { name: 'tests', detail: 'A missing test or a flaky one', icon: FlaskConical },
+  { name: 'docs', detail: 'Docs or messages that disagree with the code', icon: BookOpen },
 ];
 const LIST_LABELS: Record<ComposerSuggestionCommand, string> = {
   BACKPORT: 'Merged pull requests', FIX: 'Open issues', REVIEW: 'Open pull requests from others',
@@ -32,6 +40,12 @@ const PAGE_SIZE = 20;
 type Cursor = { value: string; caret: number; end: number };
 type Search = { command: ComposerSuggestionCommand; query: string; start: number; end: number };
 
+/** The word being typed at the caret, as the slice of the draft it replaces when chosen. */
+function word(cursor: Cursor, typed: string): { query: string; start: number; end: number } {
+  const suffix = /\S$/.test(typed) ? cursor.value.slice(cursor.caret).match(/^\S*/)?.[0] ?? '' : '';
+  return { query: (typed + suffix).trim(), start: cursor.caret - typed.length, end: cursor.caret + suffix.length };
+}
+
 function itemSearch(cursor: Cursor, backport: boolean): Search | null {
   const prefix = cursor.value.slice(0, cursor.caret);
   const match = /^\s*@(backport|fix|review)[ \t]+(\S*)$/i.exec(prefix);
@@ -40,6 +54,11 @@ function itemSearch(cursor: Cursor, backport: boolean): Search | null {
   const query = (match[2] + suffix).trim();
   if (query.length > 500 || /^https?:\/\//i.test(query)) return null;
   return { command: match[1].toUpperCase() as ComposerSuggestionCommand, query, start: prefix.length - match[2].length, end: cursor.caret + suffix.length };
+}
+
+function focusSearch(cursor: Cursor): { query: string; start: number; end: number } | null {
+  const match = /^\s*@contribute[ \t]+(\S*)$/i.exec(cursor.value.slice(0, cursor.caret));
+  return match === null ? null : word(cursor, match[1]);
 }
 
 /** Command completion and repository suggestions share one caret and one keyboard selection. */
@@ -59,7 +78,8 @@ export function useTaskSuggestions({ draft, onDraftChange, workspaceId, inputRef
   const nextCaret = useRef<number | null>(null);
   const dismissed = useRef<Cursor | null>(null);
   const [cursor, setCursor] = useState<Cursor | null>(null);
-  const [chosen, setChosen] = useState(0);
+  // -1 is the list's default: its first row, or none while an optional focus waits for a typed letter or an arrow key.
+  const [chosen, setChosen] = useState(-1);
   const [loaded, setLoaded] = useState<{ key: string; items: ComposerSuggestionDto[]; error: string | null; page: number; more: boolean } | null>(null);
   const [loadingMore, setLoadingMore] = useState<string | null>(null);
   const offered = COMMANDS.filter(entry => entry.name === 'artifacts' ? artifacts : entry.name !== 'backport' || backport);
@@ -74,11 +94,15 @@ export function useTaskSuggestions({ draft, onDraftChange, workspaceId, inputRef
   const result = loaded?.key === key ? loaded : null;
   const items = result?.items ?? [];
   const more = result !== null && loadingMore === result.key;
-  const open = commands.length > 0 || search !== null;
-  const count = search === null ? commands.length : items.length;
-  const active = chosen < count ? chosen : 0;
-  const optionId = (index: number) => `${listId}-${search === null ? commands[index].name : items[index].number}`;
-  const activeId = count > 0 ? optionId(active) : undefined;
+  const focusWord = current === null || search !== null ? null : focusSearch(current);
+  // A word that names no focus closes the list, so Enter sends it as the user's own instructions.
+  const focuses = focusWord === null ? null : FOCUSES.filter(each => each.name.startsWith(focusWord.query.toLowerCase()));
+  const focusing = focuses !== null && focuses.length > 0 ? focuses : null;
+  const open = commands.length > 0 || search !== null || focusing !== null;
+  const count = search !== null ? items.length : focusing !== null ? focusing.length : commands.length;
+  const active = chosen >= 0 && chosen < count ? chosen : focusing !== null && focusWord?.query === '' ? -1 : 0;
+  const optionId = (index: number) => `${listId}-${search !== null ? items[index].number : focusing !== null ? focusing[index].name : commands[index].name}`;
+  const activeId = count > 0 && active >= 0 ? optionId(active) : undefined;
 
   useEffect(() => {
     if (key === null || command === undefined || query === undefined || !workspaceId) return;
@@ -108,7 +132,7 @@ export function useTaskSuggestions({ draft, onDraftChange, workspaceId, inputRef
     if (composing.current || (dismissed.current?.value === position.value && dismissed.current.caret === position.caret)) return;
     dismissed.current = null;
     setCursor(position);
-    if (position.value !== cursor?.value || position.caret !== cursor.caret) setChosen(0);
+    if (position.value !== cursor?.value || position.caret !== cursor.caret) setChosen(-1);
   };
   useLayoutEffect(() => {
     if (nextCaret.current === null || inputRef.current === null) return;
@@ -125,7 +149,12 @@ export function useTaskSuggestions({ draft, onDraftChange, workspaceId, inputRef
     setCursor(null);
   };
   const choose = (index: number) => {
-    if (search === null) {
+    if (focusing !== null && focusWord !== null) {
+      const prefix = draft.slice(0, focusWord.start) + focusing[index].name + ' ';
+      nextCaret.current = prefix.length;
+      onDraftChange(prefix + draft.slice(focusWord.end).trimStart());
+    }
+    else if (search === null) {
       const name = commands[index].name;
       nextCaret.current = name.length + 2;
       onDraftChange(`@${name} ${draft.replace(/^\s*@\S*\s*/, '')}`);
@@ -137,7 +166,7 @@ export function useTaskSuggestions({ draft, onDraftChange, workspaceId, inputRef
       onDraftChange(prefix + draft.slice(search.end).trimStart());
     }
     setCursor(null);
-    setChosen(0);
+    setChosen(-1);
   };
   const inputProps: TextareaHTMLAttributes<HTMLTextAreaElement> = {
     'aria-autocomplete': 'list',
@@ -157,6 +186,8 @@ export function useTaskSuggestions({ draft, onDraftChange, workspaceId, inputRef
         dismiss();
       }
       else if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey) {
+        // An optional focus nobody picked leaves Enter to send and Tab to move on.
+        if (active < 0) return;
         // While searching, Enter must never turn an unselected query into a task.
         if (event.key === 'Enter' || count > 0) event.preventDefault();
         if (count > 0) choose(active);
@@ -167,16 +198,19 @@ export function useTaskSuggestions({ draft, onDraftChange, workspaceId, inputRef
       }
       else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
-        if (count > 0) setChosen((active + (event.key === 'ArrowDown' ? 1 : count - 1)) % count);
+        if (count > 0) setChosen(active < 0 ? (event.key === 'ArrowDown' ? 0 : count - 1) : (active + (event.key === 'ArrowDown' ? 1 : count - 1)) % count);
       }
     },
   };
   return {
     inputProps,
     list: open && <div className={`agt-mentions${search === null ? '' : ' is-items'}`} id={listId} role="listbox"
-      aria-label={search === null ? 'Task suggestions' : LIST_LABELS[search.command]} aria-busy={search !== null && (result === null || more)}
+      aria-label={search !== null ? LIST_LABELS[search.command] : focusing !== null ? 'Contribution focus' : 'Task suggestions'} aria-busy={search !== null && (result === null || more)}
       onScroll={event => { const list = event.currentTarget; if (search !== null && list.scrollTop + list.clientHeight >= list.scrollHeight - 48) loadMore(); }}>
-      {search === null ? commands.map((entry, index) => <button key={entry.name} type="button" id={optionId(index)} role="option" aria-selected={index === active}
+      {focusing !== null ? focusing.map((entry, index) => <button key={entry.name} type="button" id={optionId(index)} role="option"
+        aria-selected={index === active} tabIndex={-1} onMouseDown={event => event.preventDefault()} onClick={() => choose(index)}>
+        <entry.icon size={15} strokeWidth={1.8} aria-hidden="true" />{entry.name}<span>{entry.detail}</span>
+      </button>) : search === null ? commands.map((entry, index) => <button key={entry.name} type="button" id={optionId(index)} role="option" aria-selected={index === active}
         tabIndex={-1} onMouseDown={event => event.preventDefault()} onClick={() => choose(index)}>
         <entry.icon size={15} strokeWidth={1.8} aria-hidden="true" />@{entry.name}<span>{entry.detail}</span>
       </button>) : <>
