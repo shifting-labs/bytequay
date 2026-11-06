@@ -98,6 +98,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.net.URI;
 import java.time.Clock;
@@ -137,6 +138,7 @@ public class CiAutofixService
 
     private static final int MAXIMUM_SUMMARY_CHARACTERS = 8 * 1024;
     private static final Duration RERUN_OBSERVATION_PERIOD = Duration.ofMinutes(2);
+    private static final Duration SERVER_ERROR_PERIOD = Duration.ofHours(1);
 
     private final CiAutofixStore store;
     private final WorkspaceHostingService hosting;
@@ -159,6 +161,7 @@ public class CiAutofixService
     private final CiAutofixPromptBuilder promptBuilder = new CiAutofixPromptBuilder();
     private final Striped<Lock> advanceLocks = Striped.lock(64);
     private final ConcurrentMap<CiAutofixRunId, InheritedFailures> inheritedFailures = new ConcurrentHashMap<>();
+    private final ConcurrentMap<CiAutofixRunId, Instant> serverErrorsSince = new ConcurrentHashMap<>();
 
     CiAutofixService(
             CiAutofixStore store,
@@ -753,13 +756,46 @@ public class CiAutofixService
                 return stopDevelopmentRun(run, FinishReason.CANCELLED, "The development task closed; local and remote results were preserved");
             }
             // A finished run writes nothing, so it closes its own task even after the development task revoked it.
-            CiAutofixRun result = run.status() == Status.FINISHED ? advanceLocked(runId) : ownership.execute(run, () -> advanceLocked(runId));
+            CiAutofixRun result = run.status() == Status.FINISHED ? advanceLocked(runId) : ownership.execute(run, () -> advanceOrPause(runId));
             if (result.status() == Status.FINISHED) {
                 inheritedFailures.remove(result.id());
+                serverErrorsSince.remove(result.id());
             }
             ownership.forgetFinished(result);
             return result;
         });
+    }
+
+    /**
+     * GitHub can fail one read on every try, such as a jobs page it cannot render, and a run that only watches CI would retry it
+     * forever without telling anyone. Server errors for an hour pause it; connection failures do not count, since being offline
+     * is not the host's answer. A pending push, turn, or rebase keeps retrying, because pausing would drop or orphan it.
+     */
+    private CiAutofixRun advanceOrPause(CiAutofixRunId runId)
+    {
+        try {
+            CiAutofixRun result = advanceLocked(runId);
+            serverErrorsSince.remove(runId);
+            return result;
+        }
+        catch (ResponseStatusException failure) {
+            Instant now = Instant.now(clock);
+            CiAutofixRun run = get(runId);
+            if (!failure.getStatusCode().is5xxServerError()
+                    || run.status() != Status.ACTIVE
+                    || run.pushJournal().isPresent()
+                    || run.currentTurnId().isPresent()
+                    || run.currentRebaseId().isPresent()) {
+                serverErrorsSince.remove(runId);
+                throw failure;
+            }
+            if (now.isBefore(serverErrorsSince.computeIfAbsent(runId, _ -> now).plus(SERVER_ERROR_PERIOD))) {
+                throw failure;
+            }
+            serverErrorsSince.remove(runId);
+            CiAutofixRun watching = run.rerunJournal().isPresent() ? run.clearRerunJournal(now) : run;
+            return pause(watching, PauseReason.ERROR, failureSummary("GitHub returned server errors for an hour, so CI Autofix paused", failure), now);
+        }
     }
 
     private CiAutofixRun advanceLocked(CiAutofixRunId runId)

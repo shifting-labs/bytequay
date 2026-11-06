@@ -119,6 +119,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.net.URI;
@@ -1336,6 +1339,40 @@ class TestCiAutofixService
         run = service(store, Clock.fixed(NOW.plus(Duration.ofMinutes(3)), ZoneOffset.UTC)).advance(run.id());
         assertThat(run.rerunJournal()).isEmpty();
         assertThat(run.attempts()).singleElement().satisfies(attempt -> assertThat(attempt.observedCiResult()).isEqualTo(CiResult.FAILED));
+    }
+
+    @Test
+    void rerunObservationPausesAfterAnHourOfServerErrorsButNotWhileOffline()
+    {
+        AtomicReference<Instant> now = new AtomicReference<>(NOW);
+        Clock clock = mock(Clock.class);
+        when(clock.instant()).thenAnswer(_ -> now.get());
+        service = service(store, clock);
+        CiAutofixRun run = service.start(startCommand("rerun-server-errors"));
+        service.requestRerun(taskId, turnId, 200, "The runner lost its network connection before tests started");
+        when(turnService.get(turnId)).thenReturn(terminalTurn(TurnState.COMPLETED, Optional.empty()));
+        run = service.advance(run.id());
+        when(gitService.inspectAgentResult(any())).thenReturn(CiGitInspection.noChange());
+        when(ci.rerunFailedJobs(any(), anyInt(), any())).thenReturn(new CiRerunResult(CiRerunResult.Outcome.ACCEPTED, "accepted"));
+        CiAutofixRunId id = service.advance(run.id()).id();
+        assertThat(service.get(id).rerunJournal()).isPresent();
+
+        when(ci.inspect(any(), anyInt())).thenThrow(new ResourceAccessException("Operation timed out"));
+        now.set(NOW.plus(Duration.ofHours(2)));
+        assertThatThrownBy(() -> service.advance(id)).isInstanceOf(ResourceAccessException.class);
+
+        // GitHub can answer one jobs page with a 502 on every try, so only the pause ends the retries.
+        doThrow(new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Server Error")).when(ci).inspect(any(), anyInt());
+        assertThatThrownBy(() -> service.advance(id)).isInstanceOf(ResponseStatusException.class);
+        now.set(NOW.plus(Duration.ofHours(3)).minusSeconds(1));
+        assertThatThrownBy(() -> service.advance(id)).isInstanceOf(ResponseStatusException.class);
+        now.set(NOW.plus(Duration.ofHours(3)));
+        run = service.advance(id);
+
+        assertThat(run.status()).isEqualTo(Status.PAUSED);
+        assertThat(run.pauseReason()).contains(PauseReason.ERROR);
+        assertThat(run.rerunJournal()).isEmpty();
+        assertThat(run.summary()).hasValueSatisfying(summary -> assertThat(summary).contains("server errors for an hour", "Server Error"));
     }
 
     @ParameterizedTest
