@@ -1249,16 +1249,21 @@ async function keepsRuleReceiptsSeparateFromCompletion(): Promise<void> {
   finally { view.dispose(); }
 }
 
-async function opensRulesWithoutSendingAMessage(): Promise<void> {
+async function sendsRulesToTheAssistant(): Promise<void> {
+  window.location.hash = '';
   const view = mount(VIEW, 0, []);
   try {
     await settle();
-    enter(type(view.host, '  @rules  '));
+    enter(type(view.host, '@rules mostly my reviews'));
     await settle();
-    assert(window.location.hash === settingsRoute('rules') && view.calls.sent.length === 0, 'The exact command opens Rules without asking a model');
+    assert(view.calls.sent.length === 1 && view.calls.sent[0][1] === '@rules mostly my reviews' && window.location.hash === '',
+      'The command and the words after it go to the Assistant, which writes the rules');
   }
-  finally { window.location.hash = ''; view.dispose(); }
+  finally { view.dispose(); }
   const fixture = createFixtureRoot();
+  const requests: AssistantRequest[] = [];
+  const listen = (event: Event) => requests.push((event as CustomEvent<AssistantRequest>).detail);
+  window.addEventListener('bytequay:assistant-open', listen);
   try {
     flushSync(() => fixture.root.render(<HomeComposer work={[]} />));
     await settle();
@@ -1266,9 +1271,9 @@ async function opensRulesWithoutSendingAMessage(): Promise<void> {
     changeInput(input, '@rules');
     enter(input);
     await settle();
-    assert(window.location.hash === settingsRoute('rules') && input.value === '', 'Home opens the same Rules page and clears the command');
+    assert(requests.length === 1 && requests[0].message === '@rules' && input.value === '' && window.location.hash === '', 'Home sends the command like any message');
   }
-  finally { window.location.hash = ''; fixture.dispose(); }
+  finally { window.removeEventListener('bytequay:assistant-open', listen); fixture.dispose(); }
 }
 
 export async function run(): Promise<{ name: string; error?: string }[]> {
@@ -1282,7 +1287,7 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
     ['acts on a pull request from its card', actsOnAPullRequestFromItsCard], ['asks to sign in when the model is not ready', asksToSignInWhenTheModelIsNotReady],
     ['keeps the set-up box whole with chat off', keepsTheSetUpBoxWholeWithChatOff], ['keeps a conversation for each topic', keepsAConversationForEachTopic],
     ['reports what its tasks raised', reportsWhatItsTasksRaised], ['shows what a task reports while open', showsWhatATaskReportsWhileOpen],
-    ['stops a turn that looks stuck', stopsATurnThatLooksStuck], ['keeps rule receipts separate from completion', keepsRuleReceiptsSeparateFromCompletion], ['opens Rules without sending a message', opensRulesWithoutSendingAMessage]]);
+    ['stops a turn that looks stuck', stopsATurnThatLooksStuck], ['keeps rule receipts separate from completion', keepsRuleReceiptsSeparateFromCompletion], ['sends @rules to the Assistant', sendsRulesToTheAssistant]]);
 }
 
 const receiptsView = (): AssistantViewDto => {

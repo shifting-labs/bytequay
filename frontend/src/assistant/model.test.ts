@@ -18,7 +18,7 @@ import type { AgendaTargetDto, AssistantItemDto, AssistantReceiptDto, AssistantR
 import { workspaceAgentTaskRoute, workspaceIssueRoute, workspacePullRequestRoute, workspaceReviewTaskRoute, workspaceRoute } from '../workspaces/model';
 import { settingsRoute } from '../settings/routes';
 import {
-  arrivedOpen, createdDrafts, dayLabel, decisionOrder, endedTurns, inAnswerOrder, isRulesCommand, linkRefs, localDay, pageRoute, reportActivity, refFromHref, refLabel, rowState, rowTitle, screenRef,
+  answeredRules, arrivedOpen, createdDrafts, dayLabel, decisionOrder, endedTurns, inAnswerOrder, linkRefs, localDay, pageRoute, reportActivity, refFromHref, refLabel, rowState, rowTitle, screenRef,
   soonestDeadline, takesSuggestion, timelineDays, waitingCards,
 } from './model';
 
@@ -104,12 +104,6 @@ describe('waitingCards', () => {
     ], [task('t1', 'RUNNING', 15)]);
     expect(cards.map(card => card.key)).toEqual(['review:new', 'approval:q', 'running:t1']);
   });
-});
-
-it('recognizes only the exact rules command', () => {
-  expect(isRulesCommand('  @rules  ')).toBe(true);
-  expect(isRulesCommand('Tell me about @rules')).toBe(false);
-  expect(isRulesCommand('@rules review')).toBe(false);
 });
 
 describe('takesSuggestion', () => {
@@ -286,5 +280,16 @@ describe('createdDrafts', () => {
       receipt: { operation, outcome: 'DONE', detail: null, target: work === null ? null : { ...target, kind: 'WORK', id: work }, page: null, turnId: null, fix: null, words: null },
     });
     expect([...createdDrafts([receipt('c1', 'CREATE_EPIC', 'w1'), receipt('c2', 'CREATE_WORK_ITEM', 'w2'), receipt('c3', 'CREATE_EPIC', null)])]).toEqual(['w1']);
+  });
+});
+
+describe('answeredRules', () => {
+  it('names each offered rule a receipt answered, saved or not', () => {
+    const item = (id: string, kind: AssistantItemDto['kind'], key: string | null): AssistantItemDto => ({
+      id, conversationId: 'c1', at: '2026-11-06T07:00:00Z', kind, text: id, targets: {}, notReady: false, list: null, draft: null, report: null, key,
+      receipt: kind === 'RECEIPT' ? { operation: 'SAVE_RULE', outcome: 'DONE', detail: null, target: null, page: 'settings/rules', turnId: null, fix: null, words: null } : null,
+    });
+    expect([...answeredRules([item('o1', 'RULE', null), item('r1', 'RECEIPT', 'rule-offer:o1'), item('u1', 'USER', 'rule-offer:o2'), item('r2', 'RECEIPT', 'other')])])
+      .toEqual(['o1']);
   });
 });

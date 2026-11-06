@@ -251,8 +251,8 @@ cleared. A permission receipt says **Allowed**, **Denied**, or **Answered**;
 it does not mean the work is completed. Each work card updates in place. **Activity**
 keeps earlier reports, evidence, rule receipts, and why the result stayed quiet or
 needed attention. **Ask about this** opens a private, read-only discussion of the
-saved result; it does not restart the task. Type **@rules** on its own, or choose **Rules**
-in the composer, to inspect and activate your rules.
+saved result; it does not restart the task. Choose **Rules** in the composer to inspect
+and activate your rules, or type **@rules** to have the Assistant suggest new ones.
 
 When an active rule finishes a private PR review, the Assistant reads its saved
 findings in the background and decides whether you need an interruption.
@@ -637,13 +637,21 @@ A rule names something that happens, such as a review requested from you, and
 the work ByteQuay could do then. A new rule only watches: it records what it
 would have done, and whether you then did that work yourself.
 
-1. Type **@rules** on its own in the Assistant, choose its **Rules** button,
-   or open **Settings → Agents → Rules**. Choose **Paste a rule**.
+1. Choose **Rules** in the Assistant's composer, or open **Settings → Agents →
+   Rules**. Choose **Paste a rule**.
 2. Between two `---` lines, name the event (`when`), the work (`does`), and
    what you do when you agree (`agrees-when`). Write the instructions below
    them. The box shows an example.
 3. Choose **Check rule** to see what it reads, then **Save rule**. It starts in
    **Observe**.
+
+To have the Assistant write rules for you, type **@rules** in the Assistant,
+alone or with what to look at, such as `@rules my reviews`. It reads the last
+30 days of your work that ByteQuay keeps on this Mac: reviews, tasks you
+started, and merged pull requests with their backports. It offers up to three
+rules, each on a card with the data behind it. Change the rule on its card if
+you want, then choose **Save rule** or **Not now**. A saved rule starts in
+**Observe**.
 
 A rule’s row shows its record, such as **12 runs · 83% agree**, and **Edit**
 lists each run. A run agrees when you review the pull request, start a task,

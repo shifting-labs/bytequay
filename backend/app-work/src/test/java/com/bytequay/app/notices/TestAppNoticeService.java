@@ -340,7 +340,7 @@ class TestAppNoticeService
         AssistantReport report = new AssistantReport(AssistantReport.State.RESULT_READY, notice.id(),
                 AgendaTarget.of(AgendaTarget.Kind.TASK, "workspace", task.id().toString())).assessed("The fix passed its observed checks.");
         AssistantItem item = new AssistantItem("assessment", "conversation", NOW, AssistantItem.Kind.REPORT, source, ImmutableList.of(), Optional.empty(),
-                Optional.empty(), ImmutableMap.of(), false, Optional.empty(), Optional.empty(), Optional.empty(), Optional.of(report));
+                Optional.empty(), ImmutableMap.of(), false, Optional.empty(), Optional.empty(), Optional.empty(), Optional.of(report), Optional.empty());
         AssistantAssessment job = new AssistantAssessment(item.id(), item.conversationId(), task.id().toString(), "fingerprint", item, "Fix recovery", true, false,
                 AssistantAssessment.State.QUEUED);
         when(follows.result(task.id().toString(), notice.id(), source)).thenReturn(Optional.of(job));

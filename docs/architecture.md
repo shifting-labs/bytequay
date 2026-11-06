@@ -569,7 +569,10 @@ The panel names a new conversation itself, so a message sent twice still begins
 it once. A session has no shell, file or web tools, only
 `assistant_context`, which reads the agenda's stored data plus what runs now,
 what is on screen and what a search of stored items finds, `assistant_act`, and
-`assistant_show`, which changes no data. A list it shows holds only references
+`assistant_show`, which changes no data. A conversation in which the user typed
+`@rules` also carries `assistant_rules`: it reads the user's own stored work of
+the last 30 days and offers a rule file the rule parser accepts as a card, and
+only the user's Save stores the rule, in Observe. A list it shows holds only references
 the user could see, on screen or handed out in that conversation, and the panel
 draws each row from the app's own stores, so titles stay data. It opens a page
 or such an item only on the user's own words, checked as for an action, and

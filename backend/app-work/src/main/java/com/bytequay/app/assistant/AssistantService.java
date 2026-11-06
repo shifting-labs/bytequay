@@ -26,11 +26,13 @@ import com.bytequay.agent.spi.AgentSessionRef;
 import com.bytequay.agent.spi.AgentTurnResult;
 import com.bytequay.agent.spi.AgentUnavailableException;
 import com.bytequay.agent.spi.ProviderApprovalDecision;
+import com.bytequay.agent.spi.ReviewTool;
 import com.bytequay.agent.spi.RunningTurn;
 import com.bytequay.agent.spi.SessionAccess;
 import com.bytequay.app.agent.runtime.AgentProperties;
 import com.bytequay.app.service.rules.AgentRule;
 import com.bytequay.app.service.rules.AgentRuleService;
+import com.bytequay.app.service.rules.RuleText;
 import com.bytequay.app.service.settings.AgentModelSetting;
 import com.bytequay.app.service.settings.SetupSettingsService;
 import com.bytequay.core.discussion.DiscussionSession;
@@ -81,9 +83,10 @@ import static java.util.Objects.requireNonNull;
 /**
  * The assistant panel's conversations, each message answered in the background by a tools-only session with three tools,
  * {@code assistant_context} to read, {@code assistant_act} to act on that message's words, and {@code assistant_show} to show what it
- * found. The panel starts a conversation for each new topic and may go back to an earlier one. A conversation resumes its provider
- * conversation from its own folder; a session that is new, on another agent, or lost by its provider opens with the conversation's
- * last items instead. A task the conversation started or sent words to reports back into it.
+ * found, and a fourth, {@code assistant_rules}, once the user asks the conversation for rules with {@code @rules}. The panel starts a
+ * conversation for each new topic and may go back to an earlier one. A conversation resumes its provider conversation from its own
+ * folder; a session that is new, on another agent, or lost by its provider opens with the conversation's last items instead. A task the
+ * conversation started or sent words to reports back into it.
  */
 @Service
 public class AssistantService
@@ -140,6 +143,7 @@ public class AssistantService
     private final AssistantWork work;
     private final AssistantFollowing following;
     private final AgentRuleService rules;
+    private final AssistantRules ruleOffers;
     private final AgentDriverRegistry drivers;
     private final AgentResourceService resources;
     private final ObjectMapper mapper;
@@ -151,8 +155,8 @@ public class AssistantService
     private final Map<String, Run> running = new ConcurrentHashMap<>();
 
     AssistantService(AssistantStore store, AssistantReader reader, AssistantActions actions, AssistantShow show, AssistantRows rows, AssistantWork work,
-            AssistantFollowing following, AgentRuleService rules, SetupSettingsService setup, AgentDriverRegistry drivers, AgentResourceService resources,
-            AgentProperties properties, ObjectMapper mapper,
+            AssistantFollowing following, AgentRuleService rules, AssistantRules ruleOffers, SetupSettingsService setup, AgentDriverRegistry drivers,
+            AgentResourceService resources, AgentProperties properties, ObjectMapper mapper,
             Clock clock, @Qualifier(IO_EXECUTOR) ExecutorService executor)
     {
         this.store = requireNonNull(store, "store is null");
@@ -163,6 +167,7 @@ public class AssistantService
         this.work = requireNonNull(work, "work is null");
         this.following = requireNonNull(following, "following is null");
         this.rules = requireNonNull(rules, "rules is null");
+        this.ruleOffers = requireNonNull(ruleOffers, "ruleOffers is null");
         this.setup = requireNonNull(setup, "setup is null");
         this.drivers = requireNonNull(drivers, "drivers is null");
         this.resources = requireNonNull(resources, "resources is null");
@@ -285,6 +290,35 @@ public class AssistantService
         if (!kept) {
             append(work.drafted(draft, conversationId, clock.instant()));
         }
+    }
+
+    /**
+     * Keeps the user's answer on a rule the assistant offered, once: the rule saved in Observe, as offered or as they edited it, or left
+     * unsaved.
+     *
+     * @param text the rule to save, or empty for Not now
+     * @throws IllegalArgumentException when the item is not one of the conversation's offered rules, or the text is not a rule
+     */
+    // Under append's lock, so two clicks recorded at once still save one rule.
+    public synchronized void ruled(String conversationId, String itemId, Optional<String> text)
+    {
+        List<AssistantItem> items = store.items(conversationId);
+        String offered = items.stream().filter(item -> item.id().equals(itemId)).findFirst().flatMap(AssistantItem::rule)
+                .orElseThrow(() -> new IllegalArgumentException("That is not one of this conversation's offered rules"));
+        String key = AssistantRules.ANSWER + itemId;
+        if (items.stream().anyMatch(item -> item.key().filter(key::equals).isPresent())) {
+            return;
+        }
+        if (text.isEmpty()) {
+            append(AssistantItem.receipt(conversationId, clock.instant(), "Not saved · “" + AssistantRules.name(offered) + "”",
+                    AssistantReceipt.refused(AssistantReceipt.Operation.SAVE_RULE, Optional.empty()), key));
+            return;
+        }
+        String name = RuleText.parse(text.orElseThrow()).name();
+        rules.add(text.orElseThrow());
+        append(AssistantItem.receipt(conversationId, clock.instant(), "Saved rule “" + name + "”", new AssistantReceipt(AssistantReceipt.Operation.SAVE_RULE,
+                AssistantReceipt.Outcome.DONE, Optional.of("Starts in Observe"), Optional.empty(), Optional.of("settings/rules"), Optional.empty(), Optional.empty(),
+                Optional.empty()), key));
     }
 
     /**
@@ -549,12 +583,16 @@ public class AssistantService
             throw new AgentConflictException("The assistant reply was stopped");
         }
         AgentLaneId lane = new AgentLaneId(model.configId());
+        ImmutableList.Builder<ReviewTool> tools = ImmutableList.<ReviewTool>builder()
+                .add(context.tool(), actions.tool(message, context, this::append), show.tool(message, context, this::append));
+        if (AssistantRules.asked(store.items(message.conversationId()))) {
+            tools.add(ruleOffers.tool(message, this::append));
+        }
         return OneShotSession.run(resources, drivers.require(lane), (scratchId, scratch) -> new AgentSessionContext(
                         scratchId.toString(), folder(message.conversationId()), scratch.runtimeDirectory(), scratch.providerDirectory(), AgentPermissionPolicy.AUTO,
                         resume.map(value -> new AgentSessionRef(lane, value.contractVersion(), value.providerValue())),
                         (request, timeout) -> CompletableFuture.completedFuture(ProviderApprovalDecision.deny()), Optional.of(model.model()), model.effort(),
-                        SessionAccess.TOOLS_ONLY, Optional.empty(), INSTRUCTIONS, Optional.empty(),
-                        ImmutableList.of(context.tool(), actions.tool(message, context, this::append), show.tool(message, context, this::append))),
+                        SessionAccess.TOOLS_ONLY, Optional.empty(), INSTRUCTIONS, Optional.empty(), tools.build()),
                 prompt, MAXIMUM_RUNTIME, run::started);
     }
 
@@ -593,6 +631,9 @@ public class AssistantService
         List<String> cards = reader.cards(message.visible());
         prompt.append("Cards on screen:").append(cards.isEmpty() ? " none" : "").append('\n');
         cards.forEach(card -> prompt.append("- ").append(card).append('\n'));
+        if (AssistantRules.command(message.text())) {
+            prompt.append('\n').append(AssistantRules.BRIEF).append('\n');
+        }
         return new Prompt(prompt.append("\nThe user's message:\n").append(message.text()).toString(), consumed);
     }
 
@@ -606,8 +647,10 @@ public class AssistantService
             case LIST -> "you listed";
             case DRAFT -> "you drafted";
             case REPORT -> "task";
+            case RULE -> "you offered a rule";
         };
-        String text = item.list().map(list -> item.text() + ": " + String.join(", ", list.refs())).orElse(item.text());
+        String text = item.list().map(list -> item.text() + ": " + String.join(", ", list.refs()))
+                .or(() -> item.rule().map(rule -> AssistantRules.name(rule) + ": " + item.text())).orElse(item.text());
         text += item.report().flatMap(report -> report.assessment()).map(assessment -> " · " + assessment).orElse("");
         return "[" + who + " " + CLOCK.format(item.at().atZone(ZoneId.systemDefault())) + "] " + clip(text, SEED_TEXT);
     }

@@ -40,8 +40,8 @@ public record ReviewTool(String name, String description, Map<String, Object> in
     private static final Set<String> SESSION_CONTEXT_TOOLS = ImmutableSet.of("review_get_context", "agenda_context");
     /** The writes a read-only session may carry, kept from its children: the artifact writer's offer of a page, and the page. */
     private static final Set<String> SESSION_SAVE_TOOLS = ImmutableSet.of("artifact_offer", "artifact_save");
-    /** The tools a tools-only session may carry: the assistant's read, its action, and what it shows the user. */
-    private static final Set<String> ASSISTANT_TOOLS = ImmutableSet.of("assistant_context", "assistant_act", "assistant_show");
+    /** The tools a tools-only session may carry: the assistant's read, its action, what it shows the user, and the rules it offers. */
+    private static final Set<String> ASSISTANT_TOOLS = ImmutableSet.of("assistant_context", "assistant_act", "assistant_show", "assistant_rules");
     private static final Set<String> CONTEXT_TOOLS = ImmutableSet.of(
             "repository_context_read",
             "repository_context_spec_search",
@@ -54,7 +54,8 @@ public record ReviewTool(String name, String description, Map<String, Object> in
             "agenda_context",
             "assistant_context",
             "assistant_act",
-            "assistant_show");
+            "assistant_show",
+            "assistant_rules");
 
     /** A tool only the root agent may call, which is every tool that saves or changes review state. */
     public ReviewTool(String name, String description, Map<String, Object> inputSchema, Function<String, String> call)

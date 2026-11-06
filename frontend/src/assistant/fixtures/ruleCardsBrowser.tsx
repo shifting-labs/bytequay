@@ -15,13 +15,27 @@ import { flushSync } from 'react-dom';
 import { createFixtureRoot } from '../../fixtures/reactFixture';
 import { assert, button, changeInput, element, runScenarios, settle } from '../../fixtures/harness';
 import type { AppNotice } from '../../notices/contracts';
-import type { AssistantReportDto, Bridge } from '../../types';
+import type { AssistantItemDto, AssistantReportDto, Bridge } from '../../types';
 import { DurableReportCard, NoticeCard, ResultCard } from '../Cards';
+import RuleOfferCard from '../RuleOfferCard';
 import type { TaskDiscussionDto } from '../../agents/discussions/contracts';
 import '../../index.css';
 import '../../css/assistant.css';
 
 const RULE = '6f1c9a52-3d0e-4b8a-9a1d-2b7c4e5f6a70';
+
+const STORAGE = `---
+name: Review pull requests that touch storage
+when: review-requested
+repositories: [acme/warehouse]
+paths: [src/storage/**]
+does: review
+agrees-when: reviewed
+---
+Check the storage changes for bugs and missing tests.`;
+
+const OFFER: AssistantItemDto = { id: 'offer-1', conversationId: 'c1', at: '2026-11-06T09:00:00Z', kind: 'RULE', targets: {}, notReady: false,
+  text: 'You reviewed 9 of the 11 pull requests that touched src/storage', receipt: null, list: null, draft: null, report: null, key: null, rule: STORAGE };
 
 const MOVE_UP: AppNotice = { delivery: 'INTERRUPT', deliveryReason: 'A decision needs your attention.', report: null,
   id: `rule:${RULE}:1793001600000`, kind: 'QUESTION', taskId: `rule:${RULE}`, workspaceId: 'rules', turnId: null, reviewId: null,
@@ -62,6 +76,45 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
     dismissAgentRuleRun: async (id: string, key: string) => { calls.push(`dismiss ${id} ${key}`); return []; },
   } as unknown as Bridge;
   return runScenarios([
+    ['saves an offered rule as the user changed it, says why a save was refused, or leaves it unsaved', async () => {
+      const fixture = createFixtureRoot();
+      const answers: unknown[][] = [];
+      let refuse = true;
+      let answered = 0;
+      // Read through a function: an assertion on the count itself would narrow it to the number it checked.
+      const answeredCount = () => answered;
+      const previous = window.bridge;
+      window.bridge = { ...previous,
+        answerAssistantRule: async (...args: unknown[]) => {
+          answers.push(args);
+          if (refuse) {
+            refuse = false;
+            throw new Error('At most 50 rules can be saved');
+          }
+        },
+      } as Bridge;
+      const show = (done: boolean) => flushSync(() => fixture.root.render(<RuleOfferCard item={OFFER} answered={done} onAnswered={() => { answered++; }} />));
+      try {
+        show(false);
+        const text = fixture.host.textContent ?? '';
+        assert(text.includes('Review pull requests that touch storage') && text.includes('You reviewed 9 of the 11') && text.includes('Starts in Observe'),
+          `The card names the rule and the data behind it: ${text}`);
+        const box = element<HTMLTextAreaElement>('textarea', fixture.host);
+        assert(box.value === STORAGE, 'The whole rule file shows, to change in place');
+        const edited = STORAGE.replace('bugs and missing tests', 'bugs');
+        changeInput(box, edited); await settle();
+        button('Save rule', fixture.host).click(); await settle();
+        const alert = fixture.host.querySelector('[role="alert"]')?.textContent ?? '';
+        assert(alert.includes('At most 50 rules') && answeredCount() === 0, `A refused save says why and keeps the card: ${alert}`);
+        button('Save rule', fixture.host).click(); await settle();
+        assert(JSON.stringify(answers[1]) === JSON.stringify(['c1', 'offer-1', edited]) && answeredCount() === 1, `Save sends the rule as changed: ${JSON.stringify(answers)}`);
+        button('Not now', fixture.host).click(); await settle();
+        assert(JSON.stringify(answers[2]) === JSON.stringify(['c1', 'offer-1', null]) && answeredCount() === 2, 'Not now saves nothing');
+        show(true);
+        assert(fixture.host.querySelector('form') === null, 'An answered offer leaves only its receipt');
+      }
+      finally { fixture.dispose(); window.bridge = previous; }
+    }],
     ['asks privately about the exact result without starting or replying to the task', async () => {
       const fixture = createFixtureRoot();
       const asked: unknown[][] = [];

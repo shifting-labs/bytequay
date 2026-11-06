@@ -1682,6 +1682,8 @@ function registerIpc(): void {
     backendJson(`${backendBase()}/api/assistant/answers`, jsonInit('POST', { conversationId, approvalId }, agentHeaders())));
   ipcMain.handle('assistant:drafted', (_event, conversationId: unknown, itemId: unknown) =>
     backendJson(`${backendBase()}/api/assistant/drafts`, jsonInit('POST', { conversationId, itemId }, agentHeaders())));
+  ipcMain.handle('assistant:rule', (_event, conversationId: unknown, itemId: unknown, text: unknown) =>
+    backendJson(`${backendBase()}/api/assistant/rules`, jsonInit('POST', { conversationId, itemId, text }, agentHeaders())));
   ipcMain.handle('assistant:result-discussion', (_event, target: unknown, sourceTurnId: unknown, question: unknown) =>
     backendJson(`${backendBase()}/api/assistant/result-discussions`, jsonInit('POST', { target, sourceTurnId, question }, agentHeaders())));
   ipcMain.handle('assistant:reply', (_event, conversationId: unknown, itemId: unknown, text: unknown, key: unknown) =>

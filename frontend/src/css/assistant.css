@@ -1163,3 +1163,8 @@
 .assistant-result-discussion > .assistant-link { margin-bottom: 6px; }
 .assistant-result-question { margin-top: 8px; }
 .assistant-result-discussion .agt-disc { margin-top: 8px; }
+
+/* A rule the assistant offered: the data behind it, then its file in code type, to change before saving. */
+.assistant-rule__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.assistant-rule__why { margin: 10px 12px 0; color: var(--fg-muted); font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.assistant-draft__body.assistant-rule__text { min-height: 150px; max-height: 50vh; field-sizing: content; font: 12px/1.6 var(--font-mono); }

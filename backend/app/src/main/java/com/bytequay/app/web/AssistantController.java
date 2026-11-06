@@ -135,6 +135,17 @@ public class AssistantController
         assistant.drafted(request.conversationId(), request.itemId());
     }
 
+    /** What the user answered on a rule the assistant offered: Save, with the rule as offered or edited, or Not now. */
+    @PostMapping("/assistant/rules")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void ruled(@RequestBody RuledRequest request)
+    {
+        checkArgument(request != null, "itemId is required");
+        checkConversation(request.conversationId());
+        checkText(request.itemId(), "itemId", REF);
+        assistant.ruled(request.conversationId(), request.itemId(), request.text());
+    }
+
     @GetMapping("/settings/assistant")
     public AssistantPermissions permissions()
     {
@@ -171,6 +182,11 @@ public class AssistantController
     public record AnsweredRequest(String conversationId, String approvalId) {}
 
     public record DraftedRequest(String conversationId, String itemId) {}
+
+    /**
+     * @param text the rule to save, as offered or as the user edited it; absent for Not now
+     */
+    public record RuledRequest(String conversationId, String itemId, Optional<String> text) {}
 
     /**
      * @param itemId the report replied on

@@ -54,7 +54,7 @@ public record AssistantAssessment(String id, Optional<String> conversationId, St
     public AssistantItem item()
     {
         return new AssistantItem(id, conversationId.orElseThrow(), at, AssistantItem.Kind.REPORT, sourceLine, ImmutableList.of(), Optional.empty(), Optional.empty(),
-                ImmutableMap.of(), false, Optional.empty(), Optional.empty(), Optional.empty(), Optional.of(report));
+                ImmutableMap.of(), false, Optional.empty(), Optional.empty(), Optional.empty(), Optional.of(report), Optional.empty());
     }
 
     public AssistantAssessment ended(State result)

@@ -132,6 +132,7 @@ class TestAssistantConversation
     private final AssistantWork work = mock(AssistantWork.class);
     private final AssistantFollowing following = mock(AssistantFollowing.class);
     private final AgentRuleService rules = mock(AgentRuleService.class);
+    private final AssistantRules ruleOffers = mock(AssistantRules.class);
     private final ModelSettingsService models = mock(ModelSettingsService.class);
     private final AgentDriverRegistry drivers = mock(AgentDriverRegistry.class);
     private final AgentDriver driver = mock(AgentDriver.class);
@@ -168,6 +169,7 @@ class TestAssistantConversation
                 .collect(toImmutableList()));
         when(actions.tool(any(), any(), any())).thenReturn(new ReviewTool("assistant_act", "Act", ImmutableMap.of("type", "object"), arguments -> "{}", false));
         when(show.tool(any(), any(), any())).thenReturn(new ReviewTool("assistant_show", "Show", ImmutableMap.of("type", "object"), arguments -> "{}", false));
+        when(ruleOffers.tool(any(), any())).thenReturn(new ReviewTool("assistant_rules", "Rules", ImmutableMap.of("type", "object"), arguments -> "{}", false));
         when(driver.open(any(), any())).thenAnswer(call -> {
             AgentSessionContext context = call.getArgument(0);
             opened.add(context);
@@ -206,7 +208,7 @@ class TestAssistantConversation
         InMemoryAppSettingsStore settings = new InMemoryAppSettingsStore();
         settings.put(CredentialService.GITHUB_ACCOUNT_SETTING, "7");
         setup = new SetupSettingsService(settings, mock(AppSettingsService.class), models, drivers, AgendaFixtures.mapper());
-        assistant = new AssistantService(store, reader, actions, show, rows, work, following, rules, setup, drivers, resources,
+        assistant = new AssistantService(store, reader, actions, show, rows, work, following, rules, ruleOffers, setup, drivers, resources,
                 new AgentProperties(runtime, Duration.ZERO, "", "codex", "0.159.3", temporaryDirectory.resolve("codex-home"), "claude", temporaryDirectory.resolve("claude-home")),
                 AgendaFixtures.mapper(), clock, executor);
     }
@@ -568,6 +570,67 @@ class TestAssistantConversation
         assertThatThrownBy(() -> assistant.drafted(C1, store.items(C1).getFirst().id())).isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("That is not one of this conversation's drafts");
         assertThatThrownBy(() -> assistant.drafted(C2, drafted.id())).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void anAtRulesMessageBringsItsBriefAndTheRulesToolForTheRestOfItsConversation()
+    {
+        assistant.send(C1, "what's waiting on me?", ImmutableList.of(), Optional.empty(), "key-1");
+        waitForReply();
+        assistant.send(C1, "@rules mostly my reviews", ImmutableList.of(), Optional.empty(), "key-2");
+        waitForReply();
+        assistant.send(C1, "make the first one wait five days", ImmutableList.of(), Optional.empty(), "key-3");
+        waitForReply();
+
+        ImmutableList<String> three = ImmutableList.of("assistant_context", "assistant_act", "assistant_show");
+        ImmutableList<String> four = ImmutableList.of("assistant_context", "assistant_act", "assistant_show", "assistant_rules");
+        assertThat(opened).extracting(context -> context.sessionTools().stream().map(ReviewTool::name).collect(toImmutableList())).containsExactly(three, four, four);
+        assertThat(opened).extracting(AgentSessionContext::managedInstructions).containsOnly(AssistantService.INSTRUCTIONS);
+        assertThat(prompts.get(1)).contains(AssistantRules.BRIEF + "\n\nThe user's message:\n@rules mostly my reviews");
+        assertThat(prompts.get(0)).doesNotContain("The user typed @rules");
+        assertThat(prompts.get(2)).doesNotContain("The user typed @rules");
+    }
+
+    @Test
+    void keepsOneAnswerForEachRuleTheAssistantOffered()
+            throws Exception
+    {
+        String storage = "---\nname: Review storage changes\nwhen: review-requested\ndoes: review\nagrees-when: reviewed\n---\nCheck for bugs.";
+        String edited = storage.replace("Check for bugs.", "Check for bugs and missing tests.");
+        AssistantItem asked = AssistantItem.user(C1, now.get(), "@rules", ImmutableList.of(), Optional.empty(), "key-1");
+        AssistantItem saved = AssistantItem.rule(C1, now.get(), "You reviewed 9 of the 11 storage changes", storage);
+        AssistantItem declined = AssistantItem.rule(C1, now.get(), "You backported 4 fixes", storage.replace("Review storage changes", "Backport fixes"));
+        store.add(asked);
+        store.add(saved);
+        store.add(declined);
+
+        MockMvc http = standaloneSetup(new AssistantController(assistant, mock(AssistantSettings.class))).setControllerAdvice(new GlobalExceptionHandler()).build();
+        http.perform(post("/api/assistant/rules").contentType(MediaType.APPLICATION_JSON)
+                        .content(AgendaFixtures.mapper().writeValueAsString(ImmutableMap.of("conversationId", C1, "itemId", saved.id(), "text", edited))))
+                .andExpect(status().isNoContent());
+        // A click recorded twice, such as after a lost reply, still saves the rule once.
+        assistant.ruled(C1, saved.id(), Optional.of(edited));
+        http.perform(post("/api/assistant/rules").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"conversationId\": \"" + C1 + "\", \"itemId\": \"" + declined.id() + "\"}"))
+                .andExpect(status().isNoContent());
+
+        verify(rules, times(1)).add(edited);
+        assertThat(store.items(C1)).extracting(AssistantItem::kind).containsExactly(USER, AssistantItem.Kind.RULE, AssistantItem.Kind.RULE, RECEIPT, RECEIPT);
+        AssistantItem kept = store.items(C1).get(3);
+        assertThat(kept.text()).isEqualTo("Saved rule “Review storage changes”");
+        assertThat(kept.key()).contains("rule-offer:" + saved.id());
+        assertThat(kept.receipt()).contains(new AssistantReceipt(AssistantReceipt.Operation.SAVE_RULE, AssistantReceipt.Outcome.DONE, Optional.of("Starts in Observe"),
+                Optional.empty(), Optional.of("settings/rules"), Optional.empty(), Optional.empty(), Optional.empty()));
+        assertThat(store.items(C1).getLast().text()).isEqualTo("Not saved · “Backport fixes”");
+        assertThat(store.items(C1).getLast().receipt().orElseThrow().outcome()).isEqualTo(AssistantReceipt.Outcome.REFUSED);
+
+        assertThatThrownBy(() -> assistant.ruled(C1, asked.id(), Optional.empty())).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("That is not one of this conversation's offered rules");
+        AssistantItem another = AssistantItem.rule(C1, now.get(), "Often", storage);
+        store.add(another);
+        assertThatThrownBy(() -> assistant.ruled(C1, another.id(), Optional.of("review my PRs"))).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("A rule starts with a line of three dashes, then its header");
+        verify(rules, times(1)).add(any());
     }
 
     @Test

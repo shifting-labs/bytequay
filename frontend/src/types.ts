@@ -1627,8 +1627,11 @@ export type AssistantItemDto = {
   id: string;
   conversationId: string;
   at: string;
-  kind: 'USER' | 'REPLY' | 'RECEIPT' | 'FAILURE' | 'LIST' | 'DRAFT' | 'REPORT';
-  /** The user's words, the reply's Markdown, a receipt's or a report's line, a list's or a draft's title, or why the reply failed. */
+  kind: 'USER' | 'REPLY' | 'RECEIPT' | 'FAILURE' | 'LIST' | 'DRAFT' | 'REPORT' | 'RULE';
+  /**
+   * The user's words, the reply's Markdown, a receipt's or a report's line, a list's or a draft's title, the data behind an offered rule, or
+   * why the reply failed.
+   */
   text: string;
   /** Where each ref a reply names opens; only refs the conversation served. */
   targets: Record<string, AgendaTargetDto>;
@@ -1641,6 +1644,10 @@ export type AssistantItemDto = {
   draft: AssistantDraftDto | null;
   /** What a task the conversation started or sent words to raised: a decision, a result, or why it failed. */
   report: AssistantReportDto | null;
+  /** The sender's key; a receipt answering an offered rule carries `rule-offer:` and the offer's id. */
+  key?: string | null;
+  /** An offered rule's file, which only the user's Save stores. */
+  rule?: string | null;
 };
 
 /** The task notice a report tells, drawn as that notice's own card while it lasts; then the line opens the task. */
@@ -1718,7 +1725,7 @@ export type AssistantRowDto = {
 /** What one action left, done or refused: by the assistant from the user's words, or by a card's own button. */
 export type AssistantReceiptDto = {
   operation: 'START_TASK' | 'ANSWER_APPROVAL' | 'ANSWER_QUESTION' | 'REPLY_TO_TASK' | 'OPEN' | 'MARK_EPIC' | 'ADD_TO_EPIC' | 'CREATE_WORK_ITEM' | 'CREATE_EPIC' | 'ACKNOWLEDGE'
-    | 'SNOOZE' | 'MAKE_AGENDA';
+    | 'SNOOZE' | 'MAKE_AGENDA' | 'SAVE_RULE';
   outcome: 'DONE' | 'REFUSED' | 'FAILED';
   /** A second line, such as where a started task runs. */
   detail: string | null;
@@ -2234,6 +2241,8 @@ export type Bridge = LabBridge & WorkItemBridge & JiraBridge & GoogleBridge & Ar
   recordAssistantAnswer: (conversationId: string, approvalId: string) => Promise<void>;
   /** Keeps the receipt for a draft the user created with its own button. */
   recordAssistantDraft: (conversationId: string, itemId: string) => Promise<void>;
+  /** Saves a rule the assistant offered, as offered or edited, or with null leaves it unsaved; the conversation keeps the receipt. */
+  answerAssistantRule: (conversationId: string, itemId: string, text: string | null) => Promise<void>;
   /** Sends the user's words straight to the task a report named, with no model between; the conversation keeps the receipt. */
   askAssistantResult: (target: AgendaTargetDto, sourceTurnId: string, question: string) => Promise<TaskDiscussionDto>;
   replyFromAssistant: (conversationId: string, itemId: string, text: string, key: string) => Promise<{ itemId: string }>;

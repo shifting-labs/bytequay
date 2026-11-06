@@ -17,7 +17,7 @@ import Composer from '../Composer';
 import { settingsRoute } from '../settings/routes';
 import { IconButton } from '../cards/Card';
 import type { WorkItem } from '../home/work';
-import { SUGGESTION, isRulesCommand, openAssistant, takesSuggestion } from './model';
+import { SUGGESTION, openAssistant, takesSuggestion } from './model';
 import { useNotices } from '../notices/useNotices';
 import AssistantPills, { useWaiting } from './Pills';
 import '../css/assistant.css';
@@ -32,11 +32,6 @@ export default function HomeComposer({ work }: { work: WorkItem[] }) {
   const submit = () => {
     const text = draft.trim();
     if (text === '') return;
-    if (isRulesCommand(text)) {
-      setDraft('');
-      window.location.hash = settingsRoute('rules');
-      return;
-    }
     // The Assistant keeps a message it could not send in its own composer, so nothing typed here is lost.
     openAssistant({ message: text });
     setDraft('');

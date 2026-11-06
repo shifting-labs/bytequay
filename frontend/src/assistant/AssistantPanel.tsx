@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import {
   AlarmClock, ArrowUpRight, Ban, CalendarCheck, CheckCheck, CircleDot, Clock, Flag, History, ListEnd, ListPlus, ListTodo,
-  MessageSquareReply, Play, RotateCw, Send, ShieldCheck, SquarePen, SquarePlus, SlidersHorizontal, TriangleAlert, X, type LucideIcon,
+  MessageSquareReply, Play, RotateCw, ScrollText, Send, ShieldCheck, SquarePen, SquarePlus, SlidersHorizontal, TriangleAlert, X, type LucideIcon,
 } from 'lucide-react';
 import { relativeTime } from '@bytequay/ui/relativeTime';
 import Composer from '../Composer';
@@ -35,8 +35,9 @@ import type { AgendaTargetDto, AssistantItemDto, AssistantReceiptDto, AssistantR
 import AssistantList from './AssistantList';
 import { ApprovalCard, DurableReportCard, NoticeCard, ReportActivity, ResultCard, RunningCard, RunningFold, StopButton } from './Cards';
 import DraftCard from './DraftCard';
+import RuleOfferCard from './RuleOfferCard';
 import {
-  SUGGESTION, arrivedOpen, createdDrafts, decisionOrder, endedTurns, inAnswerOrder, isRulesCommand, linkRefs, pageRoute, reportActivity, refFromHref, refLabel, takesSuggestion, type AssistantRequest,
+  SUGGESTION, answeredRules, arrivedOpen, createdDrafts, decisionOrder, endedTurns, inAnswerOrder, linkRefs, pageRoute, reportActivity, refFromHref, refLabel, takesSuggestion, type AssistantRequest,
   type AssistantView, type Pill, type WaitingCard,
 } from './model';
 import AssistantPills, { useWaiting } from './Pills';
@@ -201,11 +202,6 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
   // Sent at once, even while a reply is written, with the cards and page on screen now; the backend answers it in turn.
   const submitText = (text: string) => {
     if (!chatEnabled || text === '') return;
-    if (isRulesCommand(text)) {
-      setDraft('');
-      leave(() => onPage(settingsRoute('rules')));
-      return;
-    }
     void send(text, visible.current, screen).then(sent => {
       if (!sent) {
         setDraft(current => current.trim() === '' ? text : current);
@@ -248,6 +244,7 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
   const targets: Record<string, AgendaTargetDto> = {};
   for (const item of items) Object.assign(targets, item.targets);
   const drafts = createdDrafts(items);
+  const ruled = answeredRules(items);
   // Reply links carry refs, so they open where the item's work lives instead of as a web page.
   const openLink = (event: ReactMouseEvent) => {
     const anchor = event.target instanceof Element ? event.target.closest('a') : null;
@@ -318,7 +315,7 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
     ? <Receipt key={item.id} item={item} ended={ended.has(item.id)} onOpen={openReceipt} onSettings={openSettings} />
     : item.kind === 'REPORT'
       ? reportEntry(item)
-      : <Entry key={item.id} item={item} waiting={waitingIds.has(item.id)} rows={chat?.rows ?? {}} drafts={drafts} model={chat?.model ?? null}
+      : <Entry key={item.id} item={item} waiting={waitingIds.has(item.id)} rows={chat?.rows ?? {}} drafts={drafts} ruled={ruled} model={chat?.model ?? null}
         retryable={chatEnabled && !running && item.id === lastExchange} onRetry={retry} onSettings={openSettings} onOpen={show} onComplete={completeTask}
         onPull={actOnPull} onRefresh={refresh} />);
   // Thinking stands under the message being answered, above any still waiting in line.
@@ -565,13 +562,15 @@ function ScreenIcon({ screen }: { screen: string }) {
   return source === undefined ? <ListTodo size={12} aria-hidden="true" /> : <SourceIcon source={source} size={12} />;
 }
 
-function Entry({ item, waiting, rows, drafts, model, retryable, onRetry, onSettings, onOpen, onComplete, onPull, onRefresh }: {
+function Entry({ item, waiting, rows, drafts, ruled, model, retryable, onRetry, onSettings, onOpen, onComplete, onPull, onRefresh }: {
   item: AssistantItemDto;
   /** A message still in line behind the reply being written. */
   waiting: boolean;
   rows: Record<string, AssistantRowDto>;
   /** The work items of the drafts the user already created. */
   drafts: ReadonlySet<string>;
+  /** The offered rules the user already saved or left unsaved. */
+  ruled: ReadonlySet<string>;
   /** The model the assistant answers with, as the composer names it. */
   model: string | null;
   retryable: boolean;
@@ -592,6 +591,7 @@ function Entry({ item, waiting, rows, drafts, model, retryable, onRetry, onSetti
   if (item.kind === 'REPLY') return <div className="assistant-reply">{renderMarkdown(linkRefs(item.text, item.targets))}</div>;
   if (item.kind === 'LIST') return <AssistantList item={item} rows={rows} onOpen={onOpen} onComplete={onComplete} onPull={onPull} />;
   if (item.kind === 'DRAFT') return <DraftCard item={item} created={item.draft !== null && drafts.has(item.draft.workItemId)} onCreated={onRefresh} onOpen={onOpen} />;
+  if (item.kind === 'RULE') return <RuleOfferCard item={item} answered={ruled.has(item.id)} onAnswered={onRefresh} />;
   return (
     <div className="assistant-failure" role="status"
       title={item.notReady ? `${model ?? 'The Assistant'} answers through your Claude account. Sign in from Settings → Models.` : undefined}>
@@ -692,7 +692,7 @@ function ReplyToTask({ onSend }: { onSend: (text: string, key: string) => Promis
 const ACTED: Record<AssistantReceiptDto['operation'], LucideIcon> = {
   START_TASK: Play, ANSWER_APPROVAL: ShieldCheck, ANSWER_QUESTION: MessageSquareReply, REPLY_TO_TASK: Send, OPEN: ArrowUpRight, MARK_EPIC: Flag,
   ADD_TO_EPIC: ListPlus, CREATE_WORK_ITEM: SquarePlus, CREATE_EPIC: CircleDot, ACKNOWLEDGE: CheckCheck, SNOOZE: AlarmClock,
-  MAKE_AGENDA: CalendarCheck,
+  MAKE_AGENDA: CalendarCheck, SAVE_RULE: ScrollText,
 };
 
 /**

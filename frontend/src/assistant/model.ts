@@ -30,8 +30,6 @@ export type AssistantView = Pill | 'conversation';
 /** What an empty composer suggests asking; Tab or → types it in. */
 export const SUGGESTION = 'What needs my attention first?';
 
-export const isRulesCommand = (text: string): boolean => text.trim() === '@rules';
-
 /** Tab or → in an empty composer, without modifiers, as a shell takes its suggestion: it types the one the composer shows. */
 export const takesSuggestion = (event: { key: string; shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }, draft: string): boolean =>
   (event.key === 'Tab' || event.key === 'ArrowRight') && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && draft.trim() === '';
@@ -246,6 +244,17 @@ export function arrivedOpen(items: AssistantItemDto[], openedAt: number, followe
 /** The work items of the day's drafts that the user created, named by the receipts their clicks left. */
 export function createdDrafts(items: AssistantItemDto[]): ReadonlySet<string> {
   return new Set(items.flatMap(item => item.receipt?.operation === 'CREATE_EPIC' && item.receipt.target?.id != null ? [item.receipt.target.id] : []));
+}
+
+// Twin of AssistantRules.ANSWER: the key of the receipt that answers an offered rule, followed by the offer's id.
+const RULE_ANSWER = 'rule-offer:';
+
+/** The offered rules the user already saved or left unsaved, by the receipts their answers left. */
+export function answeredRules(items: AssistantItemDto[]): ReadonlySet<string> {
+  return new Set(items.flatMap(item => {
+    const key = item.kind === 'RECEIPT' ? item.key ?? '' : '';
+    return key.startsWith(RULE_ANSWER) ? [key.slice(RULE_ANSWER.length)] : [];
+  }));
 }
 
 /**

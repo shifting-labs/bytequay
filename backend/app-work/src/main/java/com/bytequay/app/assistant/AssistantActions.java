@@ -337,7 +337,7 @@ class AssistantActions
                 case START_TASK -> optional("from").orElse(text("workspace"));
                 case ANSWER_APPROVAL, ANSWER_QUESTION -> text("approval");
                 case REPLY_TO_TASK -> text("task");
-                case OPEN, CREATE_EPIC, MAKE_AGENDA -> text("ref");
+                case OPEN, CREATE_EPIC, MAKE_AGENDA, SAVE_RULE -> text("ref");
                 case MARK_EPIC, ADD_TO_EPIC, ACKNOWLEDGE, SNOOZE -> text("item");
                 case CREATE_WORK_ITEM -> optional("epic").orElse(text("workspace"));
             };
@@ -450,7 +450,7 @@ class AssistantActions
                 case START_TASK -> allowed.startTasks() ? Optional.empty() : Optional.of("Starting tasks is off");
                 case MARK_EPIC, ADD_TO_EPIC, CREATE_WORK_ITEM -> allowed.changeWork() ? Optional.empty() : Optional.of("Changing Epics and work items is off");
                 case ACKNOWLEDGE, SNOOZE -> allowed.markAttention() ? Optional.empty() : Optional.of("Acknowledging and snoozing is off");
-                case ANSWER_APPROVAL, ANSWER_QUESTION, REPLY_TO_TASK, OPEN, CREATE_EPIC, MAKE_AGENDA ->
+                case ANSWER_APPROVAL, ANSWER_QUESTION, REPLY_TO_TASK, OPEN, CREATE_EPIC, MAKE_AGENDA, SAVE_RULE ->
                         allowed.answerTasks() ? Optional.empty() : Optional.of("Answering tasks is off");
             };
             if (off.isPresent()) {
@@ -465,7 +465,7 @@ class AssistantActions
             }
             // An item's own rules, such as a ticket that already has a task, are its service's, and a refusal there reads as a failure.
             Optional<Result> state = switch (operation) {
-                case START_TASK, OPEN, MARK_EPIC, ADD_TO_EPIC, CREATE_WORK_ITEM, CREATE_EPIC, ACKNOWLEDGE, SNOOZE, MAKE_AGENDA -> Optional.empty();
+                case START_TASK, OPEN, MARK_EPIC, ADD_TO_EPIC, CREATE_WORK_ITEM, CREATE_EPIC, ACKNOWLEDGE, SNOOZE, MAKE_AGENDA, SAVE_RULE -> Optional.empty();
                 case ANSWER_APPROVAL, ANSWER_QUESTION -> approvalState(request);
                 case REPLY_TO_TASK -> taskState(request);
             };
@@ -596,8 +596,9 @@ class AssistantActions
                         UUID.nameUUIDFromBytes(identity(request).getBytes(StandardCharsets.UTF_8)).toString()));
                 case ACKNOWLEDGE -> done(request, work.acknowledge(request.text("item")));
                 case SNOOZE -> done(request, work.snooze(request.text("item"), SNOOZES.get(request.text("until"))));
-                // assistant_show opens and makes the agenda, and only the user's click creates a draft's issue; this tool parses none of them.
-                case OPEN, CREATE_EPIC, MAKE_AGENDA -> throw new IllegalStateException("assistant_act does not " + request.operation());
+                // assistant_show opens and makes the agenda, and only the user's click creates a draft's issue or saves an offered rule; this tool
+                // parses none of them.
+                case OPEN, CREATE_EPIC, MAKE_AGENDA, SAVE_RULE -> throw new IllegalStateException("assistant_act does not " + request.operation());
             };
         }
 
