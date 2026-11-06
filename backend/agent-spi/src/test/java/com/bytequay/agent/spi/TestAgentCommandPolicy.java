@@ -41,12 +41,15 @@ class TestAgentCommandPolicy
                 "expected remote revision",
                 "whole shell chain",
                 "without exposing their values",
+                "ByteQuay tool that does it if one is offered",
+                "Never ask the user to run a command by hand",
                 "native denials still apply",
                 "reviewer approves it",
                 "ByteQuay checks",
                 "requests it receives");
         assertThat(DEVELOPMENT_POLICY).startsWith("## ByteQuay Development Scope").doesNotContain("Automatic Approval Scope", "sandbox weakening");
-        assertThat(AgentCommandPolicy.reviewInstructions()).startsWith("## ByteQuay Private Review Scope").doesNotContain("Automatic Approval Scope");
+        assertThat(AgentCommandPolicy.reviewInstructions()).startsWith("## ByteQuay Private Review Scope").doesNotContain("Automatic Approval Scope")
+                .contains("Never ask the user to run a command by hand");
     }
 
     @Test

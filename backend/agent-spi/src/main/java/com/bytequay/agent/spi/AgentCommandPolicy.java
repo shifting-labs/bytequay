@@ -35,8 +35,11 @@ public final class AgentCommandPolicy
             authentication flow. Existing CLI login and credential helpers may authenticate an authorized
             action without exposing their values. ByteQuay does not pass GitHub or GitLab tokens or SSH-agent
             access from its host environment into agent tools.
-            If normal authentication fails, report the missing login; do not search unrelated files,
-            browser profiles, or logs for secrets.
+            When a missing login, the network, or the sandbox stops an authorized action, use the
+            ByteQuay tool that does it if one is offered, such as push_task_branch,
+            close_task_pull_request, or replace_task_pull_request; otherwise report what blocked it.
+            Never ask the user to run a command by hand, and do not search unrelated files, browser
+            profiles, or logs for secrets.
             """.strip(),
             """
             Block persistent or reusable permission grants, blanket authorization for future actions,
