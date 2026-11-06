@@ -61,7 +61,8 @@ final class InMemoryAgentStores
         implements AgentTaskStore, AgentTurnStore, AgentApprovalStore, AgentEventOutboxStore, AgentUnitOfWork, QueuedInputStore, SteerDeliveryStore
 {
     private final Map<TaskId, AgentTask> tasks = new HashMap<>();
-    private final Map<TurnId, AgentTurn> turns = new HashMap<>();
+    // Most tests run on a fixed clock, so insertion order is what keeps list() in creation order when createdAt ties.
+    private final Map<TurnId, AgentTurn> turns = new LinkedHashMap<>();
     private final Map<QueuedInputId, QueuedAgentInput> queue = new LinkedHashMap<>();
     private final Map<InputDeliveryId, AgentInputDelivery> steers = new LinkedHashMap<>();
     private final Map<ApprovalId, AgentApproval> approvals = new LinkedHashMap<>();
@@ -86,7 +87,7 @@ final class InMemoryAgentStores
         requireNonNull(work, "work is null");
         // Mirror SqliteAgentUnitOfWork rollback for this test double.
         Map<TaskId, AgentTask> taskSnapshot = new HashMap<>(tasks);
-        Map<TurnId, AgentTurn> turnSnapshot = new HashMap<>(turns);
+        Map<TurnId, AgentTurn> turnSnapshot = new LinkedHashMap<>(turns);
         Map<ApprovalId, AgentApproval> approvalSnapshot = new LinkedHashMap<>(approvals);
         Map<EventId, AgentEventOutboxEntry> outboxSnapshot = new LinkedHashMap<>(outbox);
         Map<QueuedInputId, QueuedAgentInput> queueSnapshot = new LinkedHashMap<>(queue);
