@@ -422,6 +422,26 @@ class TestAssistantActions
     }
 
     @Test
+    void reopensOrTurnsBackIntoADraftOnTheUsersWords()
+    {
+        String pr = "pr:owner/repository#58";
+        AgendaTarget opens = AgendaTarget.pull(5, "owner/repository", 58, Optional.of("ws1"));
+        when(pulls.reopen(pr)).thenReturn(new AssistantWork.Done("Reopened “Fix the cache”", Optional.empty(), Optional.of(opens), "owner/repository#58"));
+        when(pulls.markDraft(pr)).thenReturn(new AssistantWork.Done("Turned back into a draft: “Fix the cache”", Optional.empty(), Optional.of(opens), "owner/repository#58"));
+
+        act(message("reopen #58", ImmutableList.of(), Optional.of(pr)), "{\"op\":\"reopen_pull_request\",\"pr\":\"" + pr + "\",\"words\":\"reopen #58\"}");
+        assertThat(receipts.getLast().receipt().orElseThrow().operation()).isEqualTo(AssistantReceipt.Operation.REOPEN_PULL_REQUEST);
+        act(message("make #58 a draft again", ImmutableList.of(), Optional.of(pr)), "{\"op\":\"mark_draft\",\"pr\":\"" + pr + "\",\"words\":\"make #58 a draft\"}");
+        assertThat(receipts.getLast().receipt().orElseThrow().operation()).isEqualTo(AssistantReceipt.Operation.MARK_DRAFT);
+        verify(pulls).reopen(pr);
+        verify(pulls).markDraft(pr);
+
+        act(message("don't reopen #58", ImmutableList.of(), Optional.of(pr)), "{\"op\":\"reopen_pull_request\",\"pr\":\"" + pr + "\",\"words\":\"reopen #58\"}");
+        assertRefused("Your message says not to do that", Optional.empty());
+        verify(pulls, times(1)).reopen(pr);
+    }
+
+    @Test
     void refusesPullRequestWorkTheUserDidNotAskFor()
     {
         String pr = "pr:owner/repository#31402";

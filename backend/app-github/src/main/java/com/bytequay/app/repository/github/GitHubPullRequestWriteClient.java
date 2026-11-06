@@ -131,6 +131,13 @@ public class GitHubPullRequestWriteClient
                 .toBodilessEntity());
     }
 
+    public void reopenPullRequest(String pat, PullRequestRef pr)
+    {
+        translating(() -> send(gitHubRestClient, HttpMethod.PATCH, pat, ImmutableMap.of("state", "open"),
+                "/repos/{owner}/{repo}/pulls/{number}", pr.owner(), pr.repo(), pr.number())
+                .toBodilessEntity());
+    }
+
     public void updatePullRequestTitle(String pat, PullRequestRef pr, String title)
     {
         translating(() -> send(gitHubRestClient, HttpMethod.PATCH, pat, ImmutableMap.of("title", requireNonNull(title, "title is null")),
@@ -346,6 +353,19 @@ public class GitHubPullRequestWriteClient
                 "Ready-for-review response is uncertain; the mutation will not be retried").path("markPullRequestReadyForReview").path("pullRequest");
         if (!nodeId.equals(result.path("id").asText()) || !result.path("isDraft").isBoolean() || result.path("isDraft").booleanValue()) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Ready-for-review result could not be verified; the mutation will not be retried");
+        }
+    }
+
+    /** One mutation only, as marking ready is; a lost response is reported, never repeated. */
+    public void convertToDraft(String pat, String nodeId)
+    {
+        requirePat(pat);
+        checkText(nodeId, "nodeId", 255);
+        String mutation = "mutation($id:ID!){convertPullRequestToDraft(input:{pullRequestId:$id}){pullRequest{id isDraft}}}";
+        JsonNode result = graphqlData(pat, mutation, ImmutableMap.of("id", nodeId), HttpStatus.BAD_GATEWAY,
+                "Draft response is uncertain; the mutation will not be retried").path("convertPullRequestToDraft").path("pullRequest");
+        if (!nodeId.equals(result.path("id").asText()) || !result.path("isDraft").isBoolean() || !result.path("isDraft").booleanValue()) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Draft result could not be verified; the mutation will not be retried");
         }
     }
 

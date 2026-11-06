@@ -1736,6 +1736,16 @@ public class PullRequestService
         actions.closePullRequest(route);
     }
 
+    public void reopenPullRequest(PullRequestRead route)
+    {
+        actions.reopenPullRequest(route);
+    }
+
+    public void markDraft(PullRequestRead route)
+    {
+        actions.markDraft(route);
+    }
+
     public void markReadyForReview(String repo, int number)
     {
         actions.markReadyForReview(prepareRead(repo, number));

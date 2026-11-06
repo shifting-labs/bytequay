@@ -44,7 +44,13 @@ public interface PullRequestWriter
 
     void close(HostingTarget target, int number);
 
+    /** Reopens a closed request that was not merged. */
+    void reopen(HostingTarget target, int number);
+
     void markReady(HostingTarget target, int number);
+
+    /** Turns an open request back into a draft. */
+    void markDraft(HostingTarget target, int number);
 
     void updateMetadata(HostingTarget target, int number, Optional<List<String>> assignees, Optional<List<String>> labels);
 

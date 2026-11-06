@@ -382,6 +382,38 @@ class TestGitLabPullRequestWriter
     }
 
     @Test
+    void reopensAMergeRequest()
+            throws Exception
+    {
+        responses.put("PUT " + PREFIX, "{}");
+
+        writer.reopen(target(), 7);
+
+        assertThat(received).extracting(Request::key).containsExactly("PUT " + PREFIX);
+        assertThat(mapper.readTree(received.getFirst().body())).isEqualTo(mapper.readTree("{\"state_event\":\"reopen\"}"));
+    }
+
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', value = {"Fix the cache|Draft: Fix the cache", "Draft: Fix the cache|", "[WIP] Fix the cache|"})
+    void marksADraftByItsTitlePrefixOnce(String title, String written)
+            throws Exception
+    {
+        responses.put("GET " + PREFIX, "{\"title\":\"" + title + "\"}");
+        responses.put("PUT " + PREFIX, "{}");
+
+        writer.markDraft(target(), 7);
+
+        List<Request> puts = received.stream().filter(request -> request.key().startsWith("PUT")).toList();
+        if (written == null) {
+            assertThat(puts).isEmpty();
+        }
+        else {
+            assertThat(puts).hasSize(1);
+            assertThat(mapper.readTree(puts.getFirst().body()).path("title").asText()).isEqualTo(written);
+        }
+    }
+
+    @Test
     void commandOnlyCommentSucceedsWithoutInventingANoteIdentity()
     {
         responses.put("POST " + PREFIX + "/notes", "{\"commands_changes\":{\"state_event\":\"close\"},\"summary\":[\"Closed this merge request.\"]}");

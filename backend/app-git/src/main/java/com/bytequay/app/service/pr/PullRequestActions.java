@@ -226,6 +226,27 @@ final class PullRequestActions
         });
     }
 
+    void reopenPullRequest(PullRequestRead route)
+    {
+        integrations.of(route.target()).writer().reopen(route.target(), route.number());
+        afterWrite(route, () -> {
+            recent.pullRequestAction(rowId.apply(route).orElseThrow(), RecentReason.EDITED, 0);
+            invalidatePullRequestCaches(route);
+        });
+    }
+
+    void markDraft(PullRequestRead route)
+    {
+        try {
+            integrations.of(route.target()).writer().markDraft(route.target(), route.number());
+        }
+        finally {
+            // A lost response may still have made it a draft; refresh without repeating the write.
+            afterWrite(route, () -> invalidatePullRequestDetail(route));
+        }
+        afterWrite(route, () -> recent.pullRequestAction(rowId.apply(route).orElseThrow(), RecentReason.EDITED, 0));
+    }
+
     void markReadyForReview(PullRequestRead route)
     {
         try {

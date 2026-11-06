@@ -65,6 +65,7 @@ public final class GitLabPullRequestWriter
         implements PullRequestWriter
 {
     private static final Pattern HUNK = Pattern.compile("^@@ -(\\d+)(?:,\\d+)? [+](\\d+)(?:,\\d+)? @@.*");
+    private static final Pattern DRAFT = Pattern.compile("(?i)^(?:draft|wip):\\s*|^\\[(?:draft|wip)\\]\\s*|^\\((?:draft|wip)\\)\\s*");
     private final GitLabHttpClient http;
     private final GitLabDiffs diffs;
     private final GitLabPullRequestCi ci;
@@ -161,12 +162,30 @@ public final class GitLabPullRequestWriter
     }
 
     @Override
+    public void reopen(HostingTarget target, int number)
+    {
+        http.put(target.access(), mergeRequestPath(target, number), new State("reopen"), Void.class);
+    }
+
+    @Override
     public void markReady(HostingTarget target, int number)
     {
         String path = mergeRequestPath(target, number);
         GitLabMergeRequestResponse current = get(target.access(), path, GitLabMergeRequestResponse.class);
-        String title = mapped("merge request", () -> current.title().replaceFirst("(?i)^(?:draft|wip):\\s*|^\\[(?:draft|wip)\\]\\s*|^\\((?:draft|wip)\\)\\s*", ""));
+        String title = mapped("merge request", () -> DRAFT.matcher(current.title()).replaceFirst(""));
         http.put(target.access(), path, new Title(title), Void.class);
+    }
+
+    // GitLab keeps draft status in the title's prefix.
+    @Override
+    public void markDraft(HostingTarget target, int number)
+    {
+        String path = mergeRequestPath(target, number);
+        GitLabMergeRequestResponse current = get(target.access(), path, GitLabMergeRequestResponse.class);
+        String title = mapped("merge request", current::title);
+        if (!DRAFT.matcher(title).find()) {
+            http.put(target.access(), path, new Title("Draft: " + title), Void.class);
+        }
     }
 
     @Override

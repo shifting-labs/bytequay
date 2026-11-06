@@ -79,6 +79,16 @@ class AssistantPullRequests
         return pr.done("Closed", Optional.empty());
     }
 
+    /** Reopens a closed one; the host refuses when its branch is gone. */
+    AssistantWork.Done reopen(String ref)
+    {
+        Read pr = read(resolve(ref));
+        checkState(pr.detail().mergedAt() == null, "It was merged, so it can't be reopened");
+        checkState(!"open".equals(pr.detail().state()), "It's already open");
+        service.reopenPullRequest(pr.found().route());
+        return pr.done("Reopened", Optional.empty());
+    }
+
     /** Takes a draft out of draft, as the merge sheet's Ready for review does. */
     AssistantWork.Done markReady(String ref)
     {
@@ -86,6 +96,15 @@ class AssistantPullRequests
         checkState(pr.detail().draft(), "It's already ready for review");
         service.markReadyForReview(pr.found().route());
         return pr.done("Marked ready for review:", Optional.empty());
+    }
+
+    /** Turns an open one back into a draft, so it is not asked to be reviewed or merged yet. */
+    AssistantWork.Done markDraft(String ref)
+    {
+        Read pr = open(resolve(ref));
+        checkState(!pr.detail().draft(), "It's already a draft");
+        service.markDraft(pr.found().route());
+        return pr.done("Turned back into a draft:", Optional.empty());
     }
 
     /** Reruns the failed checks of its head, as its checks' Rerun failed does; the host says when nothing can run again. */

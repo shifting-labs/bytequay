@@ -611,9 +611,9 @@ it answers only Claude shell commands that stay in the sandbox, with Allow once
 or Deny, and question cards; everything else stays a button. It may also mark an
 Epic, add work to one, create a work item titled with the user's words, and
 acknowledge or snooze a Needs attention item, all of it local. On a pull request
-the user could see, it may close it, mark it ready for review, rerun its failed
-checks, request or take back reviews, add or remove labels, approve it, and
-comment or set its title or description. Each reads the pull request from its
+the user could see, it may close or reopen it, mark it ready for review or turn
+it back into a draft, rerun its failed checks, request or take back reviews, add
+or remove labels, approve it, and comment or set its title or description. Each reads the pull request from its
 host again first and writes through the page's own service under the
 workspace's account. Reviewers, labels and text must be in the user's words, a
 number the words give must be that pull request's, and approving goes through

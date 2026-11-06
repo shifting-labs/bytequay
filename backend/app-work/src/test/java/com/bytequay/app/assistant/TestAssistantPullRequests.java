@@ -110,6 +110,35 @@ class TestAssistantPullRequests
     }
 
     @Test
+    void reopensOnlyAClosedPullRequestThatWasNotMerged()
+    {
+        fresh("closed", false, "octocat", HEAD, ImmutableList.of());
+        assertThat(pulls.reopen(REF).line()).isEqualTo("Reopened “Fix the cache”");
+        verify(service).reopenPullRequest(route);
+
+        fresh("open", false, "octocat", HEAD, ImmutableList.of());
+        assertThatThrownBy(() -> pulls.reopen(REF)).hasMessage("It's already open");
+        fresh("closed", false, "octocat", HEAD, ImmutableList.of());
+        when(service.refreshForAction(route).mergedAt()).thenReturn(NOW);
+        assertThatThrownBy(() -> pulls.reopen(REF)).hasMessage("It was merged, so it can't be reopened");
+        verify(service, times(1)).reopenPullRequest(route);
+    }
+
+    @Test
+    void turnsOnlyAnOpenPullRequestBackIntoADraft()
+    {
+        fresh("open", false, "octocat", HEAD, ImmutableList.of());
+        assertThat(pulls.markDraft(REF).line()).isEqualTo("Turned back into a draft: “Fix the cache”");
+        verify(service).markDraft(route);
+
+        fresh("open", true, "octocat", HEAD, ImmutableList.of());
+        assertThatThrownBy(() -> pulls.markDraft(REF)).hasMessage("It's already a draft");
+        fresh("closed", false, "octocat", HEAD, ImmutableList.of());
+        assertThatThrownBy(() -> pulls.markDraft(REF)).hasMessage("That pull request is not open");
+        verify(service, times(1)).markDraft(route);
+    }
+
+    @Test
     void addsTheRepositorysLabelsAndKeepsTheRest()
     {
         fresh("open", false, "octocat", HEAD, ImmutableList.of(new PullRequestDetail.Label("bug", "d73a4a"), new PullRequestDetail.Label("wip", "ededed")));

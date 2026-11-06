@@ -1726,7 +1726,7 @@ export type AssistantRowDto = {
 export type AssistantReceiptDto = {
   operation: 'START_TASK' | 'ANSWER_APPROVAL' | 'ANSWER_QUESTION' | 'REPLY_TO_TASK' | 'OPEN' | 'MARK_EPIC' | 'ADD_TO_EPIC' | 'CREATE_WORK_ITEM' | 'CREATE_EPIC' | 'ACKNOWLEDGE'
     | 'SNOOZE' | 'MAKE_AGENDA' | 'SAVE_RULE' | 'CLOSE_PULL_REQUEST' | 'MARK_READY' | 'RERUN_CHECKS' | 'REQUEST_REVIEW' | 'SET_LABELS' | 'COMMENT' | 'APPROVE'
-    | 'EDIT_PULL_REQUEST' | 'MERGE';
+    | 'EDIT_PULL_REQUEST' | 'MERGE' | 'REOPEN_PULL_REQUEST' | 'MARK_DRAFT';
   outcome: 'DONE' | 'REFUSED' | 'FAILED';
   /** A second line, such as where a started task runs. */
   detail: string | null;

@@ -301,10 +301,10 @@ answer tasks, change Epics and work items, or acknowledge and snooze items. Each
 of these switches is off by default.
 
 **Assistant can change pull requests** is on by default. Name the pull request,
-such as "close #58" or "label #58 as bug". The Assistant can close it, mark it
-ready for review, rerun its failed checks, ask or stop asking reviewers, add or
-remove labels, approve it, and comment or change its title or description in
-your own words. It approves only the commits you last saw, and a review draft
+such as "close #58" or "label #58 as bug". The Assistant can close or reopen
+it, mark it ready for review or turn it back into a draft, rerun its failed
+checks, ask or stop asking reviewers, add or remove labels, approve it, and
+comment or change its title or description in your own words. It approves only the commits you last saw, and a review draft
 with comments stays yours to send. Merging stays your click on the pull
 request's card.
 

@@ -164,6 +164,43 @@ class TestGitHubPullRequestWriteClient
     }
 
     @Test
+    void reopensPullRequest()
+    {
+        server.expect(requestTo("https://api.github.test/repos/upstream/project/pulls/12"))
+                .andExpect(method(HttpMethod.PATCH))
+                .andExpect(header("Authorization", "Bearer pat"))
+                .andExpect(content().json("{\"state\":\"open\"}", true))
+                .andRespond(withSuccess());
+
+        client.reopenPullRequest("pat", PullRequestRef.of("upstream", "project", 12));
+    }
+
+    @Test
+    void turnsTheExactPullRequestIntoADraftOnce()
+    {
+        graphServer.expect(requestTo("https://api.github.test/graphql"))
+                .andExpect(method(HttpMethod.POST)).andExpect(header("Authorization", "Bearer pat"))
+                .andExpect(content().json("""
+                        {"query":"mutation($id:ID!){convertPullRequestToDraft(input:{pullRequestId:$id}){pullRequest{id isDraft}}}","variables":{"id":"PR_exact"}}
+                        """))
+                .andRespond(withSuccess("{\"data\":{\"convertPullRequestToDraft\":{\"pullRequest\":{\"id\":\"PR_exact\",\"isDraft\":true}}}}", MediaType.APPLICATION_JSON));
+
+        client.convertToDraft("pat", "PR_exact");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "{\"errors\":[{\"message\":\"uncertain\"}]}",
+            "{\"data\":{\"convertPullRequestToDraft\":{\"pullRequest\":{\"id\":\"PR_other\",\"isDraft\":true}}}}",
+            "{\"data\":{\"convertPullRequestToDraft\":{\"pullRequest\":{\"id\":\"PR_exact\",\"isDraft\":false}}}}"})
+    void uncertainDraftResponsesAreNeverRetried(String response)
+    {
+        graphServer.expect(requestTo("https://api.github.test/graphql")).andRespond(withSuccess(response, MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> client.convertToDraft("pat", "PR_exact")).isInstanceOf(ResponseStatusException.class).hasMessageContaining("will not be retried");
+    }
+
+    @Test
     void updatesOnlyThePullRequestTitle()
     {
         server.expect(requestTo("https://api.github.test/repos/upstream/project/pulls/12"))

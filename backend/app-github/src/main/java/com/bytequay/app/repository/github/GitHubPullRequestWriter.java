@@ -110,9 +110,21 @@ public class GitHubPullRequestWriter
     }
 
     @Override
+    public void reopen(HostingTarget target, int number)
+    {
+        writes.reopenPullRequest(target.access().token(), ref(target, number));
+    }
+
+    @Override
     public void markReady(HostingTarget target, int number)
     {
         writes.markReadyForReview(target.access().token(), node(target, number));
+    }
+
+    @Override
+    public void markDraft(HostingTarget target, int number)
+    {
+        writes.convertToDraft(target.access().token(), node(target, number));
     }
 
     @Override

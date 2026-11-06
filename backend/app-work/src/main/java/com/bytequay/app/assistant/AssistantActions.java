@@ -87,8 +87,8 @@ import static java.util.stream.Collectors.joining;
  * the checks in order or is refused, and either way leaves a receipt in the conversation and a row in the action log. It sends a task
  * only the user's words, never the assistant's: a task's own messages count as the user's authority for what it does next. It also
  * marks Epics, adds work to them, creates work items, and acknowledges or snoozes Needs attention items, all of which stay local, and
- * acts on a pull request the user names: close, ready for review, rerun failed checks, reviewers, labels, a comment or title in their
- * own words, and approval. Merging stays the user's click on the pull request's card.
+ * acts on a pull request the user names: close or reopen, ready for review or back to draft, rerun failed checks, reviewers, labels, a
+ * comment or title in their own words, and approval. Merging stays the user's click on the pull request's card.
  */
 @Component
 class AssistantActions
@@ -110,7 +110,9 @@ class AssistantActions
             .put("acknowledge", Operation.ACKNOWLEDGE)
             .put("snooze", Operation.SNOOZE)
             .put("close_pull_request", Operation.CLOSE_PULL_REQUEST)
+            .put("reopen_pull_request", Operation.REOPEN_PULL_REQUEST)
             .put("mark_ready", Operation.MARK_READY)
+            .put("mark_draft", Operation.MARK_DRAFT)
             .put("rerun_checks", Operation.RERUN_CHECKS)
             .put("request_review", Operation.REQUEST_REVIEW)
             .put("set_labels", Operation.SET_LABELS)
@@ -129,7 +131,9 @@ class AssistantActions
             .put(Operation.ACKNOWLEDGE, ImmutableSet.of("op", "words", "item"))
             .put(Operation.SNOOZE, ImmutableSet.of("op", "words", "item", "until"))
             .put(Operation.CLOSE_PULL_REQUEST, ImmutableSet.of("op", "words", "pr"))
+            .put(Operation.REOPEN_PULL_REQUEST, ImmutableSet.of("op", "words", "pr"))
             .put(Operation.MARK_READY, ImmutableSet.of("op", "words", "pr"))
+            .put(Operation.MARK_DRAFT, ImmutableSet.of("op", "words", "pr"))
             .put(Operation.RERUN_CHECKS, ImmutableSet.of("op", "words", "pr"))
             .put(Operation.REQUEST_REVIEW, ImmutableSet.of("op", "words", "pr", "add", "remove"))
             .put(Operation.SET_LABELS, ImmutableSet.of("op", "words", "pr", "add", "remove"))
@@ -146,8 +150,9 @@ class AssistantActions
     private static final Set<Operation> MARKS = Sets.immutableEnumSet(Operation.ACKNOWLEDGE, Operation.SNOOZE);
     private static final Set<String> ATTENTION = ImmutableSet.of("pr", "issue", "jira", "task");
     /** The operations the "change pull requests" switch allows, each on a pr: ref the user could see. */
-    private static final Set<Operation> PULL_REQUEST = Sets.immutableEnumSet(Operation.CLOSE_PULL_REQUEST, Operation.MARK_READY, Operation.RERUN_CHECKS,
-            Operation.REQUEST_REVIEW, Operation.SET_LABELS, Operation.COMMENT, Operation.APPROVE, Operation.EDIT_PULL_REQUEST);
+    private static final Set<Operation> PULL_REQUEST = Sets.immutableEnumSet(Operation.CLOSE_PULL_REQUEST, Operation.REOPEN_PULL_REQUEST, Operation.MARK_READY,
+            Operation.MARK_DRAFT, Operation.RERUN_CHECKS, Operation.REQUEST_REVIEW, Operation.SET_LABELS, Operation.COMMENT, Operation.APPROVE,
+            Operation.EDIT_PULL_REQUEST);
     // A number the user's words give, such as "#58" in "close #58", names the pull request they mean.
     private static final Pattern NUMBER = Pattern.compile("#(\\d+)");
     private static final Map<String, AttentionMarkService.Snooze> SNOOZES = ImmutableMap.of(
@@ -254,8 +259,9 @@ class AssistantActions
                 .buildOrThrow(), "op", "words");
         return new ReviewTool(NAME, "Do one thing the user's latest message asks for: start a task, give the user's own pull request's task their words, "
                 + "answer a card, send the user's words to a task, mark an Epic, add work to an Epic, create a work item titled with the user's words, "
-                + "acknowledge or snooze a Needs attention item, or act on a pull request: close it, mark it ready for review, rerun its failed checks, "
-                + "request or take back reviews, add or remove labels, comment or set its title or description in the user's own words, or approve it. "
+                + "acknowledge or snooze a Needs attention item, or act on a pull request: close or reopen it, mark it ready for review or turn it back "
+                + "into a draft, rerun its failed checks, request or take back reviews, add or remove labels, comment or set its title or description in "
+                + "the user's own words, or approve it. "
                 + "Merging is the user's click on the pull request's card. The app checks every call and shows the user a receipt.", schema, run::call, false);
     }
 
@@ -346,7 +352,8 @@ class AssistantActions
                 case ANSWER_APPROVAL, ANSWER_QUESTION -> text("approval");
                 case REPLY_TO_TASK -> text("task");
                 case OPEN, CREATE_EPIC, MAKE_AGENDA, SAVE_RULE, MERGE -> text("ref");
-                case CLOSE_PULL_REQUEST, MARK_READY, RERUN_CHECKS, REQUEST_REVIEW, SET_LABELS, COMMENT, APPROVE, EDIT_PULL_REQUEST -> text("pr");
+                case CLOSE_PULL_REQUEST, REOPEN_PULL_REQUEST, MARK_READY, MARK_DRAFT, RERUN_CHECKS, REQUEST_REVIEW, SET_LABELS, COMMENT, APPROVE,
+                     EDIT_PULL_REQUEST -> text("pr");
                 case MARK_EPIC, ADD_TO_EPIC, ACKNOWLEDGE, SNOOZE -> text("item");
                 case CREATE_WORK_ITEM -> optional("epic").orElse(text("workspace"));
             };
@@ -445,7 +452,7 @@ class AssistantActions
                     checkArgument(ATTENTION.contains(AgendaRefs.kind(request.text("item"))), "snooze takes a pr:, issue:, jira: or task: ref");
                     checkArgument(SNOOZES.containsKey(request.text("until")), "until must be hour, tomorrow or monday");
                 }
-                case CLOSE_PULL_REQUEST, MARK_READY, RERUN_CHECKS, APPROVE -> {}
+                case CLOSE_PULL_REQUEST, REOPEN_PULL_REQUEST, MARK_READY, MARK_DRAFT, RERUN_CHECKS, APPROVE -> {}
                 case REQUEST_REVIEW, SET_LABELS -> checkArgument(!(names(body, "add").isEmpty() && names(body, "remove").isEmpty()),
                         "%s needs names to add or remove", body.path("op").asText());
                 case COMMENT -> checkArgument(request.optional("body").isPresent(), "comment needs the user's words as its body");
@@ -467,8 +474,8 @@ class AssistantActions
                 case START_TASK -> allowed.startTasks() ? Optional.empty() : Optional.of("Starting tasks is off");
                 case MARK_EPIC, ADD_TO_EPIC, CREATE_WORK_ITEM -> allowed.changeWork() ? Optional.empty() : Optional.of("Changing Epics and work items is off");
                 case ACKNOWLEDGE, SNOOZE -> allowed.markAttention() ? Optional.empty() : Optional.of("Acknowledging and snoozing is off");
-                case CLOSE_PULL_REQUEST, MARK_READY, RERUN_CHECKS, REQUEST_REVIEW, SET_LABELS, COMMENT, APPROVE, EDIT_PULL_REQUEST ->
-                        allowed.changePullRequests() ? Optional.empty() : Optional.of("Changing pull requests is off");
+                case CLOSE_PULL_REQUEST, REOPEN_PULL_REQUEST, MARK_READY, MARK_DRAFT, RERUN_CHECKS, REQUEST_REVIEW, SET_LABELS, COMMENT, APPROVE,
+                     EDIT_PULL_REQUEST -> allowed.changePullRequests() ? Optional.empty() : Optional.of("Changing pull requests is off");
                 case ANSWER_APPROVAL, ANSWER_QUESTION, REPLY_TO_TASK, OPEN, CREATE_EPIC, MAKE_AGENDA, SAVE_RULE, MERGE ->
                         allowed.answerTasks() ? Optional.empty() : Optional.of("Answering tasks is off");
             };
@@ -486,7 +493,8 @@ class AssistantActions
             // An item's own rules, such as a ticket that already has a task, are its service's, and a refusal there reads as a failure.
             Optional<Result> state = switch (operation) {
                 case START_TASK, OPEN, MARK_EPIC, ADD_TO_EPIC, CREATE_WORK_ITEM, CREATE_EPIC, ACKNOWLEDGE, SNOOZE, MAKE_AGENDA, SAVE_RULE, MERGE -> Optional.empty();
-                case CLOSE_PULL_REQUEST, MARK_READY, RERUN_CHECKS, REQUEST_REVIEW, SET_LABELS, COMMENT, APPROVE, EDIT_PULL_REQUEST -> named(request);
+                case CLOSE_PULL_REQUEST, REOPEN_PULL_REQUEST, MARK_READY, MARK_DRAFT, RERUN_CHECKS, REQUEST_REVIEW, SET_LABELS, COMMENT, APPROVE,
+                     EDIT_PULL_REQUEST -> named(request);
                 case ANSWER_APPROVAL, ANSWER_QUESTION -> approvalState(request);
                 case REPLY_TO_TASK -> taskState(request);
             };
@@ -649,7 +657,9 @@ class AssistantActions
                 case ACKNOWLEDGE -> done(request, work.acknowledge(request.text("item")));
                 case SNOOZE -> done(request, work.snooze(request.text("item"), SNOOZES.get(request.text("until"))));
                 case CLOSE_PULL_REQUEST -> done(request, pulls.close(request.target()));
+                case REOPEN_PULL_REQUEST -> done(request, pulls.reopen(request.target()));
                 case MARK_READY -> done(request, pulls.markReady(request.target()));
+                case MARK_DRAFT -> done(request, pulls.markDraft(request.target()));
                 case RERUN_CHECKS -> done(request, pulls.rerunChecks(request.target()));
                 case REQUEST_REVIEW -> done(request, pulls.requestReview(request.target(), names(request.body(), "add"), names(request.body(), "remove")));
                 case SET_LABELS -> done(request, pulls.setLabels(request.target(), names(request.body(), "add"), names(request.body(), "remove")));
