@@ -71,6 +71,15 @@ final class MemoryAssistantStore
     }
 
     @Override
+    public synchronized void addCommand(AssistantItem message, AssistantItem receipt)
+    {
+        if (items.stream().noneMatch(existing -> existing.id().equals(message.id()))) {
+            add(message);
+            add(receipt);
+        }
+    }
+
+    @Override
     public synchronized void addAction(AssistantAction action)
     {
         actions.add(action);

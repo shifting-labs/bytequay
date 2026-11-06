@@ -11,9 +11,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { History, SlidersHorizontal, SquarePen } from 'lucide-react';
 import Composer from '../Composer';
+import { useTaskSuggestions } from '../agents/useTaskSuggestions';
 import { settingsRoute } from '../settings/routes';
 import { IconButton } from '../cards/Card';
 import type { WorkItem } from '../home/work';
@@ -29,6 +30,9 @@ import '../css/assistant.css';
 export default function HomeComposer({ work }: { work: WorkItem[] }) {
   const waiting = useWaiting(useNotices());
   const [draft, setDraft] = useState('');
+  const input = useRef<HTMLTextAreaElement>(null);
+  const suggestions = useTaskSuggestions({ draft, onDraftChange: setDraft, inputRef: input, disabled: false, backport: false, artifacts: false,
+    repository: { preferred: null } });
   const submit = () => {
     const text = draft.trim();
     if (text === '') return;
@@ -38,10 +42,11 @@ export default function HomeComposer({ work }: { work: WorkItem[] }) {
   };
   return (
     <div className="assistant-home">
-      <Composer aria-label="Message the Assistant" placeholder={SUGGESTION} value={draft} maxLength={16 * 1024}
-        onChange={event => setDraft(event.target.value)} onSubmit={submit} submitEnabled={draft.trim() !== ''}
+      <Composer {...suggestions.inputProps} inputRef={input} aria-label="Message the Assistant" placeholder={SUGGESTION} value={draft} maxLength={16 * 1024}
+        onSubmit={submit} submitEnabled={draft.trim() !== ''} header={suggestions.list}
         onKeyDown={event => {
-          if (!takesSuggestion(event, draft)) return;
+          suggestions.inputProps.onKeyDown?.(event);
+          if (event.defaultPrevented || !takesSuggestion(event, draft)) return;
           event.preventDefault();
           setDraft(SUGGESTION);
         }}

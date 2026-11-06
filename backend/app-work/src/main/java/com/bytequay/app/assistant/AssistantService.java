@@ -216,6 +216,16 @@ public class AssistantService
         checkArgument(AssistantConversation.isId(conversationId), "conversationId is not a conversation id");
         requireNonNull(text, "text is null");
         requireNonNull(key, "key is null");
+        if (AssistantActions.isTaskCommand(text)) {
+            Optional<AssistantItem> sent = store.items(conversationId).stream().filter(item -> item.key().filter(key::equals).isPresent()).findFirst();
+            if (sent.isPresent()) {
+                return sent.orElseThrow().id();
+            }
+            checkEnabled();
+            // Outside append and slot locks: preparing the task's worktree must not block another conversation.
+            AssistantItem message = AssistantItem.user(conversationId, clock.instant(), text, visible, onScreen, key);
+            return kept(message, actions.startCommand(conversationId, text, key));
+        }
         synchronized (slot) {
             resumeQueued();
             Optional<AssistantItem> sent = store.items(conversationId).stream().filter(item -> item.key().filter(key::equals).isPresent()).findFirst();
@@ -379,6 +389,31 @@ public class AssistantService
         return receipt.id();
     }
 
+    private void checkEnabled()
+    {
+        if (!setup.preferences().assistantEnabled()) {
+            throw new AgentConflictException("Enable Assistant in Settings before starting a conversation");
+        }
+    }
+
+    /** Keeps a task command the user typed and the receipt of the task it started; the same command sent twice at once started one task. */
+    private synchronized String kept(AssistantItem message, AssistantItem receipt)
+    {
+        Optional<AssistantItem> sent = store.items(message.conversationId()).stream().filter(item -> item.key().equals(message.key())).findFirst();
+        if (sent.isPresent()) {
+            return sent.orElseThrow().id();
+        }
+        Optional<AssistantConversation> stored = store.find(message.conversationId());
+        boolean fresh = stored.isEmpty();
+        store.save(stored.map(value -> touched(value, message.at()))
+                .orElseGet(() -> AssistantConversation.start(message.conversationId(), clip(message.text(), TITLE), message.at())));
+        store.addCommand(message, receipt);
+        if (fresh) {
+            retain();
+        }
+        return message.id();
+    }
+
     /** Adds the item, beginning its conversation with it when it is the first; the user's own message moves the conversation up the history. */
     private void append(AssistantItem item)
     {
@@ -477,9 +512,7 @@ public class AssistantService
      */
     private String start(String conversationId, boolean mayWait, Supplier<AssistantItem> pick)
     {
-        if (!setup.preferences().assistantEnabled()) {
-            throw new AgentConflictException("Enable Assistant in Settings before starting a conversation");
-        }
+        checkEnabled();
         synchronized (slot) {
             if (running.containsKey(conversationId) && !mayWait) {
                 throw new AgentConflictException("The assistant is still answering");

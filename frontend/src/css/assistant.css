@@ -108,6 +108,20 @@
 
 .assistant-float.is-replying .agt-compose__streamer::after { animation-duration: 4s; }
 
+/* The box opens at the top of the window and clips, so the @ list sits in the composer above the words instead of floating over it. */
+:is(.assistant-head, .assistant-home) .agt-mentions {
+  position: static;
+  width: auto;
+  max-width: none;
+  margin-bottom: 8px;
+  padding: 0 0 8px;
+  border: 0;
+  border-bottom: 1px solid var(--assistant-line-subtle);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
 .assistant-waiting-line {
   display: flex;
   align-items: center;

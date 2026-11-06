@@ -822,6 +822,40 @@ class TestAssistantConversation
         assertThat(opened).isEmpty();
     }
 
+    @Test
+    void aTypedTaskCommandStartsItsTaskWithNoModelAndTheTaskReportsBack()
+    {
+        String command = "@fix owner/repository #7 keep it small";
+        when(actions.startCommand(C1, command, "cmd-1")).thenAnswer(call -> AssistantItem.receipt(C1, now.get(), "Started @fix",
+                AssistantReceipt.done(AssistantReceipt.Operation.START_TASK, Optional.of(STARTED))));
+
+        String sent = assistant.send(C1, command, ImmutableList.of(), Optional.of("pr:owner/repository#31402"), "cmd-1");
+        // Sent again with its key, it is the same message.
+        assertThat(assistant.send(C1, command, ImmutableList.of(), Optional.empty(), "cmd-1")).isEqualTo(sent);
+        verify(actions, times(1)).startCommand(any(), any(), any());
+        assertThat(store.items(C1)).extracting(AssistantItem::kind).containsExactly(USER, RECEIPT);
+        assertThat(store.find(C1).orElseThrow().title()).isEqualTo(command);
+        assertThat(store.queued()).isEmpty();
+        assertThat(store.interrupted()).isEmpty();
+        assistant.resumeQueued();
+        assertThat(assistant.conversation(C1).running()).isFalse();
+        assertThat(opened).isEmpty();
+
+        now.set(now.get().plusSeconds(120));
+        AssistantItem result = AssistantItem.report(C1, now.get(), "The task result is ready",
+                new AssistantReport(AssistantReport.State.RESULT_READY, "finished:t1", STARTED));
+        doAnswer(call -> {
+            call.<Consumer<AssistantItem>>getArgument(0).accept(result);
+            return null;
+        }).when(following).poll(any());
+        assistant.report();
+        assertThat(store.items(C1).stream().filter(item -> item.kind() == REPORT)).containsExactly(result);
+
+        setup.save(new SetupPreferences(SetupPreferences.Step.COMPLETE, false));
+        assertThatThrownBy(() -> assistant.send(C1, command, ImmutableList.of(), Optional.empty(), "cmd-2"))
+                .isInstanceOf(AgentConflictException.class).hasMessageContaining("Enable Assistant");
+    }
+
     private static String reply(String itemId, String text, String key)
     {
         return "{\"conversationId\": \"" + C1 + "\", \"itemId\": \"" + itemId + "\", \"text\": \"" + text + "\", \"key\": \"" + key + "\"}";

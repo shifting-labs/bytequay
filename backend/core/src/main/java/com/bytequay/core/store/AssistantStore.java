@@ -36,6 +36,9 @@ public interface AssistantStore
 
     void add(AssistantItem item);
 
+    /** Saves a direct command and its receipt together, without entering the foreground reply queue. */
+    void addCommand(AssistantItem message, AssistantItem receipt);
+
     /** Saves the user's message and its pending delivery together; an explicit retry requeues the same saved message. */
     void enqueue(AssistantItem message);
 

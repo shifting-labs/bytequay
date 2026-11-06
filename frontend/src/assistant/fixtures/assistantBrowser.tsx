@@ -28,6 +28,7 @@ import type {
 } from '../../types';
 import { settingsRoute } from '../../settings/routes';
 import { workspaceAgentTaskRoute, workspaceReviewTaskRoute } from '../../workspaces/model';
+import { workspaceFixture } from '../../workspaces/fixtures/workspace';
 import { MyWorkLine } from '../../home/MyWork';
 import { publishShownWork } from '../../home/useMyWork';
 import { WORK_LANES, type WorkItem } from '../../home/work';
@@ -403,6 +404,91 @@ async function sendsWithWhatIsShown(): Promise<void> {
     assert(Number(view.calls.closed) === 1, 'Escape closes the Assistant');
   }
   finally { view.dispose(); }
+}
+
+async function startsATaskCommandInARepository(): Promise<void> {
+  const searched: unknown[][] = [];
+  let repositories = [workspaceFixture({ id: 'ws2', monitoredOwner: 'acme', monitoredRepo: 'gateway' }),
+    workspaceFixture({ id: 'ws1', monitoredOwner: 'owner', monitoredRepo: 'repository' })];
+  // Home's list, so My work reads none of these repositories.
+  publishShownWork([]);
+  const view = mount(VIEW, 0, NOTICES, [], undefined, undefined, {
+    listWorkspaces: async () => repositories,
+    getComposerSuggestions: async (...args: unknown[]) => {
+      searched.push(args);
+      return [{ number: 7, title: 'Snapshot ids drift', author: 'sam', url: 'https://github.com/owner/repository/issues/7', updatedAt: '2026-10-16T07:00:00Z' }];
+    },
+  } as unknown as Partial<Bridge>);
+  const options = () => [...view.host.querySelectorAll('.agt-mentions [role="option"]')].map(option => option.textContent ?? '');
+  try {
+    await settle();
+    const input = type(view.host, '@');
+    await settle();
+    assert(JSON.stringify(options().map(text => /^@(?:fix|review|contribute)/.exec(text)?.[0])) === '["@fix","@review","@contribute"]', `@ offers the task commands: ${options()}`);
+    enter(input);
+    await settle();
+    assert(input.value === '@fix ' && JSON.stringify(options()) === '["owner/repository","acme/gateway"]',
+      `A command asks for a repository, the one on screen first: ${input.value} ${options()}`);
+    type(view.host, '@fix gate');
+    await settle();
+    assert(JSON.stringify(options()) === '["acme/gateway"]', `Typing filters the repositories: ${options()}`);
+    type(view.host, '@fix ');
+    await settle();
+    enter(input);
+    await settle();
+    assert(String(input.value) === '@fix owner/repository ' && JSON.stringify(searched) === '[["ws1","FIX",""]]', `A repository then lists its open issues: ${JSON.stringify(searched)}`);
+    enter(input);
+    await settle();
+    assert(String(input.value) === '@fix owner/repository https://github.com/owner/repository/issues/7 ' && view.calls.sent.length === 0,
+      `Choosing an issue adds it without sending: ${input.value}`);
+    type(view.host, `${input.value}keep it small`);
+    await settle();
+    assert(view.host.querySelector('.agt-mentions') === null, 'Words after the issue close the list');
+    enter(input);
+    await settle();
+    assert(view.calls.sent[0]?.[1] === '@fix owner/repository https://github.com/owner/repository/issues/7 keep it small', `Enter sends the command: ${view.calls.sent[0]}`);
+    type(view.host, '@contribute owner/repository ');
+    await settle();
+    assert(JSON.stringify(options().map(text => /^[a-z]+/.exec(text)?.[0])) === '["bug","performance","cleanup","tests","docs"]',
+      `After the repository, contribute offers its focus words: ${options()}`);
+    type(view.host, '@contribute owner/repository cl');
+    await settle();
+    enter(input);
+    await settle();
+    assert(String(input.value) === '@contribute owner/repository cleanup ' && (view.calls.sent.length as number) === 1, `Enter completes the focus: ${input.value}`);
+    input.blur();
+    input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    await settle();
+    repositories = [workspaceFixture({ id: 'ws3', monitoredOwner: 'acme', monitoredRepo: 'new-project' })];
+    input.focus();
+    input.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    type(view.host, '@review ');
+    await settle();
+    assert(JSON.stringify(options()) === '["acme/new-project"]', `Returning to the composer refreshes watched repositories: ${options()}`);
+  }
+  finally {
+    view.dispose();
+    publishShownWork(null);
+  }
+  const fixture = createFixtureRoot();
+  const requests: AssistantRequest[] = [];
+  const listen = (event: Event) => requests.push((event as CustomEvent<AssistantRequest>).detail);
+  window.addEventListener('bytequay:assistant-open', listen);
+  try {
+    flushSync(() => fixture.root.render(<HomeComposer work={[]} />));
+    const input = element<HTMLTextAreaElement>('.assistant-home textarea', fixture.host, 'Home has its composer');
+    input.focus();
+    changeInput(input, '@contribute ');
+    await settle();
+    enter(input);
+    await settle();
+    assert(input.value === '@contribute acme/new-project ' && requests.length === 0, 'Home completes the repository without sending');
+    enter(input);
+    await settle();
+    assert(Number(requests.length) === 1 && requests[0].message === '@contribute acme/new-project' && String(input.value) === '',
+      'Home sends the command to the Assistant when no optional focus is selected');
+  }
+  finally { window.removeEventListener('bytequay:assistant-open', listen); fixture.dispose(); }
 }
 
 async function showsRunningTasksAndAll(): Promise<void> {
@@ -1294,7 +1380,7 @@ async function sendsRulesToTheAssistant(): Promise<void> {
 export async function run(): Promise<{ name: string; error?: string }[]> {
   return runScenarios([['floats over the page', floatsOverThePage], ['shows the day once the user talks', showsTheDayOnceTheUserTalks],
     ['opens one view at a time', opensOneViewAtATime], ['answers with the task’s buttons', answersWithTheTasksButtons], ['sends with what is shown', sendsWithWhatIsShown],
-    ['shows running tasks and All', showsRunningTasksAndAll], ['draws results with their evidence', drawsResultsWithTheirEvidence],
+    ['starts a task command in a repository', startsATaskCommandInARepository], ['shows running tasks and All', showsRunningTasksAndAll], ['draws results with their evidence', drawsResultsWithTheirEvidence],
     ['opens at a card from its alert', opensAtACardFromItsAlert], ['waits in line while it answers', waitsInLineWhileItAnswers], ['opens My work', opensMyWork], ['takes the list Home shows', takesTheListHomeShows],
     ['stops a running reply', stopsARunningReply], ['shows a list as rows, cards or a timeline', showsAListAsRowsCardsOrATimeline],
     ['follows an open once when it arrives', followsAnOpenOnceWhenItArrives], ['completes a task from its card', completesATaskFromItsCard],

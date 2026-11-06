@@ -345,6 +345,12 @@ Ask it to backport a pull request into a repository and it starts a
 **@backport** task there. The pull request doesn't have to be merged: the
 backport waits for the merge, then opens its PR.
 
+To start a task yourself, type **@fix**, **@review** or **@contribute**, choose
+the repository, then the issue or pull request, as in a repository's task
+composer. The repository on screen comes first. The task starts at once with
+that repository's agent; the Assistant's model doesn't read the message, so it
+needs none of the switches above.
+
 Every action leaves a receipt with **Open**. **Stop work…** asks, then cancels
 the current turn it identifies. The Assistant delegates file edits and commands
 to the task’s agent.

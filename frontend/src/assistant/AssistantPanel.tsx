@@ -22,6 +22,7 @@ import { relativeTime } from '@bytequay/ui/relativeTime';
 import Composer from '../Composer';
 import { renderMarkdown } from '../agents/markdown';
 import { runningTaskRoute } from '../agents/RunningTasks';
+import { useTaskSuggestions } from '../agents/useTaskSuggestions';
 import { IconButton, SourceIcon } from '../cards/Card';
 import { MyWorkBoard } from '../home/MyWork';
 import TodayList, { openTarget } from '../home/TodayList';
@@ -108,6 +109,9 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
   const talkOpen = items.length > 0;
   // Messages sent while a reply was written wait in line on the backend, each answered in turn.
   const waitingIds = new Set(chat?.waiting ?? []);
+  // A task command's repository list leads with the repository on screen.
+  const suggestions = useTaskSuggestions({ draft, onDraftChange: setDraft, inputRef: input, disabled: !chatEnabled, backport: false, artifacts: false,
+    repository: { preferred: screen === null ? null : /^(?:pr|issue):([^#]+)#/.exec(screen)?.[1] ?? (screen.startsWith('ws:') ? screen.slice(3) : null) } });
 
   useEffect(() => { replying.current = running; }, [running]);
 
@@ -338,9 +342,11 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
     : <div className="assistant-talk" onClickCapture={openLink} onAuxClickCapture={openLink}>{entries}</div>;
 
   const composer = chatEnabled ? (
-    <Composer inputRef={input} aria-label="Message the Assistant" placeholder={SUGGESTION} value={draft} maxLength={16 * 1024}
-      onChange={event => setDraft(event.target.value)} busy={sending} onSubmit={() => submitText(draft.trim())}
+    <Composer {...suggestions.inputProps} inputRef={input} aria-label="Message the Assistant" placeholder={SUGGESTION} value={draft} maxLength={16 * 1024}
+      busy={sending} onSubmit={() => submitText(draft.trim())}
       onKeyDown={event => {
+        suggestions.inputProps.onKeyDown?.(event);
+        if (event.defaultPrevented) return;
         if (takesSuggestion(event, draft)) {
           event.preventDefault();
           setDraft(SUGGESTION);
@@ -354,6 +360,7 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
         pills.focus();
       }}
       header={<>
+        {suggestions.list}
         {waitingIds.size > 0 && <div className="assistant-waiting-line"><Clock size={12} aria-hidden="true" />{waitingIds.size} waiting · answers after the current reply</div>}
         {(chat?.assessing ?? 0) > 0 && <div className="assistant-waiting-line">Reviewing {chat?.assessing} {chat?.assessing === 1 ? 'result' : 'results'} in the background · you can keep chatting</div>}
       </>}

@@ -168,6 +168,8 @@ class AssistantActions
     // Match the whole message: a model-selected excerpt cannot turn a refusal or a question into consent.
     private static final Pattern APPROVAL_COMMAND = Pattern.compile("(?:please )?(allow|approve|deny|reject)(?: (?:it|this|that|(?:the|this|that) command))?"
             + "(?: once)?(?:,? please)?[.!]?");
+    // The new-task composer's commands, then the repository the panel's @ list puts after them.
+    private static final Pattern TASK_COMMAND = Pattern.compile("^\\s*@(contribute|fix|review)(?=\\s|$)\\s*(\\S*)", Pattern.CASE_INSENSITIVE);
 
     private final AssistantStore store;
     private final AssistantSettings permissions;
@@ -311,6 +313,39 @@ class AssistantActions
         AssistantReceipt receipt = new AssistantReceipt(Operation.REPLY_TO_TASK, Outcome.DONE, queued ? Optional.of("After its current turn") : Optional.empty(),
                 target(task.id()), Optional.empty(), sent.turnId().map(TurnId::toString), Optional.empty(), Optional.of(words));
         return AssistantItem.receipt(conversationId, clock.instant(), (queued ? "Queued your words for " : "Sent your words to ") + clip(task.title(), 80), receipt, key);
+    }
+
+    /** Whether the message starts with a task command, which the app starts itself instead of a model reading it. */
+    static boolean isTaskCommand(String text)
+    {
+        return TASK_COMMAND.matcher(text).find();
+    }
+
+    /**
+     * The user's own task command, started with no model between: "@fix owner/name words" starts "@fix words" in that repository, as its
+     * new-task composer would, with its usual agent and the saved automation. Started again under the same key, it is the same task.
+     *
+     * @return the receipt, without the key, which the user's message keeps
+     * @throws IllegalArgumentException when no watched repository follows the command
+     * @throws AgentConflictException when the repository's agent is not ready
+     */
+    AssistantItem startCommand(String conversationId, String text, String key)
+    {
+        Matcher command = TASK_COMMAND.matcher(text);
+        checkArgument(command.find(), "That is not a task command");
+        String name = command.group(1).toLowerCase(Locale.ROOT);
+        String repository = command.group(2);
+        List<Workspace> matches = workspaces.findAll().stream()
+                .filter(found -> found.monitoredRepository().fullName().equalsIgnoreCase(repository)).collect(ImmutableList.toImmutableList());
+        checkArgument(!matches.isEmpty(), "Name a watched repository after @%s, such as owner/name", name);
+        checkArgument(matches.size() == 1, "More than one watched repository matches %s; start from its repository page", repository);
+        Workspace workspace = matches.getFirst();
+        String rest = text.substring(command.end()).strip();
+        String input = "assistant-command:" + conversationId + ":" + key;
+        TaskId taskId = new TaskId(UUID.nameUUIDFromBytes(input.getBytes(StandardCharsets.UTF_8)));
+        ItemTaskStarter.Started started = starts.start(starts.freeText(workspace.id(), rest.isEmpty() ? "@" + name : "@" + name + " " + rest), Optional.empty(), taskId, input)
+                .orElseThrow(() -> new AgentConflictException("The agent for " + workspace.monitoredRepository().fullName() + " isn't ready"));
+        return AssistantItem.receipt(conversationId, clock.instant(), "Started @" + name, started(started, input).withWords(text));
     }
 
     /** A task just started: where it runs, its agent and the automation it delivers with, and the turn it began. */

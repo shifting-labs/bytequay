@@ -617,6 +617,61 @@ class TestAssistantActions
     }
 
     @Test
+    void startsATypedTaskCommandInItsRepositoryWithNoModelBetween()
+    {
+        assertThat(AssistantActions.isTaskCommand(" @Fix owner/repository #7")).isTrue();
+        assertThat(AssistantActions.isTaskCommand("@review")).isTrue();
+        assertThat(AssistantActions.isTaskCommand("@fixes owner/repository")).isFalse();
+        assertThat(AssistantActions.isTaskCommand("please @fix owner/repository")).isFalse();
+
+        AssistantItem receipt = actions.startCommand("c1", "@fix Owner/Repository https://github.com/owner/repository/issues/7  keep it small", "k1");
+        InteractiveTaskStart start = started();
+        assertThat(start.message()).isEqualTo("@fix https://github.com/owner/repository/issues/7  keep it small");
+        assertThat(start.workspaceId()).isEqualTo("ws1");
+        assertThat(start.laneId()).isEqualTo(new AgentLaneId("claude"));
+        assertThat(start.idempotencyKey()).isEqualTo("assistant-command:c1:k1");
+        assertThat(receipt.text()).isEqualTo("Started @fix");
+        assertThat(receipt.key()).isEmpty();
+        assertThat(receipt.receipt().orElseThrow().words()).contains("@fix Owner/Repository https://github.com/owner/repository/issues/7  keep it small");
+        assertThat(receipt.receipt().orElseThrow().detail()).contains("owner/repository · Claude Code Opus 5.5 · Auto-Draft PR");
+        assertThat(receipt.receipt().orElseThrow().target()).contains(AgendaTarget.of(AgendaTarget.Kind.TASK, "ws1", start.taskId().toString()));
+
+        // Sent again under its key, it is the same task.
+        actions.startCommand("c1", "@fix Owner/Repository https://github.com/owner/repository/issues/7  keep it small", "k1");
+        ArgumentCaptor<InteractiveTaskStart> starts = ArgumentCaptor.forClass(InteractiveTaskStart.class);
+        verify(starter, times(2)).start(starts.capture());
+        assertThat(starts.getAllValues()).extracting(InteractiveTaskStart::taskId).containsOnly(start.taskId());
+
+        actions.startCommand("c2", "@fix owner/repository #7", "k1");
+        assertThat(started().taskId()).isNotEqualTo(start.taskId());
+        assertThat(started().idempotencyKey()).isEqualTo("assistant-command:c2:k1");
+
+        actions.startCommand("c1", "@contribute owner/repository", "k2");
+        assertThat(started().message()).isEqualTo("@contribute");
+
+        assertThatThrownBy(() -> actions.startCommand("c1", "@review someone/else #3", "k3")).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Name a watched repository after @review, such as owner/name");
+        assertThatThrownBy(() -> actions.startCommand("c1", "@review", "k4")).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Name a watched repository after @review, such as owner/name");
+        when(models.agentModel(AgentModelType.DEVELOPMENT, Optional.of("ws1")))
+                .thenReturn(new AgentModelSetting(AgentModelType.DEVELOPMENT, true, "gemini", "Gemini", "flash", "Flash", Optional.empty()));
+        assertThatThrownBy(() -> actions.startCommand("c1", "@contribute owner/repository", "k5")).isInstanceOf(AgentConflictException.class)
+                .hasMessage("The agent for owner/repository isn't ready");
+    }
+
+    @Test
+    void aTypedCommandRefusesAmbiguousRepositoryNames()
+    {
+        Workspace other = new Workspace("ws2", "Project", 2, RepoRef.of("owner", "repository"), Optional.empty(), Optional.empty(), 2, RepoRef.of("owner", "repository"),
+                Workspace.Topology.DIRECT, "main", "https://gitlab.example.com/owner/repository.git", Optional.empty(), Optional.empty(), "/managed/other", Optional.empty(),
+                Optional.empty(), 0, NOW, NOW, new HostingServer(GITLAB, URI.create("https://gitlab.example.com"), URI.create("https://gitlab.example.com/api/v4")));
+        when(workspaces.findAll()).thenReturn(ImmutableList.of(repository, other));
+        assertThatThrownBy(() -> actions.startCommand("c1", "@review owner/repository #7", "k1"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("More than one watched repository matches");
+        verify(starter, never()).start(any());
+    }
+
+    @Test
     void startsAnItemWithItsOwnFirstMessageThenTheUsersNote()
     {
         when(workItems.find("w22")).thenReturn(Optional.of(new WorkItem("w22", "ws1", "Expose snapshot id in metadata", WorkItem.Kind.DEVELOP, "",

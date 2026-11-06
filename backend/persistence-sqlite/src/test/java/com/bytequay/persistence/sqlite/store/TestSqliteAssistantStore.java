@@ -123,6 +123,24 @@ class TestSqliteAssistantStore
     }
 
     @Test
+    void aDirectCommandKeepsItsReceiptAndFollowWithoutQueuedDelivery()
+    {
+        AssistantItem message = AssistantItem.user(CONVERSATION, AT, "@fix owner/repository #7", ImmutableList.of(), Optional.empty(), "command-key");
+        AssistantReceipt started = AssistantReceipt.done(AssistantReceipt.Operation.START_TASK,
+                Optional.of(AgendaTarget.of(AgendaTarget.Kind.TASK, "workspace", "task-1"))).withWords(message.text());
+        AssistantItem receipt = AssistantItem.receipt(CONVERSATION, AT, "Started @fix", started);
+        store.addCommand(message, receipt);
+        store.addCommand(message, AssistantItem.receipt(CONVERSATION, AT, "Duplicate receipt", started));
+        entities.flush();
+        entities.clear();
+
+        assertThat(store.items(CONVERSATION)).containsExactly(message, receipt);
+        assertThat(follows.follow(CONVERSATION, "task-1")).isPresent();
+        assertThat(store.queued()).isEmpty();
+        assertThat(store.interrupted()).isEmpty();
+    }
+
+    @Test
     void reloadKeepsQueuedAndUncertainDeliveriesAndCompletionIsIdempotent()
     {
         store.save(AssistantConversation.start(CONVERSATION, "first", AT));

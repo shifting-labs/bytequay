@@ -120,6 +120,19 @@ public class SqliteAssistantStore
 
     @Override
     @Transactional
+    public void addCommand(AssistantItem message, AssistantItem receipt)
+    {
+        checkArgument(message.kind() == AssistantItem.Kind.USER && receipt.kind() == AssistantItem.Kind.RECEIPT, "a command needs its user message and receipt");
+        checkArgument(message.conversationId().equals(receipt.conversationId()), "receipt belongs to another conversation");
+        checkArgument(!message.id().equals(receipt.id()), "message and receipt must be distinct");
+        if (!items.existsById(message.id())) {
+            add(message);
+            add(receipt);
+        }
+    }
+
+    @Override
+    @Transactional
     public void addAction(AssistantAction action)
     {
         actions.save(new AssistantActionEntity(action));
