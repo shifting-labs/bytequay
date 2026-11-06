@@ -29,12 +29,13 @@ public record DevelopmentResultBridge(String turnId, String instruction, boolean
     public static final String NAMING_INSTRUCTION = """
 
             The task's initial title and branch name are provisional because they were chosen before
-            investigation. Once the actual change is clear, call rename_task before your first turn's
-            final response with a title and a branch suffix describing it. ByteQuay shows the title at
-            once unless the user has renamed the task. The branch is a proposal; ByteQuay applies it only
+            investigation or an earlier turn ended before naming them. Once the actual change is clear,
+            call rename_task before this turn's final response with a title and a branch suffix describing
+            it. ByteQuay shows the title at once unless the user has renamed the task. The branch is a proposal; ByteQuay applies it only
             after this turn's provider process is verified stopped and only while the branch is still unpublished.
-            Task naming is available only during this first turn. If no concrete change is known by
-            its end, keep the initial names. Omit branch to keep an explicit branch name from the user.
+            Task naming stays available in later turns until the task has its own names. If no concrete
+            change is known by this turn's end, keep the initial names. Omit branch to keep an explicit
+            branch name from the user.
             Write the title as a short English phrase in sentence case naming the actual change, at most
             36 characters, without Markdown, quotes, or final punctuation; for example Convert Parquet
             time millis to micros, not Find and fix an issue.
@@ -82,8 +83,8 @@ public record DevelopmentResultBridge(String turnId, String instruction, boolean
             turns, discover ByteQuay's current tools before handling publication requests. Prefer a supported
             ByteQuay action; command-based publication is available only when the session's command scope permits it.
             Source-backed tasks must use ByteQuay's publication actions, including for explicit user requests.
-            Keep the task branch name fixed after the first turn, even when it is still unpublished.
-            Do not rename it in later turns through Git commands. A requested pull-request replacement belongs
+            Never rename the task branch through Git commands, even when it is still unpublished; only
+            rename_task, when it is offered, proposes a new name. A requested pull-request replacement belongs
             to ByteQuay's replace_task_pull_request action when available.
             """;
     public static final String REVIEW_REPLY_INSTRUCTION = """

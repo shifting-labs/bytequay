@@ -202,6 +202,36 @@ class TestInteractiveTaskNaming
         verifyNoInteractions(outbox, events);
     }
 
+    @Test
+    void aLaterMessageRetriesFailedNamingWhileBothNamesAreInitial()
+    {
+        InteractiveTaskNaming naming = service(Runnable::run);
+        String context = "Earlier request: Fix messages\n\nLatest request:\nTry again";
+        when(names.generate(AgentLaneId.CODEX_CLI, DEFAULTS, context)).thenReturn(Optional.of(GENERATED));
+        // An imported PR or an already named branch keeps its name.
+        naming.retry(id, "Try again");
+        verifyNoInteractions(names);
+
+        when(branches.hasInitialBranch(any())).thenReturn(true);
+        naming.retry(id, "Try again");
+        assertThat(current.get().title()).isEqualTo(GENERATED.title());
+        verify(branches).propose(id, GENERATED.branch());
+
+        naming.retry(id, "Try again");
+        verify(names).generate(AgentLaneId.CODEX_CLI, DEFAULTS, context);
+    }
+
+    @Test
+    void theAgentMayNameTheTaskWhileEitherNameIsInitial()
+    {
+        InteractiveTaskNaming naming = service(Runnable::run);
+        assertThat(naming.renamable(current.get())).isTrue();
+        AgentTask titled = current.get().withTitle("Fix messages", TitleSource.AGENT, NOW);
+        assertThat(naming.renamable(titled)).isFalse();
+        when(branches.hasInitialBranch(titled)).thenReturn(true);
+        assertThat(naming.renamable(titled)).isTrue();
+    }
+
     private InteractiveTaskNaming service(Executor executor)
     {
         return new InteractiveTaskNaming(names, tasks, runtime, beans.getBeanProvider(DevelopmentBranchService.class), executor,

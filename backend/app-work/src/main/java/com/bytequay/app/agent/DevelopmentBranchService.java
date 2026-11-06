@@ -38,7 +38,6 @@ import org.springframework.stereotype.Component;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -102,13 +101,14 @@ public class DevelopmentBranchService
             checkState(turn.id().equals(turnId) && turn.state() == TurnState.RUNNING && turn.cancellationRequestedAt().isEmpty() && turn.developmentOrigin().isEmpty()
                     && turn.settings().flatMap(AgentTurnSettings::developmentAutomation).filter(DevelopmentAutomation::enabled).isPresent(),
                     "Branch naming requires the active user development turn");
-            List<AgentTurn> history = turns.list(taskId);
-            checkState(history.size() == 1 && history.getFirst().id().equals(turnId), "Branch naming is only available during the first turn");
             checkState(task.worktreeMutationClaim().filter(claim -> claim.kind() == WorktreeMutationClaim.Kind.TURN && claim.ownerId().equals(turnId.toString())).isPresent(),
                     "The development turn no longer owns the worktree");
             TaskWorktree previous = task.taskWorktree().orElseThrow();
             if (assignments.findByTaskId(taskId.toString()).isPresent()) {
                 return "Keep the imported PR branch: " + previous.generatedBranch();
+            }
+            if (!TaskBranches.isInitial(taskId, previous.generatedBranch())) {
+                return "Keep the task's named branch: " + previous.generatedBranch();
             }
             String branch = fullName(task, suffix);
             agentNamed.add(taskId);
@@ -202,6 +202,12 @@ public class DevelopmentBranchService
                 return tasks.require(task.id());
             });
         }
+    }
+
+    /** A turn that failed or went the wrong way leaves the generated branch, so a later turn may still name it. */
+    public boolean hasInitialBranch(AgentTask task)
+    {
+        return eligible(task) && task.taskWorktree().filter(worktree -> TaskBranches.isInitial(task.id(), worktree.generatedBranch())).isPresent();
     }
 
     private void record(TaskId taskId, TaskWorktree renamed)

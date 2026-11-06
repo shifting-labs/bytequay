@@ -67,6 +67,12 @@ public final class TaskBranches
         return login + "/bytequay/";
     }
 
+    /** Whether the branch still has the name {@link #generate} gave it, which ends with the task's short ID. */
+    public static boolean isInitial(TaskId taskId, String branch)
+    {
+        return branch.endsWith("-" + taskId.toString().substring(0, 8));
+    }
+
     static boolean isCleanName(String branch)
     {
         return branch.matches("[a-z][a-z0-9]*(?:-[a-z0-9]+)+");

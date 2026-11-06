@@ -42,6 +42,7 @@ import java.util.Optional;
 import static com.bytequay.agent.core.AgentTaskFixtures.created;
 import static com.bytequay.app.review.ReviewTestData.pullRequestReview;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -61,6 +62,7 @@ class TestDevelopmentResultBridgeResolverImpl
     void setUp()
     {
         beans.registerSingleton("naming", naming);
+        when(naming.renamable(any())).thenReturn(true);
     }
 
     @Test
@@ -71,28 +73,30 @@ class TestDevelopmentResultBridgeResolverImpl
 
         DevelopmentResultBridge binding = resolver.resolve(task.id().toString()).orElseThrow();
         assertThat(binding.turnId()).isEqualTo(turn.id().toString());
-        assertThat(binding.instruction()).contains("readyForDelivery=false", "root agent", "rename_task");
+        assertThat(binding.instruction()).contains("readyForDelivery=false", "root agent", "call rename_task");
         Optional<String> suffix = Optional.of("convert-parquet-time-millis-to-micro");
         when(naming.rename(task.id(), turn.id(), "Convert Parquet time millis", suffix)).thenReturn("Renamed the task");
         assertThat(binding.taskRenamer().orElseThrow().apply("Convert Parquet time millis", suffix)).isEqualTo("Renamed the task");
 
+        when(naming.renamable(task)).thenReturn(false);
         AgentTurn next = accept(task, Optional.of(AUTOMATION));
         DevelopmentResultBridge nextBinding = resolver.resolve(task.id().toString()).orElseThrow();
         assertThat(nextBinding.turnId()).isEqualTo(next.id().toString());
         assertThat(nextBinding.taskRenamer()).isEmpty();
-        assertThat(nextBinding.instruction()).doesNotContain("rename_task").contains("Keep the task branch name fixed after the first turn");
+        assertThat(nextBinding.instruction()).doesNotContain("call rename_task").contains("Never rename the task branch through Git commands");
     }
 
     @Test
-    void laterTurnsCannotAcquireBranchNamingWhenTheFirstTurnDidNotRename()
+    void laterTurnsCanNameATaskThatKeepsAnInitialName()
     {
         AgentTask task = task(true, Optional.of(AUTOMATION));
         accept(task, Optional.of(AUTOMATION));
         assertThat(resolver.resolve(task.id().toString()).orElseThrow().taskRenamer()).isPresent();
 
         accept(task, Optional.of(AUTOMATION));
-        assertThat(resolver.resolve(task.id().toString()).orElseThrow().taskRenamer()).isEmpty();
+        assertThat(resolver.resolve(task.id().toString()).orElseThrow().taskRenamer()).isPresent();
 
+        when(naming.renamable(task)).thenReturn(false);
         accept(task, Optional.of(AUTOMATION));
         assertThat(resolver.resolve(task.id().toString()).orElseThrow().taskRenamer()).isEmpty();
     }

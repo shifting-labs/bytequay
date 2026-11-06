@@ -53,6 +53,7 @@ import com.bytequay.agent.spi.AgentPermissionPolicy;
 import com.bytequay.agent.spi.AgentProviderStatus;
 import com.bytequay.app.agent.AgentTaskStartupProgress;
 import com.bytequay.app.agent.InteractiveAgentTaskStarter;
+import com.bytequay.app.agent.InteractiveTaskNaming;
 import com.bytequay.app.agent.InteractiveTaskStart;
 import com.bytequay.app.agent.IssueDevelopmentService;
 import com.bytequay.app.agent.runtime.AgentStartupRecovery;
@@ -146,6 +147,7 @@ public class AgentController
     private final TaskPullRequestOwnership ownership;
     private final ReviewFixService reviewFixes;
     private final AutoMergeService autoMerges;
+    private final InteractiveTaskNaming naming;
 
     public AgentController(
             AgentTaskService taskService,
@@ -172,7 +174,8 @@ public class AgentController
             IssueDevelopmentService issueDevelopment,
             TaskPullRequestOwnership ownership,
             ReviewFixService reviewFixes,
-            AutoMergeService autoMerges)
+            AutoMergeService autoMerges,
+            InteractiveTaskNaming naming)
     {
         this.taskService = requireNonNull(taskService, "taskService is null");
         this.contextBuilds = requireNonNull(contextBuilds, "contextBuilds is null");
@@ -199,6 +202,7 @@ public class AgentController
         this.ownership = requireNonNull(ownership, "ownership is null");
         this.reviewFixes = requireNonNull(reviewFixes, "reviewFixes is null");
         this.autoMerges = requireNonNull(autoMerges, "autoMerges is null");
+        this.naming = requireNonNull(naming, "naming is null");
     }
 
     /**
@@ -497,6 +501,7 @@ public class AgentController
                 idempotencyKey).withDevelopmentAutomation(replay ? Optional.empty() : submissionAutomation(taskService.get(id), request.developmentAutomation())));
         if (!replay) {
             recordPrompt(taskId, idempotencyKey, request.message());
+            naming.retry(id, request.message());
         }
         sendTiming.debug("send-timing phase=turn.request.end epochMs={} taskId={} turnId={}", System.currentTimeMillis(), id, turn.id());
         return ResponseEntity.accepted().body(InteractiveAgentHttpContract.turn(turn));

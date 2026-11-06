@@ -188,7 +188,8 @@ class TestAgentHttpErrors
                 mock(IssueDevelopmentService.class),
                 mock(TaskPullRequestOwnership.class),
                 mock(ReviewFixService.class),
-                mock(AutoMergeService.class));
+                mock(AutoMergeService.class),
+                mock(InteractiveTaskNaming.class));
         mvc = standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();

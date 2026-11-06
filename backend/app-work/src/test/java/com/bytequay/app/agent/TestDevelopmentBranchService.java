@@ -21,6 +21,7 @@ import com.bytequay.agent.core.AgentTurnSettings;
 import com.bytequay.agent.core.DevelopmentAutomation;
 import com.bytequay.agent.core.DevelopmentTurnOrigin;
 import com.bytequay.agent.core.RepositoryIdentity;
+import com.bytequay.agent.core.TaskBranches;
 import com.bytequay.agent.core.TaskId;
 import com.bytequay.agent.core.TaskWorktree;
 import com.bytequay.agent.core.TitleSource;
@@ -81,7 +82,7 @@ class TestDevelopmentBranchService
     private final TaskId id = TaskId.random();
     private final TurnId turnId = TurnId.random();
     private final TaskWorktree worktree = new TaskWorktree(id, "workspace", new RepositoryIdentity("owner", "repo"),
-            Path.of("/tmp", id.toString()), "contributor/bytequay/find-and-fix-issue", "a".repeat(40));
+            Path.of("/tmp", id.toString()), TaskBranches.generate(id, "contributor", "Find and fix issue"), "a".repeat(40));
     private final AgentTask task = created(id, true, "Find an issue", TitleSource.AGENT, AgentLaneId.CODEX_CLI, worktree,
             AgentTaskDefaults.forPermission(AgentPermissionPolicy.AUTO).withDevelopmentAutomation(DevelopmentAutomation.DEFAULT), NOW)
             .claimWorktreeMutation(WorktreeMutationClaim.turn(turnId, NOW), NOW);
@@ -299,22 +300,33 @@ class TestDevelopmentBranchService
     void preservesTheBranchForAnImportedPullRequest()
     {
         when(assignments.findByTaskId(id.toString())).thenReturn(Optional.of(new PullRequestTask(id.toString(), "workspace", "owner/repo", 7, "PR context")));
+        assertThat(service.hasInitialBranch(currentTask.get())).isFalse();
         assertThat(service.rename(id, turnId, SUFFIX)).contains("Keep the imported PR branch", worktree.generatedBranch());
         verifyNoInteractions(git, followups);
     }
 
     @ParameterizedTest
     @EnumSource(value = TurnState.class, names = {"COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED"})
-    void laterTurnsCannotRenameEvenWhenTheFirstTurnLeftTheInitialBranch(TurnState firstOutcome)
+    void laterTurnsCanNameTheBranchTheFirstTurnLeftInitial(TurnState firstOutcome)
     {
         AgentTurn first = AgentTurn.accepted(TurnId.random(), id, "first", turn.settings().orElseThrow(), NOW.minusSeconds(2))
                 .markDeliveryStarted(NOW.minusSeconds(2)).running(new ProviderTurnRef("previous"), Optional.empty())
                 .finish(firstOutcome, turn.metrics(), firstOutcome == TurnState.COMPLETED ? Optional.empty() : Optional.of("Stopped"), NOW.minusSeconds(1));
         when(turns.list(id)).thenReturn(ImmutableList.of(first, turn));
 
-        assertThatThrownBy(() -> service.rename(id, turnId, SUFFIX))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Branch naming is only available during the first turn");
+        assertThat(service.hasInitialBranch(currentTask.get())).isTrue();
+        assertThat(service.rename(id, turnId, SUFFIX)).contains("Recorded proposed branch", "contributor/bytequay/" + SUFFIX);
+        verifyNoInteractions(git, followups);
+    }
+
+    @Test
+    void keepsABranchThatAlreadyHasItsOwnName()
+    {
+        String named = "contributor/bytequay/fix-message-display";
+        currentTask.set(task.withBranch(named, NOW));
+
+        assertThat(service.hasInitialBranch(currentTask.get())).isFalse();
+        assertThat(service.rename(id, turnId, SUFFIX)).isEqualTo("Keep the task's named branch: " + named);
         verifyNoInteractions(git, followups);
     }
 

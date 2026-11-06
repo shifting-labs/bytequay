@@ -1388,7 +1388,7 @@ public final class PermissionBroker
                 DevelopmentResultTool.schema(bridge))));
         context.development().filter(bridge -> bridge.taskRenamer().isPresent()).ifPresent(ignored -> tools.add(new ToolDefinition(
                 DevelopmentResultBridge.RENAME_TASK_TOOL_NAME,
-                "Name the task during the first turn: the title shows at once; the optional branch is applied after verified provider shutdown. "
+                "Name the task while its names are provisional: the title shows at once; the optional branch is applied after verified provider shutdown. "
                         + "Keep using the current branch during this turn",
                 ToolSchemas.object(ImmutableMap.of(
                         "title", ImmutableMap.of("type", "string", "minLength", 1, "maxLength", MAXIMUM_TASK_TITLE_CHARACTERS),

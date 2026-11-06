@@ -13,7 +13,6 @@
  */
 package com.bytequay.app.agent;
 
-import com.bytequay.agent.core.AgentTurn;
 import com.bytequay.agent.core.AgentTurnSettings;
 import com.bytequay.agent.core.DevelopmentAutomation;
 import com.bytequay.agent.core.DevelopmentTurnOrigin;
@@ -27,7 +26,6 @@ import com.bytequay.core.review.AgentReviewStore;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
 import java.util.Optional;
 
 import static java.util.Objects.requireNonNull;
@@ -57,20 +55,19 @@ public class DevelopmentResultBridgeResolverImpl
         return tasks.find(id)
                 .filter(task -> task.interactive() && task.state() == TaskState.OPEN)
                 .filter(task -> reviews.findReviewByTask(taskId).isEmpty())
-                .flatMap(task -> turns.findActive(id))
-                .filter(turn -> turn.settings().flatMap(AgentTurnSettings::developmentAutomation).filter(DevelopmentAutomation::enabled).isPresent()
-                        || turn.developmentOrigin().filter(origin -> origin.kind() == DevelopmentTurnOrigin.Kind.REFINE_SUMMARY).isPresent())
-                .map(turn -> {
-                    List<AgentTurn> history = turns.list(id);
-                    boolean canRename = turn.developmentOrigin().isEmpty() && history.size() == 1 && history.getFirst().id().equals(turn.id());
-                    boolean reviewReplies = turn.developmentOrigin().isEmpty()
-                            && turn.settings().flatMap(AgentTurnSettings::developmentAutomation).filter(DevelopmentAutomation::reviewFix).isPresent();
-                    return new DevelopmentResultBridge(turn.id().toString(),
-                            DevelopmentResultBridge.INSTRUCTION + (canRename ? DevelopmentResultBridge.NAMING_INSTRUCTION : "")
-                                    + (reviewReplies ? DevelopmentResultBridge.REVIEW_REPLY_INSTRUCTION : ""),
-                            turn.developmentOrigin().filter(origin -> origin.kind() == DevelopmentTurnOrigin.Kind.REFINE_SUMMARY).isPresent(),
-                            reviewReplies,
-                            canRename ? Optional.of((title, suffix) -> naming.getObject().rename(id, turn.id(), title, suffix)) : Optional.empty());
-                });
+                .flatMap(task -> turns.findActive(id)
+                        .filter(turn -> turn.settings().flatMap(AgentTurnSettings::developmentAutomation).filter(DevelopmentAutomation::enabled).isPresent()
+                                || turn.developmentOrigin().filter(origin -> origin.kind() == DevelopmentTurnOrigin.Kind.REFINE_SUMMARY).isPresent())
+                        .map(turn -> {
+                            boolean canRename = turn.developmentOrigin().isEmpty() && naming.getObject().renamable(task);
+                            boolean reviewReplies = turn.developmentOrigin().isEmpty()
+                                    && turn.settings().flatMap(AgentTurnSettings::developmentAutomation).filter(DevelopmentAutomation::reviewFix).isPresent();
+                            return new DevelopmentResultBridge(turn.id().toString(),
+                                    DevelopmentResultBridge.INSTRUCTION + (canRename ? DevelopmentResultBridge.NAMING_INSTRUCTION : "")
+                                            + (reviewReplies ? DevelopmentResultBridge.REVIEW_REPLY_INSTRUCTION : ""),
+                                    turn.developmentOrigin().filter(origin -> origin.kind() == DevelopmentTurnOrigin.Kind.REFINE_SUMMARY).isPresent(),
+                                    reviewReplies,
+                                    canRename ? Optional.of((title, suffix) -> naming.getObject().rename(id, turn.id(), title, suffix)) : Optional.empty());
+                        }));
     }
 }

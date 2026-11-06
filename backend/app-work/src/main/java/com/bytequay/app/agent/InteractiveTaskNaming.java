@@ -47,7 +47,7 @@ import static com.bytequay.app.config.AsyncConfig.IO_EXECUTOR;
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
-/** Optional naming starts only after the first turn has been accepted; it never delays Send. */
+/** Optional naming starts only after a turn has been accepted; it never delays Send. */
 @Component
 public class InteractiveTaskNaming
 {
@@ -92,6 +92,25 @@ public class InteractiveTaskNaming
             running.remove(taskId);
             log.debug("Keeping the provisional name for task {}", taskId, failure);
         }
+    }
+
+    /** A later message retries background naming that failed or never finished; like the first attempt, it never fails Send. */
+    public void retry(TaskId taskId, String message)
+    {
+        try {
+            tasks.find(taskId)
+                    .filter(task -> task.titleSource() == TitleSource.PROVISIONAL && branches.getObject().hasInitialBranch(task))
+                    .ifPresent(task -> schedule(taskId, task.laneId(), task.defaults(), "Earlier request: " + task.title() + "\n\nLatest request:\n" + message));
+        }
+        catch (RuntimeException failure) {
+            log.debug("Keeping the provisional name for task {}", taskId, failure);
+        }
+    }
+
+    /** The agent may name the task in any user turn until both its title and its own branch have left their initial names. */
+    public boolean renamable(AgentTask task)
+    {
+        return task.titleSource() == TitleSource.PROVISIONAL || branches.getObject().hasInitialBranch(task);
     }
 
     private void generate(TaskId taskId, AgentLaneId laneId, AgentTaskDefaults defaults, String context)
