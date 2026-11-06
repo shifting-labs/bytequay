@@ -120,7 +120,8 @@ public final class ReviewCommentReader
             if (snapshot.length() <= MAX_SNAPSHOT_CHARACTERS) {
                 threads.add(new ReviewThreadItem(root.remoteId(), new ReviewCommentItem(
                         new ReviewCommentAnchor(repo, number, "review_comment:" + latest.remoteId(), snapshot),
-                        requireNonNullElse(latest.actor(), ""), latest.actorBot(), Optional.ofNullable(latest.timestamp()))));
+                        requireNonNullElse(latest.actor(), ""), latest.actorBot(), Optional.ofNullable(latest.timestamp())),
+                        requireNonNullElse(latest.body(), ""), Optional.ofNullable(latest.htmlUrl())));
             }
         }
         return threads.build();

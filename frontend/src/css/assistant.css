@@ -378,6 +378,44 @@
   font-size: 12px;
 }
 
+/* Held review replies: the reviewer's comment on one line, then the reply in full, since that is what posts. */
+.assistant-replies {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+  list-style: none;
+}
+
+.assistant-replies__comment {
+  display: block;
+  overflow: hidden;
+  color: var(--fg-muted);
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-replies__comment:hover { text-decoration: underline; }
+
+.assistant-replies__reply {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 2px;
+  color: var(--fg-default);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.assistant-replies__reply > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--fg-muted);
+}
+
 .assistant-card__buttons {
   display: flex;
   flex-wrap: wrap;

@@ -22,11 +22,12 @@ import static java.util.Objects.requireNonNull;
 
 /**
  * One reviewer comment that Auto-Review fix handed to a task's agent, and what became of it. The agent's reply reaches
- * the pull request only after its fix is pushed. A post is marked started before it is sent, so a post whose outcome is unknown is
- * reported instead of repeated.
+ * the pull request only after its fix is pushed and the user had time to check it. A post is marked started before it is sent, so a
+ * post whose outcome is unknown is reported instead of repeated.
  *
  * @param requestKey the idempotency key of the input that asked the agent to fix this comment
  * @param rootCommentId the comment that opens the review thread, which replies and resolution address
+ * @param postAt when a held reply posts, unless the user posts it sooner or keeps it back
  */
 public record ReviewFixReply(
         String taskId,
@@ -38,6 +39,7 @@ public record ReviewFixReply(
         Instant requestedAt,
         Optional<String> reply,
         boolean fixed,
+        Optional<Instant> postAt,
         Optional<Instant> postStartedAt,
         Optional<Instant> postedAt,
         Optional<Instant> resolvedAt,
@@ -51,6 +53,7 @@ public record ReviewFixReply(
         checkText(requestKey, "requestKey");
         requireNonNull(requestedAt, "requestedAt is null");
         requireNonNull(reply, "reply is null");
+        requireNonNull(postAt, "postAt is null");
         requireNonNull(postStartedAt, "postStartedAt is null");
         requireNonNull(postedAt, "postedAt is null");
         requireNonNull(resolvedAt, "resolvedAt is null");
@@ -60,7 +63,7 @@ public record ReviewFixReply(
     public static ReviewFixReply requested(String taskId, String repo, int number, long rootCommentId, long commentId, String requestKey, Instant now)
     {
         return new ReviewFixReply(taskId, repo, number, rootCommentId, commentId, requestKey, now, Optional.empty(), false,
-                Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
+                Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
     }
 
     public String id()
@@ -74,33 +77,47 @@ public record ReviewFixReply(
         return postedAt.isEmpty() && failure.isEmpty();
     }
 
+    /** Answered and waiting out its time for the user, not yet sent or given up. */
+    public boolean held()
+    {
+        return waiting() && reply.isPresent() && postAt.isPresent() && postStartedAt.isEmpty();
+    }
+
+    /** A changed answer is held again from the start, so the user always sees what goes out. */
+
     public ReviewFixReply answered(String body, boolean fixed)
     {
         return new ReviewFixReply(taskId, repo, number, rootCommentId, commentId, requestKey, requestedAt, Optional.of(body), fixed,
-                postStartedAt, postedAt, resolvedAt, Optional.empty());
+                Optional.empty(), postStartedAt, postedAt, resolvedAt, Optional.empty());
+    }
+
+    public ReviewFixReply heldUntil(Instant at)
+    {
+        return new ReviewFixReply(taskId, repo, number, rootCommentId, commentId, requestKey, requestedAt, reply, fixed,
+                Optional.of(at), postStartedAt, postedAt, resolvedAt, failure);
     }
 
     public ReviewFixReply postStarted(Instant now)
     {
         return new ReviewFixReply(taskId, repo, number, rootCommentId, commentId, requestKey, requestedAt, reply, fixed,
-                Optional.of(now), postedAt, resolvedAt, failure);
+                postAt, Optional.of(now), postedAt, resolvedAt, failure);
     }
 
     public ReviewFixReply posted(Instant now)
     {
         return new ReviewFixReply(taskId, repo, number, rootCommentId, commentId, requestKey, requestedAt, reply, fixed,
-                postStartedAt, Optional.of(now), resolvedAt, failure);
+                postAt, postStartedAt, Optional.of(now), resolvedAt, failure);
     }
 
     public ReviewFixReply resolved(Instant now)
     {
         return new ReviewFixReply(taskId, repo, number, rootCommentId, commentId, requestKey, requestedAt, reply, fixed,
-                postStartedAt, postedAt, Optional.of(now), failure);
+                postAt, postStartedAt, postedAt, Optional.of(now), failure);
     }
 
     public ReviewFixReply failed(String reason)
     {
         return new ReviewFixReply(taskId, repo, number, rootCommentId, commentId, requestKey, requestedAt, reply, fixed,
-                postStartedAt, postedAt, resolvedAt, Optional.of(reason));
+                postAt, postStartedAt, postedAt, resolvedAt, Optional.of(reason));
     }
 }

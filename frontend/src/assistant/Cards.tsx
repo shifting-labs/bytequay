@@ -13,20 +13,23 @@
  */
 import { useEffect, useState, type ReactNode } from 'react';
 import {
-  CircleArrowUp, CircleCheck, CircleX, Clock, ExternalLink, Eye, GitPullRequest, Hand, Hourglass, ListTodo, LoaderCircle, MessageCircleQuestion, TimerOff,
-  ShieldCheck, ShieldX, TriangleAlert, X, type LucideIcon,
+  CircleArrowUp, CircleCheck, CircleX, Clock, ExternalLink, Eye, GitPullRequest, Hand, Hourglass, ListTodo, LoaderCircle, MessageCircle, MessageCircleQuestion,
+  MessageSquareReply, TimerOff, ShieldCheck, ShieldX, TriangleAlert, X, type LucideIcon,
 } from 'lucide-react';
+import { clock } from '@bytequay/ui/displayText';
 import { latestStep, PendingApprovalCard, type ApprovalDecider, type TaskStep } from '../agents/AgentConversation';
 import type { RunningTask } from '../agents/runningTaskModel';
 import { formatDuration } from '../agents/transcript';
 import { IconButton } from '../cards/Card';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { pollVisible } from '../ide/pollVisible';
-import { APPROVAL_NOTICE, NOTICE_ACTIONS, RULE_NOTICE, RULE_RESULT_NOTICE, noticeLabel, type AppNotice } from '../notices/contracts';
+import { APPROVAL_NOTICE, NOTICE_ACTIONS, REPLIES_NOTICE, RULE_NOTICE, RULE_RESULT_NOTICE, noticeLabel, type AppNotice } from '../notices/contracts';
 import { errorMessage } from '../errorMessage';
 import { laneLabel } from '../settings/model';
 import type { AgentEventEnvelope } from '../agents/events';
-import type { AgendaTargetDto, AgentPendingApprovalDto, AssistantItemDto, AssistantReportDto, AssistantReportState, AssistantRuleActionDto } from '../types';
+import type {
+  AgendaTargetDto, AgentPendingApprovalDto, AssistantItemDto, AssistantReportDto, AssistantReportState, AssistantRuleActionDto, HeldReviewReplyDto,
+} from '../types';
 import { useAsyncAction } from '../useAsyncAction';
 import { useNow, useTimeLeft } from '../useNow';
 import { ResultDiscussion } from './ResultDiscussion';
@@ -277,7 +280,57 @@ type NoticeCardProps = { notice: AppNotice; focused: boolean; onOpen: () => void
 export function NoticeCard(props: NoticeCardProps) {
   if (props.notice.id.startsWith(RULE_NOTICE)) return <RuleCard {...props} />;
   if (props.notice.id.startsWith(RULE_RESULT_NOTICE)) return <RuleResultCard {...props} />;
+  if (props.notice.id.startsWith(REPLIES_NOTICE)) return <RepliesCard {...props} />;
   return <TaskNoticeCard {...props} />;
+}
+
+/** Replies Auto-Review fix holds before they post: each under the comment it answers, then post them now or keep them back. */
+function RepliesCard({ notice, focused, onOpen, onClear }: NoticeCardProps) {
+  const [replies, setReplies] = useState<HeldReviewReplyDto[] | null>(null);
+  const { busy, error, run } = useAsyncAction();
+  const left = useTimeLeft(notice.expiresAt);
+  const { taskId, workspaceId } = notice;
+  useEffect(() => {
+    let live = true;
+    void window.bridge.readHeldReviewReplies(taskId, workspaceId).then(held => { if (live) setReplies(held); })
+      .catch(() => { if (live) setReplies([]); });
+    return () => { live = false; };
+  }, [taskId, workspaceId, notice.id]);
+  // Posted, kept back or answered elsewhere: a stale card must not offer the post again.
+  if (replies !== null && replies.length === 0) return <div className="assistant-receipt" data-card={notice.id}>
+    <MessageSquareReply className="assistant-receipt__icon" size={14} aria-hidden="true" />
+    <span className="assistant-receipt__text">Replies no longer held · {heading(notice)}</span>
+    <button type="button" className="assistant-button" onClick={onOpen}>Open work</button>
+  </div>;
+  const answer = (act: (taskId: string, workspaceId: string) => Promise<unknown>) => void run(async () => { await act(taskId, workspaceId); onClear(); });
+  const postAt = replies?.[0]?.postAt;
+  return (
+    <CardRow state="APPROVAL_REQUIRED" id={notice.id} focused={focused} icon={MessageSquareReply} title={heading(notice)} meta={where(notice)}
+      urgent={left?.urgent === true}
+      right={<StatePill text={noticeLabel(notice)} expiresAt={notice.expiresAt} />}
+      body={<>
+        <div className="assistant-card__why">{notice.message}{postAt !== undefined && notice.expiresAt === undefined && ` Posting at ${clock(postAt)}.`}</div>
+        {replies === null ? <div className="assistant-dim">Loading…</div> : <ul className="assistant-replies">
+          {replies.map(reply => <li key={reply.commentId}>
+            {reply.comment !== null && <a className="assistant-replies__comment" href={reply.url ?? undefined} target="_blank" rel="noreferrer"
+              title={reply.comment}>{reply.author !== null && `${reply.author}: `}{reply.comment}</a>}
+            <div className="assistant-replies__reply">
+              {reply.fixed
+                ? <CircleCheck size={13} aria-label="Fixed; the thread is resolved after the reply" />
+                : <MessageCircle size={13} aria-label="Not changed; the thread stays open" />}
+              <span>{reply.reply}</span>
+            </div>
+          </li>)}
+        </ul>}
+        {error !== null && <div className="assistant-card__fail" role="alert">{error}</div>}
+        <div className="assistant-card__buttons">
+          <button type="button" className="assistant-button" disabled={busy || replies === null} onClick={() => answer(window.bridge.postHeldReviewReplies)}>Post now</button>
+          <button type="button" className="assistant-button" disabled={busy || replies === null} onClick={() => answer(window.bridge.keepHeldReviewReplies)}>Don’t post</button>
+          <span className="assistant-spacer" />
+          <button type="button" className="assistant-link" onClick={onOpen}>Open task</button>
+        </div>
+      </>} />
+  );
 }
 
 /** A rule whose record lets it do the work itself: move it up to Suggest, or keep it observing for now. */

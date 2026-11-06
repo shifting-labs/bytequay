@@ -197,6 +197,17 @@ it('nudges an approval whose deadline passed while the Mac slept, as long as it 
   expect(store.update([slept], now + 5_000)).toEqual([]);
 });
 
+it('alerts held review replies when ready and again for their countdown, with no last-minute nudge', () => {
+  const store = new NoticeStore(() => file); store.update([], now);
+  const ready = notice('replies:task:1', 'APPROVAL');
+  store.update([ready], now);
+  expect(store.snapshot(false).popupIds).toEqual([ready.id]);
+  const countdown = { ...notice('replies:task:1:last', 'APPROVAL'), expiresAt: new Date(now + 1_500_000).toISOString() };
+  expect(store.update([countdown], now + 1_200_000)).toEqual([]);
+  expect(store.snapshot(false).popupIds).toEqual([countdown.id]);
+  expect(store.update([countdown], now + 1_470_000)).toEqual([]);
+});
+
 it('says how long an approval has left, to the nearest minute, and nothing once it expired', () => {
   const at = new Date(now + 300_000).toISOString();
   expect(approvalTimeLeft(at, now + 1_000)).toEqual({ text: '5 min', urgent: false });

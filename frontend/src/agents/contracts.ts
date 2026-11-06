@@ -45,6 +45,7 @@ import type {
   AutomationLevel,
   DevelopmentAutomationDto,
   DevelopmentResultDto,
+  HeldReviewReplyDto,
   ModelApiKeyDto,
   ModelOptionDto,
   ModelProviderDto,
@@ -779,6 +780,22 @@ export function parseAgentRuntimeStopImpact(value: unknown, path = 'stopImpact')
     activeTurnId: optionalText(source.activeTurnId, `${path}.activeTurnId`),
     liveProcess: source.liveProcess === true,
   };
+}
+
+export function parseHeldReviewReplies(value: unknown): HeldReviewReplyDto[] {
+  return list(value, 'held replies').map((item, index) => {
+    const path = `heldReplies[${index}]`;
+    const source = object(item, path);
+    return {
+      commentId: count(source.commentId, `${path}.commentId`),
+      author: optionalText(source.author, `${path}.author`),
+      comment: optionalText(source.comment, `${path}.comment`),
+      url: optionalText(source.url, `${path}.url`),
+      reply: text(source.reply, `${path}.reply`),
+      fixed: flag(source.fixed, `${path}.fixed`),
+      postAt: text(source.postAt, `${path}.postAt`),
+    };
+  });
 }
 
 const STARTUP_PHASES: readonly AgentTaskStartupPhase[] = ['PROVIDER', 'REPOSITORY', 'NAMING', 'WORKTREE', 'ATTACHMENTS', 'SESSION'];

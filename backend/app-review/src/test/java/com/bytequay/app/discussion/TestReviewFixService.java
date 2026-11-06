@@ -67,7 +67,6 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -108,14 +107,17 @@ class TestReviewFixService
     private final PullRequestService pullRequests = mock(PullRequestService.class);
     private final PullRequestReplacementStore replacements = mock(PullRequestReplacementStore.class);
     private final Map<String, ReviewFixReply> rows = new LinkedHashMap<>();
+    private final Clock clock = mock(Clock.class);
     private final ReviewFixService service = new ReviewFixService(tasks, mock(AgentServingGate.class, withSettings().mockMaker(MockMakers.INLINE)),
-            turns, turnStore, ownership, new ReviewCommentReader(pullRequestStore, details), new MemoryStore(), replacements, pullRequests, Clock.fixed(NOW, ZoneOffset.UTC));
+            turns, turnStore, ownership, new ReviewCommentReader(pullRequestStore, details), new MemoryStore(), replacements, pullRequests, clock);
     private final AgentTask task = task(AutomationLevel.REVIEW_FIX);
 
     @BeforeEach
     void setUp()
     {
+        when(clock.instant()).thenReturn(NOW);
         when(tasks.find(task.id())).thenReturn(Optional.of(task));
+        when(tasks.listLive()).thenReturn(ImmutableList.of(task));
         doAnswer(call -> {
             call.<Runnable>getArgument(2).run();
             return null;
@@ -204,13 +206,17 @@ class TestReviewFixService
         assertThat(service.summary(task.id().toString())).contains(new ReviewFixService.ReviewFixSummary(2, 0, 0, 0));
         assertThat(service.awaitingPost(task.id())).isTrue();
 
-        // A new authorized delivery publishes the recovered answers, though its own turn answered nothing.
+        // A new authorized delivery holds the recovered answers for the user, though its own turn answered nothing.
         service.publish(task.id(), answered(), true);
+
+        assertThat(service.awaitingPost(task.id())).isFalse();
+        verify(pullRequests, never()).replyToReviewComment(anyString(), anyInt(), anyLong(), anyString());
+        at(ReviewFixService.HOLD);
+        service.postDueReplies();
 
         verify(pullRequests).replyToReviewComment(REPO, 12, 20, "A list keeps the order the API promises.");
         verify(pullRequests).replyToReviewComment(REPO, 12, 10, "Renamed it.");
         verify(pullRequests).setReviewThreadResolved(REPO, 12, 10, true);
-        assertThat(service.awaitingPost(task.id())).isFalse();
     }
 
     @ParameterizedTest
@@ -231,6 +237,7 @@ class TestReviewFixService
         verify(pullRequests, never()).setReviewThreadResolved(anyString(), anyInt(), anyLong(), eq(true));
         assertThat(rows.values()).singleElement().satisfies(reply -> {
             assertThat(reply.reply()).contains("Generic answer");
+            assertThat(reply.postAt()).isEmpty();
             assertThat(reply.postStartedAt()).isEmpty();
             assertThat(reply.failure()).isEmpty();
         });
@@ -244,6 +251,8 @@ class TestReviewFixService
         TurnId turnId = answered(new ReviewThreadReply(11, "Renamed it.", true), new ReviewThreadReply(21, "A list keeps the order the API promises.", false));
 
         service.publish(task.id(), turnId, false);
+        at(ReviewFixService.HOLD);
+        service.postDueReplies();
 
         // A decline needs no push; a fix waits for one.
         verify(pullRequests).replyToReviewComment(REPO, 12, 20, "A list keeps the order the API promises.");
@@ -251,12 +260,81 @@ class TestReviewFixService
         assertThat(service.summary(task.id().toString())).contains(new ReviewFixService.ReviewFixSummary(1, 0, 1, 0));
 
         service.publish(task.id(), turnId, true);
+        at(ReviewFixService.HOLD.multipliedBy(2));
+        service.postDueReplies();
 
         verify(pullRequests).replyToReviewComment(REPO, 12, 10, "Renamed it.");
         verify(pullRequests).setReviewThreadResolved(REPO, 12, 10, true);
         verify(pullRequests, never()).setReviewThreadResolved(REPO, 12, 20, true);
         verify(pullRequests, times(2)).replyToReviewComment(anyString(), eq(12), anyLong(), anyString());
         assertThat(service.summary(task.id().toString())).contains(new ReviewFixService.ReviewFixSummary(0, 1, 1, 0));
+    }
+
+    @Test
+    void holdsRepliesForTheUserAndCountsDownTheLastMinutesBeforePostingThem()
+    {
+        cache(thread(10, comment(11L, "bob", false, "Rename it.")), thread(20, comment(21L, "carol", false, "Use a map.")));
+        service.request(task);
+        service.publish(task.id(), answered(new ReviewThreadReply(11, "Renamed it.", true), new ReviewThreadReply(21, "A list keeps the order.", false)), true);
+
+        Instant postAt = NOW.plus(ReviewFixService.HOLD);
+        assertThat(service.hold(task)).contains(new ReviewFixService.Hold(2, postAt, false));
+        assertThat(service.held(task)).extracting(ReviewFixService.HeldReply::commentId, ReviewFixService.HeldReply::author, ReviewFixService.HeldReply::comment,
+                ReviewFixService.HeldReply::url, ReviewFixService.HeldReply::reply, ReviewFixService.HeldReply::fixed).containsExactly(
+                tuple(11L, Optional.of("bob"), Optional.of("Rename it."), Optional.of(URL + "#r11"), "Renamed it.", true),
+                tuple(21L, Optional.of("carol"), Optional.of("Use a map."), Optional.of(URL + "#r21"), "A list keeps the order.", false));
+
+        at(ReviewFixService.HOLD.minus(ReviewFixService.LAST_CALL));
+        service.postDueReplies();
+
+        // Time alone starts the countdown, so the notices learn of it from the revision.
+        assertThat(service.hold(task)).contains(new ReviewFixService.Hold(2, postAt, true));
+        assertThat(service.revision()).isEqualTo(2);
+        verify(pullRequests, never()).replyToReviewComment(anyString(), anyInt(), anyLong(), anyString());
+
+        at(ReviewFixService.HOLD);
+        service.postDueReplies();
+
+        verify(pullRequests).replyToReviewComment(REPO, 12, 10, "Renamed it.");
+        verify(pullRequests).replyToReviewComment(REPO, 12, 20, "A list keeps the order.");
+        verify(pullRequests).setReviewThreadResolved(REPO, 12, 10, true);
+        assertThat(service.hold(task)).isEmpty();
+        assertThat(service.revision()).isZero();
+    }
+
+    @Test
+    void theUserCanPostHeldRepliesAtOnceOrKeepThemBack()
+    {
+        cache(thread(10, comment(11L, "bob", false, "Rename it.")), thread(20, comment(21L, "carol", false, "Use a map.")));
+        service.request(task);
+        TurnId turnId = answered(new ReviewThreadReply(11, "Renamed it.", true), new ReviewThreadReply(21, "A list keeps the order.", false));
+        service.publish(task.id(), turnId, false);
+
+        service.keepBack(task);
+
+        assertThat(rows.get(task.id() + ":21").failure()).contains("You kept this reply back, so it was not posted");
+        service.publish(task.id(), turnId, true);
+        service.postNow(task);
+
+        verify(pullRequests).replyToReviewComment(REPO, 12, 10, "Renamed it.");
+        verify(pullRequests).setReviewThreadResolved(REPO, 12, 10, true);
+        verify(pullRequests, never()).replyToReviewComment(REPO, 12, 20, "A list keeps the order.");
+        assertThat(service.summary(task.id().toString())).contains(new ReviewFixService.ReviewFixSummary(0, 1, 0, 1));
+    }
+
+    @Test
+    void aThreadResolvedDuringTheHoldGetsNoReply()
+    {
+        cache(thread(10, comment(11L, "bob", false, "Rename it.")));
+        service.request(task);
+        service.publish(task.id(), answered(new ReviewThreadReply(11, "Renamed it.", true)), true);
+        cache(thread(10, PrTimelinePayload.builder().resolved(true), comment(11L, "bob", false, "Rename it.")));
+
+        at(ReviewFixService.HOLD);
+        service.postDueReplies();
+
+        verify(pullRequests, never()).replyToReviewComment(anyString(), anyInt(), anyLong(), anyString());
+        assertThat(rows.values()).singleElement().satisfies(reply -> assertThat(reply.failure()).contains("The thread was resolved before this reply was posted"));
     }
 
     @Test
@@ -268,7 +346,9 @@ class TestReviewFixService
         doThrow(new IllegalStateException("connection reset")).when(pullRequests).replyToReviewComment(REPO, 12, 10, "Renamed it.");
 
         service.publish(task.id(), turnId, true);
-        service.publish(task.id(), turnId, true);
+        at(ReviewFixService.HOLD);
+        service.postDueReplies();
+        service.postDueReplies();
 
         verify(pullRequests, times(1)).replyToReviewComment(REPO, 12, 10, "Renamed it.");
         verify(pullRequests, never()).setReviewThreadResolved(anyString(), eq(12), anyLong(), eq(true));
@@ -276,7 +356,8 @@ class TestReviewFixService
 
         // A post interrupted before its outcome was saved is given up on the next pass, not repeated.
         rows.replaceAll((id, reply) -> new ReviewFixReply(reply.taskId(), reply.repo(), reply.number(), reply.rootCommentId(), reply.commentId(), reply.requestKey(),
-                reply.requestedAt(), reply.reply(), reply.fixed(), Optional.of(NOW.minus(Duration.ofMinutes(6))), Optional.empty(), Optional.empty(), Optional.empty()));
+                reply.requestedAt(), reply.reply(), reply.fixed(), reply.postAt(), Optional.of(NOW.minus(Duration.ofMinutes(6))), Optional.empty(), Optional.empty(),
+                Optional.empty()));
         service.request(task);
         assertThat(rows.values()).singleElement().satisfies(reply -> assertThat(reply.failure().orElseThrow()).startsWith("The reply's outcome is unknown"));
     }
@@ -373,7 +454,7 @@ class TestReviewFixService
         when(replacements.find(task.id().toString())).thenReturn(Optional.of(operation));
         ReviewFixReply answer = ReviewFixReply.requested(task.id().toString(), REPO, 12, 40, 41, "new", NOW).answered("Fixed", true);
         rows.put(answer.id(), answer);
-        cache(thread(10, comment(11L, "bob", false, "Rename it.")));
+        cache(thread(10, comment(11L, "bob", false, "Rename it.")), thread(40, comment(41L, "dave", false, "Typo.")));
         TurnId turnId = answered();
 
         service.request(task);
@@ -388,9 +469,16 @@ class TestReviewFixService
         when(replacements.find(task.id().toString())).thenReturn(Optional.of(operation.complete()));
         service.request(task);
         service.publish(task.id(), turnId, true);
+        at(ReviewFixService.HOLD);
+        service.postDueReplies();
 
         verify(turns).start(any());
         verify(pullRequests).replyToReviewComment(REPO, 12, 40, "Fixed");
+    }
+
+    private void at(Duration later)
+    {
+        when(clock.instant()).thenReturn(NOW.plus(later));
     }
 
     private TurnId answered(ReviewThreadReply... replies)

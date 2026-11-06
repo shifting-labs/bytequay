@@ -58,6 +58,7 @@ import {
   parseAgentSkillInput,
   parseAgentSkills,
   parseAgentTask,
+  parseHeldReviewReplies,
   parsePullRequestTaskLink,
   parseAgentTaskActivity,
   parseAgentTaskChanges,
@@ -1042,6 +1043,12 @@ function registerIpc(): void {
   ipcMain.handle('agent:task:auto-merge:cancel', (_event, taskId: string, workspaceId: string) =>
     backendJson(taskUrl(taskId, '/auto-merge/cancel', { workspaceId }), { method: 'POST' })
       .then((task) => parseAgentTask(task)));
+  ipcMain.handle('agent:task:review-replies', (_event, taskId: string, workspaceId: string) =>
+    backendJson(taskUrl(taskId, '/review-replies', { workspaceId })).then(parseHeldReviewReplies));
+  for (const step of ['post', 'keep'] as const) {
+    ipcMain.handle(`agent:task:review-replies:${step}`, (_event, taskId: string, workspaceId: string) =>
+      backendJson(taskUrl(taskId, `/review-replies/${step}`, { workspaceId }), { method: 'POST' }).then(parseHeldReviewReplies));
+  }
   ipcMain.handle('agent:task:stop-impact', (_event, taskId: string, workspaceId: string) =>
     backendJson(taskUrl(taskId, '/runtime/stop-impact', { workspaceId }))
       .then((impact) => parseAgentRuntimeStopImpact(impact)));

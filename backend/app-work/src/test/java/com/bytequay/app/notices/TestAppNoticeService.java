@@ -44,6 +44,7 @@ import com.bytequay.agent.spi.DevelopmentResultReport;
 import com.bytequay.agent.spi.ProviderAgentEventSource;
 import com.bytequay.agent.spi.ProviderApprovalRequest;
 import com.bytequay.agent.spi.ProviderTurnRef;
+import com.bytequay.app.discussion.ReviewFixService;
 import com.bytequay.app.rules.RuleWork;
 import com.bytequay.app.service.InMemoryAppSettingsStore;
 import com.bytequay.app.service.epic.EpicNextWork;
@@ -133,8 +134,9 @@ class TestAppNoticeService
     private final AgentRuleService rules = new AgentRuleService(settings, ruleRuns, new ObjectMapper().findAndRegisterModules(), Clock.fixed(NOW, ZoneOffset.UTC));
     private final AssistantFollowStore follows = mock(AssistantFollowStore.class);
     private final RuleWork ruleWork = mock(RuleWork.class);
+    private final ReviewFixService reviewFixes = mock(ReviewFixService.class);
     private final AppNoticeService service = new AppNoticeService(tasks, turns, approvals, queues, reviews, pullRequests, ownership, ciRuns, next, artifacts, workspaces,
-            watchdog, rules, ruleWork, new ObjectMapper(), follows);
+            watchdog, rules, ruleWork, new ObjectMapper(), follows, reviewFixes);
     private final AgentTask task = created(TaskId.random(), Optional.of("workspace"), true, "Fix recovery", new AgentLaneId("codex"),
             new RepositoryIdentity("owner", "repo"), Path.of("/tmp/notice-worktree"), AgentTaskDefaults.forPermission(AgentPermissionPolicy.AUTO), NOW);
 
@@ -257,7 +259,7 @@ class TestAppNoticeService
         when(retainedRules.recentRuns()).thenReturn(ImmutableList.of());
         when(retainedRules.pendingRuns()).thenReturn(ImmutableList.of(pending));
         AppNoticeService retained = new AppNoticeService(tasks, turns, approvals, queues, reviews, pullRequests, ownership, ciRuns, next, artifacts, workspaces,
-                watchdog, retainedRules, ruleWork, new ObjectMapper(), follows);
+                watchdog, retainedRules, ruleWork, new ObjectMapper(), follows, reviewFixes);
 
         assertThat(retained.alerts()).singleElement().satisfies(notice -> {
             assertThat(notice.kind()).isEqualTo(AppNotice.Kind.FAILURE);
@@ -680,6 +682,30 @@ class TestAppNoticeService
 
         when(ciRuns.listByParentTaskId(task.id().toString())).thenReturn(ImmutableList.of(run.finish(CiAutofixRun.FinishReason.GREEN, "Checks passed", NOW.plusSeconds(40))));
         assertThat(service.current()).singleElement().extracting(AppNotice::kind).isEqualTo(AppNotice.Kind.TURN_FINISHED);
+    }
+
+    @Test
+    void heldReviewRepliesAlertWhenReadyAndAgainForTheirCountdown()
+    {
+        show(task, turn().finish(TurnState.COMPLETED, AgentMetrics.empty(), Optional.empty(), NOW.plusSeconds(10)));
+        Instant postAt = NOW.plus(ReviewFixService.HOLD);
+        when(reviewFixes.hold(task)).thenReturn(Optional.of(new ReviewFixService.Hold(2, postAt, false)));
+        assertThat(service.current()).singleElement().satisfies(notice -> {
+            assertThat(notice.id()).isEqualTo("replies:" + task.id() + ":" + postAt.toEpochMilli());
+            assertThat(notice.kind()).isEqualTo(AppNotice.Kind.APPROVAL);
+            assertThat(notice.message()).isEqualTo("2 review replies are ready to check before they post.");
+            assertThat(notice.occurredAt()).isEqualTo(NOW);
+            assertThat(notice.expiresAt()).isEmpty();
+        });
+
+        // A new id, so the countdown alerts again.
+        when(reviewFixes.hold(task)).thenReturn(Optional.of(new ReviewFixService.Hold(1, postAt, true)));
+        assertThat(service.current()).singleElement().satisfies(notice -> {
+            assertThat(notice.id()).isEqualTo("replies:" + task.id() + ":" + postAt.toEpochMilli() + ":last");
+            assertThat(notice.message()).isEqualTo("1 review reply posts when the timer ends.");
+            assertThat(notice.occurredAt()).isEqualTo(postAt.minus(ReviewFixService.LAST_CALL));
+            assertThat(notice.expiresAt()).contains(postAt);
+        });
     }
 
     @Test

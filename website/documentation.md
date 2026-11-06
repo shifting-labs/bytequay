@@ -632,7 +632,9 @@ the ones before it:
 - **Auto-CI fix:** reruns flaky jobs, repairs failures the PR caused, and marks
   the PR ready once checks pass.
 - **Auto-Review fix:** answers review comments and pushes fixes, at most three
-  rounds per thread.
+  rounds per thread. Its replies wait 25 minutes before they post: one alert
+  says they are ready to check, and a second counts down the last five minutes.
+  Choose **Post now** or **Don’t post** on the card to end the wait.
 - **Auto-merge:** merges after the delay in **Settings → Agents → Workflow**,
   once GitHub allows it and no review thread is open.
 

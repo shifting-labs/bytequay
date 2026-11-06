@@ -14,6 +14,7 @@
 package com.bytequay.app.web.agent;
 
 import com.bytequay.app.config.WriteVersion;
+import com.bytequay.app.discussion.ReviewFixService;
 import com.bytequay.app.notices.AppNotice;
 import com.bytequay.app.notices.AppNoticeService;
 import com.bytequay.app.service.epic.EpicNextWork;
@@ -33,21 +34,24 @@ public class AppNoticeController
     private final WriteVersion writes;
     private final EpicNextWork next;
     private final AgentRuleService rules;
+    private final ReviewFixService reviewFixes;
 
-    public AppNoticeController(AppNoticeService notices, WriteVersion writes, EpicNextWork next, AgentRuleService rules)
+    public AppNoticeController(AppNoticeService notices, WriteVersion writes, EpicNextWork next, AgentRuleService rules, ReviewFixService reviewFixes)
     {
         this.notices = requireNonNull(notices, "notices is null");
         this.writes = requireNonNull(writes, "writes is null");
         this.next = requireNonNull(next, "next is null");
         this.rules = requireNonNull(rules, "rules is null");
+        this.reviewFixes = requireNonNull(reviewFixes, "reviewFixes is null");
     }
 
     @GetMapping("/agent/notices")
     public List<AppNotice> current(WebRequest request)
     {
         // Polled every five seconds; a rebuild reads every recent task's turns.
-        // A rule moving up or down is saved in app settings, which the write version leaves out.
-        if (request.checkNotModified(writes.current() + "-" + next.revision() + "-" + rules.revision())) {
+        // A rule moving up or down is saved in app settings, which the write version leaves out, and held review replies reach their
+        // countdown by time alone.
+        if (request.checkNotModified(writes.current() + "-" + next.revision() + "-" + rules.revision() + "-" + reviewFixes.revision())) {
             return null;
         }
         return notices.alerts();

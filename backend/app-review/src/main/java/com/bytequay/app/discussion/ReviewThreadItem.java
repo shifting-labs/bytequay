@@ -13,16 +13,24 @@
  */
 package com.bytequay.app.discussion;
 
+import java.util.Optional;
+
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
-/** An open review thread: the comment that opened it, which replies address, and its latest comment. */
-record ReviewThreadItem(long rootCommentId, ReviewCommentItem latest)
+/**
+ * An open review thread: the comment that opened it, which replies address, and its latest comment.
+ *
+ * @param body the latest comment's text, shown beside a reply the user checks before it posts
+ */
+record ReviewThreadItem(long rootCommentId, ReviewCommentItem latest, String body, Optional<String> url)
 {
     ReviewThreadItem
     {
         checkArgument(rootCommentId > 0, "rootCommentId must be positive");
         requireNonNull(latest, "latest is null");
+        requireNonNull(body, "body is null");
+        requireNonNull(url, "url is null");
     }
 
     long latestCommentId()

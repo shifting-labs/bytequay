@@ -395,6 +395,31 @@ public class AgentController
         return taskResponse(task);
     }
 
+    /** The replies Auto-Review fix holds for the user to check, with the comments they answer. */
+    @GetMapping("/tasks/{taskId}/review-replies")
+    public List<ReviewFixService.HeldReply> heldReviewReplies(@PathVariable String taskId, @RequestParam String workspaceId)
+    {
+        return reviewFixes.held(taskService.getInteractive(workspaceId, TaskId.valueOf(taskId)));
+    }
+
+    /** Posts the held replies now instead of when their hold ends. */
+    @PostMapping("/tasks/{taskId}/review-replies/post")
+    public List<ReviewFixService.HeldReply> postReviewReplies(@PathVariable String taskId, @RequestParam String workspaceId)
+    {
+        AgentTask task = taskService.getInteractive(workspaceId, TaskId.valueOf(taskId));
+        reviewFixes.postNow(task);
+        return reviewFixes.held(task);
+    }
+
+    /** Keeps the held replies off the pull request. */
+    @PostMapping("/tasks/{taskId}/review-replies/keep")
+    public List<ReviewFixService.HeldReply> keepReviewReplies(@PathVariable String taskId, @RequestParam String workspaceId)
+    {
+        AgentTask task = taskService.getInteractive(workspaceId, TaskId.valueOf(taskId));
+        reviewFixes.keepBack(task);
+        return reviewFixes.held(task);
+    }
+
     @PostMapping("/tasks/{taskId}/pull-requests/sync")
     public List<PullRequest> refreshTaskPullRequests(@PathVariable String taskId, @RequestParam String workspaceId)
     {

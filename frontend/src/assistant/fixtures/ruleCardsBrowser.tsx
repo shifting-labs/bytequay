@@ -15,7 +15,7 @@ import { flushSync } from 'react-dom';
 import { createFixtureRoot } from '../../fixtures/reactFixture';
 import { assert, button, changeInput, element, runScenarios, settle } from '../../fixtures/harness';
 import type { AppNotice } from '../../notices/contracts';
-import type { AssistantItemDto, AssistantReportDto, Bridge } from '../../types';
+import type { AssistantItemDto, AssistantReportDto, Bridge, HeldReviewReplyDto } from '../../types';
 import { DurableReportCard, NoticeCard, ResultCard } from '../Cards';
 import RuleOfferCard from '../RuleOfferCard';
 import type { TaskDiscussionDto } from '../../agents/discussions/contracts';
@@ -49,6 +49,25 @@ const RESULT: AppNotice = { delivery: 'INTERRUPT', deliveryReason: 'A decision n
   message: 'Review PRs that need me · drafted its findings; nothing is posted until you publish them', repository: 'acme/warehouse', laneId: 'claude',
   occurredAt: '2026-11-04T09:30:00Z',
 };
+
+const REPLIES: AppNotice = { delivery: 'INTERRUPT', deliveryReason: 'A decision needs your attention.', report: null,
+  id: 'replies:task-2:1793001600000', kind: 'APPROVAL', taskId: 'task-2', workspaceId: 'ws1', turnId: 'turn-2', reviewId: null,
+  title: 'Cache block reads', pullRequest: 'acme/warehouse#4530', pullRequestTitle: 'Cache block reads', changes: null,
+  message: '2 review replies are ready to check before they post.', repository: 'acme/warehouse', laneId: 'claude', occurredAt: '2026-11-04T09:30:00Z',
+};
+
+const HELD: HeldReviewReplyDto[] = [
+  { commentId: 11, author: 'bob', comment: 'Rename this to blockCache so it matches the reader.', url: 'https://github.com/acme/warehouse/pull/4530#discussion_r11',
+    reply: 'Renamed it to blockCache in both places.', fixed: true, postAt: '2026-11-04T09:55:00Z' },
+  { commentId: 21, author: 'carol', comment: 'Use a map here?', url: 'https://github.com/acme/warehouse/pull/4530#discussion_r21',
+    reply: 'A list keeps the order the API promises, so I left it.', fixed: false, postAt: '2026-11-04T09:55:00Z' },
+];
+
+const heldBridge = (held: () => HeldReviewReplyDto[], calls: string[]): Partial<Bridge> => ({
+  readHeldReviewReplies: async (taskId: string, workspaceId: string) => { calls.push(`read ${taskId} ${workspaceId}`); return held(); },
+  postHeldReviewReplies: async (taskId: string) => { calls.push(`post ${taskId}`); return []; },
+  keepHeldReviewReplies: async (taskId: string) => { calls.push(`keep back ${taskId}`); return []; },
+});
 
 function render(notice: AppNotice, result = false) {
   const { host, root, dispose } = createFixtureRoot();
@@ -222,6 +241,45 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
       }
       finally { card.dispose(); }
     }],
+    ['shows held review replies under their comments, posts them now or keeps them back, and turns stale', async () => {
+      let held = HELD;
+      const previous = window.bridge;
+      window.bridge = { ...previous, ...heldBridge(() => held, calls) } as Bridge;
+      const card = render(REPLIES);
+      try {
+        await settle();
+        const text = card.host.textContent ?? '';
+        assert(calls.at(-1) === 'read task-2 ws1' && text.includes('Replies ready') && text.includes('carol: Use a map here?')
+          && text.includes('A list keeps the order the API promises') && text.includes('Posting at'), `Each reply shows under the comment it answers: ${text}`);
+        assert(card.host.querySelector('a.assistant-replies__comment')?.getAttribute('href') === HELD[0].url, 'A comment links to its thread');
+        button('Post now', card.host).click();
+        await settle();
+        assert(calls.at(-1) === 'post task-2' && card.cleared() === 1, `Post now posts the task's replies and clears the card: ${calls.join(' | ')}`);
+        button('Don’t post', card.host).click();
+        await settle();
+        assert(calls.at(-1) === 'keep back task-2' && card.cleared() === 2, `Don't post keeps them back and clears the card: ${calls.join(' | ')}`);
+      }
+      finally { card.dispose(); }
+      const countdown = render({ ...REPLIES, id: `${REPLIES.id}:last`, expiresAt: new Date(Date.now() + 240_000).toISOString(),
+        message: '2 review replies post when the timer ends.' });
+      try {
+        await settle();
+        const text = countdown.host.textContent ?? '';
+        assert(text.includes('Posting replies · 4 min left') && !text.includes('Posting at'), `The second alert counts down: ${text}`);
+      }
+      finally { countdown.dispose(); }
+      held = [];
+      const stale = render(REPLIES);
+      try {
+        await settle();
+        const text = stale.host.textContent ?? '';
+        assert(text.includes('Replies no longer held') && !text.includes('Post now'), `A card whose replies went out offers no post: ${text}`);
+      }
+      finally {
+        stale.dispose();
+        window.bridge = previous;
+      }
+    }],
     ["opens a rule's finished work, or dismisses it as the run it came from", async () => {
       const card = render(RESULT);
       try {
@@ -263,6 +321,23 @@ export async function showQuietPreview(): Promise<void> {
     <p style={{ color: 'var(--fg-muted)' }}>Assistant · Results</p>
     <DurableReportCard report={quietReport()} text="Cache invalidation updated" onOpen={() => {}} />
     <DurableReportCard report={{ ...quietReport(), state: 'PROGRESS', assessment: 'Reviewing the next result in the background. You can keep chatting.' }} text="Reviewing a pull request" onOpen={() => {}} />
+  </div>));
+  await settle();
+}
+
+export async function showRepliesPreview(): Promise<void> {
+  preview?.dispose();
+  window.bridge = { ...window.bridge, ...heldBridge(() => HELD, []) } as Bridge;
+  const fixture = createFixtureRoot();
+  preview = fixture;
+  document.body.style.background = 'var(--bg)';
+  fixture.host.className = 'assistant-home';
+  fixture.host.style.cssText = 'padding:32px;max-width:640px;margin:auto';
+  flushSync(() => fixture.root.render(<div className="assistant-work-report">
+    <p style={{ color: 'var(--fg-muted)' }}>Assistant · Decision</p>
+    <NoticeCard notice={REPLIES} focused={false} onOpen={() => {}} onClear={() => {}} />
+    <NoticeCard notice={{ ...REPLIES, id: `${REPLIES.id}:last`, expiresAt: new Date(Date.now() + 240_000).toISOString(), message: '2 review replies post when the timer ends.' }}
+      focused={false} onOpen={() => {}} onClear={() => {}} />
   </div>));
   await settle();
 }

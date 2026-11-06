@@ -29,6 +29,7 @@ import com.bytequay.agent.core.store.AgentTurnStore;
 import com.bytequay.agent.core.store.QueuedInputStore;
 import com.bytequay.agent.spi.AgentPermissionPolicy;
 import com.bytequay.agent.spi.DevelopmentResultReport;
+import com.bytequay.app.discussion.ReviewFixService;
 import com.bytequay.app.rules.RuleWork;
 import com.bytequay.app.service.epic.EpicNextWork;
 import com.bytequay.app.service.rules.AgentRule;
@@ -91,6 +92,8 @@ public class AppNoticeService
     private static final String RULE_NOTICE = "rule:";
     private static final String RULE_RESULT_NOTICE = "rule-result:";
     private static final String RULES = "rules";
+    // Replies Auto-Review fix holds for the user to check; the app reads the same prefix and answers the card in place.
+    private static final String REPLIES_NOTICE = "replies:";
     /** The review tools' severities, most severe first. */
     private static final List<String> SEVERITIES = ImmutableList.of("critical", "high", "medium", "low");
     /** How much of an agent's own outcome report a finished card carries; the task holds all of it. */
@@ -112,6 +115,7 @@ public class AppNoticeService
     private final RuleWork ruleWork;
     private final ObjectMapper mapper;
     private final AssistantFollowStore follows;
+    private final ReviewFixService reviewFixes;
 
     public AppNoticeService(
             AgentTaskStore tasks,
@@ -129,7 +133,8 @@ public class AppNoticeService
             AgentRuleService rules,
             RuleWork ruleWork,
             ObjectMapper mapper,
-            AssistantFollowStore follows)
+            AssistantFollowStore follows,
+            ReviewFixService reviewFixes)
     {
         this.tasks = requireNonNull(tasks, "tasks is null");
         this.turns = requireNonNull(turns, "turns is null");
@@ -147,6 +152,7 @@ public class AppNoticeService
         this.ruleWork = requireNonNull(ruleWork, "ruleWork is null");
         this.mapper = requireNonNull(mapper, "mapper is null");
         this.follows = requireNonNull(follows, "follows is null");
+        this.reviewFixes = requireNonNull(reviewFixes, "reviewFixes is null");
     }
 
     /**
@@ -397,6 +403,11 @@ public class AppNoticeService
             return Optional.of(notice(task, review, overview, latest, "stuck:" + active.orElseThrow().id() + ":" + why.since().toEpochMilli(), AppNotice.Kind.STUCK,
                     why.reason(), why.since()));
         }
+        // Held replies post on a deadline, so they are asked about even while the task works on something else.
+        Optional<ReviewFixService.Hold> hold = reviewFixes.hold(task);
+        if (hold.isPresent()) {
+            return Optional.of(replies(task, review, overview, latest, hold.orElseThrow()));
+        }
         if (task.worktreeMutationClaim().isPresent() || task.developmentContinuationUnfinished() || latest.filter(turn -> turn.state().active()).isPresent()) {
             return Optional.empty();
         }
@@ -444,6 +455,23 @@ public class AppNoticeService
             return ruleReviewResult(task, latest, review.orElseThrow(), overview, ruleFollow.orElseThrow().ruleRun().orElseThrow());
         }
         return latest.filter(turn -> turn.state() == TurnState.COMPLETED).map(turn -> finished(task, review, overview, turn));
+    }
+
+    /**
+     * One alert says the replies are ready to check, and a second counts down the last minutes before they post. Each has its own
+     * id, so each alerts once.
+     */
+    private AppNotice replies(AgentTask task, Optional<AgentReview> review, Optional<ReviewRunOverview> overview, Optional<AgentTurn> latest, ReviewFixService.Hold hold)
+    {
+        String id = REPLIES_NOTICE + task.id() + ":" + hold.postAt().toEpochMilli();
+        boolean one = hold.replies() == 1;
+        String count = one ? "1 review reply" : hold.replies() + " review replies";
+        if (hold.lastCall()) {
+            return notice(task, review, overview, latest, id + ":last", AppNotice.Kind.APPROVAL, count + (one ? " posts" : " post") + " when the timer ends.",
+                    hold.postAt().minus(ReviewFixService.LAST_CALL), Optional.of(hold.postAt()), Optional.empty());
+        }
+        return notice(task, review, overview, latest, id, AppNotice.Kind.APPROVAL, count + (one ? " is" : " are") + " ready to check before " + (one ? "it posts." : "they post."),
+                hold.postAt().minus(ReviewFixService.HOLD), Optional.empty(), Optional.empty());
     }
 
     private Optional<AppNotice> ruleReviewResult(AgentTask task, Optional<AgentTurn> latest, AgentReview review, Optional<ReviewRunOverview> overview, RuleRun origin)

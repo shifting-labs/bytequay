@@ -60,6 +60,9 @@ public class ReviewFixReplyEntity
     @Column(nullable = false)
     private boolean fixed;
 
+    @Column(name = "post_at")
+    private Instant postAt;
+
     @Column(name = "post_started_at")
     private Instant postStartedAt;
 
@@ -91,6 +94,7 @@ public class ReviewFixReplyEntity
     {
         reply = value.reply().orElse(null);
         fixed = value.fixed();
+        postAt = value.postAt().orElse(null);
         postStartedAt = value.postStartedAt().orElse(null);
         postedAt = value.postedAt().orElse(null);
         resolvedAt = value.resolvedAt().orElse(null);
@@ -100,6 +104,6 @@ public class ReviewFixReplyEntity
     public ReviewFixReply toDomain()
     {
         return new ReviewFixReply(taskId, repo, number, rootCommentId, commentId, requestKey, requestedAt, Optional.ofNullable(reply), fixed,
-                Optional.ofNullable(postStartedAt), Optional.ofNullable(postedAt), Optional.ofNullable(resolvedAt), Optional.ofNullable(failure));
+                Optional.ofNullable(postAt), Optional.ofNullable(postStartedAt), Optional.ofNullable(postedAt), Optional.ofNullable(resolvedAt), Optional.ofNullable(failure));
     }
 }

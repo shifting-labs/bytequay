@@ -724,6 +724,18 @@ export type AgentMetricsDto = {
   counters?: ToolCountersDto;
 };
 
+/** A reply Auto-Review fix holds for the user to check before it posts. */
+export type HeldReviewReplyDto = {
+  commentId: number;
+  author: string | null;
+  /** The reviewer comment it answers, while that is still the thread's latest. */
+  comment: string | null;
+  url: string | null;
+  reply: string;
+  fixed: boolean;
+  postAt: string;
+};
+
 export type ReviewFixSummaryDto = {
   /** Asked of the agent and not yet answered or posted. */
   waiting: number;
@@ -2331,6 +2343,12 @@ export type Bridge = LabBridge & WorkItemBridge & JiraBridge & GoogleBridge & Ar
   markAgentTaskFailed: (taskId: string, workspaceId: string, reason: string) => Promise<AgentTaskDto>;
   /** Stops the task's merge while it waits for its delay; it stays stopped. */
   cancelAgentAutoMerge: (taskId: string, workspaceId: string) => Promise<AgentTaskDto>;
+  /** The replies Auto-Review fix holds for the user to check before they post. */
+  readHeldReviewReplies: (taskId: string, workspaceId: string) => Promise<HeldReviewReplyDto[]>;
+  /** Posts the held replies now instead of when their hold ends; returns those still held. */
+  postHeldReviewReplies: (taskId: string, workspaceId: string) => Promise<HeldReviewReplyDto[]>;
+  /** Keeps the held replies off the pull request; returns those still held. */
+  keepHeldReviewReplies: (taskId: string, workspaceId: string) => Promise<HeldReviewReplyDto[]>;
   getAgentRuntimeStopImpact: (taskId: string, workspaceId: string) => Promise<AgentRuntimeStopImpactDto>;
   /** Stops only this task's provider runtime; the generation is the one the user confirmed. */
   stopAgentRuntime: (taskId: string, workspaceId: string, generation: string) => Promise<AgentTaskDto>;

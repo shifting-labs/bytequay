@@ -12,7 +12,7 @@
  * limitations under the License.
  */
 import fs from 'node:fs';
-import { APPROVAL_NUDGE_MS, interrupts, needsAction, type AppNotice, type NoticeSnapshot } from './contracts';
+import { APPROVAL_NUDGE_MS, REPLIES_NOTICE, interrupts, needsAction, type AppNotice, type NoticeSnapshot } from './contracts';
 
 const RECENT_COMPLETION_MS = 24 * 60 * 60 * 1000;
 
@@ -65,7 +65,7 @@ export class NoticeStore {
       const left = notice.expiresAt === undefined ? Number.NaN : Date.parse(notice.expiresAt) - now;
       // Once, even after the alert was closed: in real use, one approval in five expired unanswered. A deadline already past
       // still counts while the approval is listed: the backend's wait does not count time the Mac sleeps.
-      if (interrupts(notice) && left <= APPROVAL_NUDGE_MS && !this.nudged.has(notice.id)) {
+      if (interrupts(notice) && left <= APPROVAL_NUDGE_MS && !this.nudged.has(notice.id) && !notice.id.startsWith(REPLIES_NOTICE)) {
         this.nudged.add(notice.id); this.popups.add(notice.id); this.viewed.delete(notice.id); nudges.push(notice.id);
       }
       this.remember(notice);

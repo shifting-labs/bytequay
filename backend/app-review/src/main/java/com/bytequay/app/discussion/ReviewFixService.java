@@ -33,6 +33,7 @@ import com.bytequay.core.discussion.ReviewFixReply;
 import com.bytequay.core.discussion.ReviewFixStore;
 import com.bytequay.core.domain.PullRequest;
 import com.bytequay.core.store.PullRequestReplacementStore;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -50,24 +51,30 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Function;
+import java.util.function.Predicate;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
+import static java.util.Comparator.naturalOrder;
 import static java.util.Objects.requireNonNull;
+import static java.util.function.Predicate.not;
 import static java.util.stream.Collectors.counting;
 import static java.util.stream.Collectors.groupingBy;
 
 /**
  * Auto-Review fix: hands new reviewer comments on a task's pull request to the task's own agent as one fix turn, then
- * posts the agent's replies once its fix is pushed and resolves the threads it fixed. The task's accepted automation
- * level is the authority for these writes.
+ * holds the agent's replies once its fix is pushed, so the user can check them, posts them when the hold ends and
+ * resolves the threads it fixed. The task's accepted automation level is the authority for these writes.
  */
 @Service
 public class ReviewFixService
 {
     static final int MAXIMUM_THREADS = 10;
     static final int MAXIMUM_ROUNDS = 3;
+    /** How long a ready reply waits for the user before it posts; a second alert counts down its last {@link #LAST_CALL}. */
+    public static final Duration HOLD = Duration.ofMinutes(25);
+    public static final Duration LAST_CALL = Duration.ofMinutes(5);
     private static final Duration POST_OUTCOME_WAIT = Duration.ofMinutes(5);
     private static final Duration DETAIL_FRESHNESS = Duration.ofMinutes(5);
     private static final Logger log = LoggerFactory.getLogger(ReviewFixService.class);
@@ -83,6 +90,7 @@ public class ReviewFixService
     private final PullRequestService pullRequests;
     private final Clock clock;
     private final ExecutorService executor = Executors.newSingleThreadExecutor(Thread.ofVirtual().name("review-fix-", 0).factory());
+    private volatile int lastCalls;
 
     public ReviewFixService(AgentTaskStore tasks, AgentServingGate gate, AgentTurnService turns, AgentTurnStore turnStore, TaskPullRequestOwnership ownership,
             ReviewCommentReader comments, ReviewFixStore store, PullRequestReplacementStore replacements, PullRequestService pullRequests, Clock clock)
@@ -110,7 +118,7 @@ public class ReviewFixService
             return;
         }
         executor.execute(() -> tasks.listLive().stream()
-                .filter(task -> task.interactive() && task.defaults().developmentAutomation().filter(DevelopmentAutomation::reviewFix).isPresent())
+                .filter(ReviewFixService::fixesReviews)
                 .forEach(task -> {
                     try {
                         ownership.linkedPullRequest(task).filter(TaskPullRequestOwnership::isOpen)
@@ -129,8 +137,7 @@ public class ReviewFixService
      */
     public synchronized void request(AgentTask task)
     {
-        if (!task.interactive() || task.state() != TaskState.OPEN || task.defaults().developmentAutomation().filter(DevelopmentAutomation::reviewFix).isEmpty()
-                || replacementPending(task.id().toString())) {
+        if (!fixesReviews(task) || replacementPending(task.id().toString())) {
             return;
         }
         Optional<PullRequest> pullRequest = ownership.linkedPullRequest(task).filter(TaskPullRequestOwnership::isOpen);
@@ -176,9 +183,8 @@ public class ReviewFixService
     }
 
     /**
-     * Saves the agent's answers from a finished turn and posts them. A fixed comment's reply waits until the fix is the
-     * pull request's pushed head; a declined comment's reply needs no push. Each post is marked started first, and one
-     * that fails after that is reported, never retried, because the pull request may already show it.
+     * Saves the agent's answers from a finished turn and holds them for {@link #HOLD}, so the user can check them first. A fixed
+     * comment's reply is held once the fix is the pull request's pushed head; a declined comment's reply needs no push.
      */
     public synchronized void publish(TaskId taskId, TurnId turnId, boolean pushed)
     {
@@ -190,12 +196,126 @@ public class ReviewFixService
             return;
         }
         saveAnswers(taskId, turnId, current.orElseThrow());
+        Instant postAt = clock.instant().plus(HOLD);
         for (ReviewFixReply reply : store.listByTask(taskId.toString())) {
-            if (!belongsTo(reply, current.orElseThrow()) || !reply.waiting() || reply.reply().isEmpty() || reply.postStartedAt().isPresent() || (reply.fixed() && !pushed)) {
+            if (!belongsTo(reply, current.orElseThrow()) || !reply.waiting() || reply.reply().isEmpty() || reply.postAt().isPresent() || (reply.fixed() && !pushed)) {
                 continue;
             }
-            turns.executeDevelopmentAction(taskId, turnId, () -> post(reply));
+            turns.executeDevelopmentAction(taskId, turnId, () -> store.update(reply.heldUntil(postAt)));
         }
+    }
+
+    /**
+     * Posts held replies whose hold is over, often enough that one goes out within seconds of its countdown ending. Each post is
+     * marked started first, and one that fails after that is reported, never retried, because the pull request may already show it.
+     */
+    @Scheduled(initialDelayString = "PT1M", fixedDelayString = "PT15S")
+    public void postDue()
+    {
+        if (!gate.isReady()) {
+            return;
+        }
+        executor.execute(this::postDueReplies);
+    }
+
+    void postDueReplies()
+    {
+        Instant now = clock.instant();
+        int calls = 0;
+        for (AgentTask task : tasks.listLive().stream().filter(ReviewFixService::fixesReviews).toList()) {
+            try {
+                calls += (int) postHeld(task, reply -> !reply.postAt().orElseThrow().isAfter(now)).stream()
+                        .filter(reply -> !now.isBefore(reply.postAt().orElseThrow().minus(LAST_CALL))).count();
+            }
+            catch (RuntimeException deferred) {
+                log.info("Review fix replies on task {} were deferred: {}", task.id(), deferred.toString());
+            }
+        }
+        lastCalls = calls;
+    }
+
+    /** Posts the task's held replies at once, as the user asked. */
+    public void postNow(AgentTask task)
+    {
+        postHeld(task, _ -> true);
+    }
+
+    /** Keeps the task's held replies off the pull request; their threads then wait for the user's own answer. */
+    public synchronized void keepBack(AgentTask task)
+    {
+        current(task).ifPresent(pr -> heldOn(task, pr).forEach(reply -> store.update(reply.failed("You kept this reply back, so it was not posted"))));
+    }
+
+    /** The task's held replies with the comments they answer, for the user to check before they post. */
+    public List<HeldReply> held(AgentTask task)
+    {
+        return current(task).map(pr -> {
+            Map<Long, ReviewThreadItem> threads = comments.openThreads(pr.repo(), pr.number()).stream()
+                    .collect(toImmutableMap(ReviewThreadItem::latestCommentId, Function.identity(), (first, second) -> first));
+            return heldOn(task, pr).stream().map(reply -> {
+                Optional<ReviewThreadItem> thread = Optional.ofNullable(threads.get(reply.commentId()));
+                return new HeldReply(reply.commentId(), thread.map(value -> value.latest().author()), thread.map(ReviewThreadItem::body),
+                        thread.flatMap(ReviewThreadItem::url), reply.reply().orElseThrow(), reply.fixed(), reply.postAt().orElseThrow());
+            }).collect(toImmutableList());
+        }).orElse(ImmutableList.of());
+    }
+
+    /** When the task's held replies post, and whether that is near enough for the countdown alert; empty with none held. */
+    public Optional<Hold> hold(AgentTask task)
+    {
+        if (!fixesReviews(task)) {
+            return Optional.empty();
+        }
+        return current(task).flatMap(pr -> {
+            List<ReviewFixReply> held = heldOn(task, pr);
+            return held.stream().map(reply -> reply.postAt().orElseThrow()).min(naturalOrder())
+                    .map(at -> new Hold(held.size(), at, !clock.instant().isBefore(at.minus(LAST_CALL))));
+        });
+    }
+
+    /** Moves when a held reply enters its last call, which time alone decides, so notices built from stored rows rebuild then. */
+    public long revision()
+    {
+        return lastCalls;
+    }
+
+    /** Posts the due held replies, and returns those still held. A thread resolved during the hold gets no reply. */
+    private synchronized List<ReviewFixReply> postHeld(AgentTask task, Predicate<ReviewFixReply> due)
+    {
+        Optional<PullRequest> current = current(task);
+        if (current.isEmpty()) {
+            return ImmutableList.of();
+        }
+        PullRequest pr = current.orElseThrow();
+        List<ReviewFixReply> held = heldOn(task, pr);
+        List<ReviewFixReply> posting = held.stream().filter(due).collect(toImmutableList());
+        if (!posting.isEmpty()) {
+            Set<Long> open = comments.openThreads(pr.repo(), pr.number()).stream().map(ReviewThreadItem::rootCommentId).collect(toImmutableSet());
+            for (ReviewFixReply reply : posting) {
+                if (open.contains(reply.rootCommentId())) {
+                    post(reply);
+                }
+                else {
+                    store.update(reply.failed("The thread was resolved before this reply was posted"));
+                }
+            }
+        }
+        return held.stream().filter(not(due)).collect(toImmutableList());
+    }
+
+    private Optional<PullRequest> current(AgentTask task)
+    {
+        return replacementPending(task.id().toString()) ? Optional.empty() : ownership.linkedPullRequest(task).filter(TaskPullRequestOwnership::isOpen);
+    }
+
+    private List<ReviewFixReply> heldOn(AgentTask task, PullRequest pr)
+    {
+        return store.listByTask(task.id().toString()).stream().filter(reply -> belongsTo(reply, pr) && reply.held()).collect(toImmutableList());
+    }
+
+    private static boolean fixesReviews(AgentTask task)
+    {
+        return task.interactive() && task.state() == TaskState.OPEN && task.defaults().developmentAutomation().filter(DevelopmentAutomation::reviewFix).isPresent();
     }
 
     /** Rebinds and retires old replies under the same lock as review requests and posts, preserving their history. */
@@ -256,7 +376,7 @@ public class ReviewFixService
         }
     }
 
-    /** Whether an answer is saved but not posted, awaiting a later authorized delivery. */
+    /** Whether an answer is saved but neither held nor posted, awaiting a later authorized delivery. */
     public boolean awaitingPost(TaskId taskId)
     {
         if (replacementPending(taskId.toString())) {
@@ -264,7 +384,7 @@ public class ReviewFixService
         }
         return tasks.find(taskId).flatMap(ownership::linkedPullRequest).filter(TaskPullRequestOwnership::isOpen)
                 .map(pr -> store.listByTask(taskId.toString()).stream()
-                        .anyMatch(reply -> belongsTo(reply, pr) && reply.waiting() && reply.reply().isPresent() && reply.postStartedAt().isEmpty()))
+                        .anyMatch(reply -> belongsTo(reply, pr) && reply.waiting() && reply.reply().isPresent() && reply.postAt().isEmpty()))
                 .orElse(false);
     }
 
@@ -379,4 +499,10 @@ public class ReviewFixService
     }
 
     public record ReviewFixSummary(int waiting, int fixed, int declined, int needsYou) {}
+
+    /** A reply waiting out its hold, and the reviewer comment it answers when that comment is still the thread's latest. */
+    public record HeldReply(long commentId, Optional<String> author, Optional<String> comment, Optional<String> url, String reply, boolean fixed, Instant postAt) {}
+
+    /** The first post time of a task's held replies; {@code lastCall} once its countdown alert is due. */
+    public record Hold(int replies, Instant postAt, boolean lastCall) {}
 }

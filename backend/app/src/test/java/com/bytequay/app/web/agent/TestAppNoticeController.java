@@ -14,6 +14,7 @@
 package com.bytequay.app.web.agent;
 
 import com.bytequay.app.config.WriteVersion;
+import com.bytequay.app.discussion.ReviewFixService;
 import com.bytequay.app.notices.AppNoticeService;
 import com.bytequay.app.service.epic.EpicNextWork;
 import com.bytequay.app.service.rules.AgentRuleService;
@@ -33,7 +34,7 @@ import static org.springframework.test.web.servlet.setup.MockMvcBuilders.standal
 class TestAppNoticeController
 {
     @Test
-    void answersUnchangedNoticesWithoutRebuildingThemUntilAWriteOrAPick()
+    void answersUnchangedNoticesWithoutRebuildingThemUntilAWritePickOrCountdown()
             throws Exception
     {
         AppNoticeService notices = mock(AppNoticeService.class);
@@ -41,7 +42,8 @@ class TestAppNoticeController
         WriteVersion writes = new WriteVersion();
         when(notices.alerts()).thenReturn(ImmutableList.of());
         AgentRuleService rules = mock(AgentRuleService.class);
-        var mvc = standaloneSetup(new AppNoticeController(notices, writes, next, rules)).build();
+        ReviewFixService reviewFixes = mock(ReviewFixService.class);
+        var mvc = standaloneSetup(new AppNoticeController(notices, writes, next, rules, reviewFixes)).build();
 
         String etag = mvc.perform(get("/agent/notices")).andExpect(status().isOk()).andExpect(content().json("[]"))
                 .andReturn().getResponse().getHeader("ETag");
@@ -53,8 +55,12 @@ class TestAppNoticeController
         String picked = mvc.perform(get("/agent/notices").header("If-None-Match", written)).andExpect(status().isOk()).andExpect(header().exists("ETag"))
                 .andReturn().getResponse().getHeader("ETag");
         when(rules.revision()).thenReturn(1L);
-        mvc.perform(get("/agent/notices").header("If-None-Match", picked)).andExpect(status().isOk());
+        String ruled = mvc.perform(get("/agent/notices").header("If-None-Match", picked)).andExpect(status().isOk())
+                .andReturn().getResponse().getHeader("ETag");
+        // A held reply reaching its countdown changes no row.
+        when(reviewFixes.revision()).thenReturn(1L);
+        mvc.perform(get("/agent/notices").header("If-None-Match", ruled)).andExpect(status().isOk());
 
-        verify(notices, times(4)).alerts();
+        verify(notices, times(5)).alerts();
     }
 }
