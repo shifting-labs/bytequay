@@ -400,21 +400,6 @@ class TestAssistantActions
     }
 
     @Test
-    void readsANegationOnlyWithinItsClause()
-    {
-        assertThat(AssistantActions.negated("don't push to main", "push to main")).isTrue();
-        assertThat(AssistantActions.negated("please do not merge yet", "merge yet")).isTrue();
-        assertThat(AssistantActions.negated("don't merge it or tag it", "tag it")).isTrue();
-        assertThat(AssistantActions.negated("open a pr instead of pushing to main", "pushing to main")).isTrue();
-        assertThat(AssistantActions.negated("don't push to main, open a pr instead", "open a pr instead")).isFalse();
-        assertThat(AssistantActions.negated("don't push to main but push the branch", "push the branch")).isFalse();
-        assertThat(AssistantActions.negated("merge it. don't tag it", "merge it")).isFalse();
-        assertThat(AssistantActions.negated("nothing else, just merge it", "merge it")).isFalse();
-        assertThat(AssistantActions.negated("don't push to main", "don't push to main")).isFalse();
-        assertThat(AssistantActions.negated("ship it", "push to main")).isFalse();
-    }
-
-    @Test
     void forwardsTheUsersNegativeTaskInstructionsUnchanged()
     {
         AgendaTarget opens = AgendaTarget.of(AgendaTarget.Kind.TASK, "ws1", task.id().toString());

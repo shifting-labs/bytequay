@@ -22,6 +22,7 @@ import com.bytequay.core.domain.AssistantList;
 import com.bytequay.core.domain.AssistantReceipt;
 import com.bytequay.core.domain.AssistantReceipt.Operation;
 import com.bytequay.core.domain.AssistantReceipt.Outcome;
+import com.bytequay.core.domain.UserWords;
 import com.bytequay.core.domain.Workspace;
 import com.bytequay.core.store.WorkspaceStore;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -215,7 +216,7 @@ class AssistantShow
         checkArgument(repository || ref.map(named -> LISTED.contains(AgendaRefs.kind(named))).orElse(true), "open takes an item's or a repository's ref, or a page");
         checkArgument(repository || tab.isEmpty(), "only a ws: ref takes a tab");
         checkArgument(tab.map(TABS::containsKey).orElse(true), "tab must be one of %s", String.join(", ", TABS.keySet()));
-        Optional<String> unsaid = AssistantActions.unsaid(message, words);
+        Optional<String> unsaid = UserWords.unsaid(message.text(), words);
         if (unsaid.isPresent()) {
             return receipt(message, items, unsaid.orElseThrow(), AssistantReceipt.refused(Operation.OPEN, Optional.empty()), words);
         }
@@ -272,7 +273,7 @@ class AssistantShow
     {
         checkArgument(body.path("words").isTextual(), "make_agenda needs the user's words");
         String words = body.path("words").asText();
-        Optional<String> unsaid = AssistantActions.unsaid(message, words);
+        Optional<String> unsaid = UserWords.unsaid(message.text(), words);
         if (unsaid.isPresent()) {
             return receipt(message, items, unsaid.orElseThrow(), AssistantReceipt.refused(Operation.MAKE_AGENDA, Optional.empty()), words);
         }

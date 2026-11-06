@@ -43,6 +43,7 @@ import com.bytequay.core.domain.AssistantReceipt.Fix;
 import com.bytequay.core.domain.AssistantReceipt.Operation;
 import com.bytequay.core.domain.AssistantReceipt.Outcome;
 import com.bytequay.core.domain.ServedRef;
+import com.bytequay.core.domain.UserWords;
 import com.bytequay.core.domain.Workspace;
 import com.bytequay.core.review.AgentReviewStore;
 import com.bytequay.core.store.AssistantStore;
@@ -130,12 +131,6 @@ class AssistantActions
             "tomorrow", AttentionMarkService.Snooze.TOMORROW,
             "monday", AttentionMarkService.Snooze.MONDAY);
     private static final List<String> COMMANDS = ImmutableList.of("contribute", "backport");
-    // Words after one of these, in the same clause, are what the user said not to do: "push to main" in "don't push to main".
-    private static final Pattern NEGATION = Pattern.compile("\\b(?:not|never|don't|dont|doesn't|didn't|can't|cannot|won't|wouldn't|shouldn't|mustn't|isn't|aren't|wasn't"
-            + "|stop|avoid|without|neither|nor|except|instead of|rather than)\\b");
-    // ponytail: a comma or a contrast ends the clause, so "don't push, open a PR" allows the PR, but a list after a comma ("don't push, merge
-    // or tag") escapes; asking the user to confirm the words would close that.
-    private static final Pattern CLAUSE_END = Pattern.compile("[,.!?;:]|\\b(?:but|then|otherwise)\\b");
     // Match the whole message: a model-selected excerpt cannot turn a refusal or a question into consent.
     private static final Pattern APPROVAL_COMMAND = Pattern.compile("(?:please )?(allow|approve|deny|reject)(?: (?:it|this|that|(?:the|this|that) command))?"
             + "(?: once)?(?:,? please)?[.!]?");
@@ -265,31 +260,6 @@ class AssistantActions
         AssistantReceipt receipt = new AssistantReceipt(Operation.REPLY_TO_TASK, Outcome.DONE, queued ? Optional.of("After its current turn") : Optional.empty(),
                 target(task.id()), Optional.empty(), sent.turnId().map(TurnId::toString), Optional.empty(), Optional.of(words));
         return AssistantItem.receipt(conversationId, clock.instant(), (queued ? "Queued your words for " : "Sent your words to ") + clip(task.title(), 80), receipt, key);
-    }
-
-    /**
-     * Check 3, for every tool that acts on the user's words: why the words are not the user's to act on, or empty when they are part of
-     * the message, ignoring case and runs of whitespace, at least 2 characters long, and not something the message says not to do.
-     */
-    static Optional<String> unsaid(AssistantItem message, String words)
-    {
-        if (!inMessage(message, words)) {
-            return Optional.of("Those words aren't in your message");
-        }
-        return saysNot(message, words) ? Optional.of("Your message says not to do that") : Optional.empty();
-    }
-
-    /** Whether the words are the user's own: part of their message, ignoring case and runs of whitespace. */
-    private static boolean inMessage(AssistantItem message, String words)
-    {
-        String said = normal(words);
-        return said.length() >= 2 && normal(message.text()).contains(said);
-    }
-
-    /** Whether the message says not to do what the words say, wherever they appear in it. */
-    private static boolean saysNot(AssistantItem message, String words)
-    {
-        return negated(normal(message.text()), normal(words));
     }
 
     /**
@@ -456,7 +426,8 @@ class AssistantActions
             if (off.isPresent()) {
                 return Optional.of(Result.refused(operation, off.orElseThrow(), Fix.SETTINGS));
             }
-            Optional<String> unsaid = unsaid(message, request.words());
+            // Check 3, for every tool that acts on the user's words.
+            Optional<String> unsaid = UserWords.unsaid(message.text(), request.words());
             if (unsaid.isPresent()) {
                 return Optional.of(Result.refused(operation, unsaid.orElseThrow()));
             }
@@ -536,7 +507,7 @@ class AssistantActions
                 return Optional.of(Result.refused(operation, "Use the buttons: this one runs outside the sandbox", Fix.BUTTONS));
             }
             boolean deny = request.text("decision").equals("deny");
-            Matcher command = APPROVAL_COMMAND.matcher(normal(message.text()));
+            Matcher command = APPROVAL_COMMAND.matcher(UserWords.normal(message.text()));
             if (!command.matches() || deny != ImmutableSet.of("deny", "reject").contains(command.group(1))) {
                 return Optional.of(Result.refused(operation, "Use the card's buttons, or say 'allow once' or 'deny'", Fix.BUTTONS));
             }
@@ -552,11 +523,11 @@ class AssistantActions
                 Optional<String> question = question(offered, answer.getKey());
                 String chosen = answer.getValue().asText("").strip();
                 Optional<String> label = question.flatMap(asked -> option(offered.get(asked), chosen));
-                if (question.isEmpty() || chosen.isEmpty() || !(label.isPresent() || inMessage(message, chosen))) {
+                if (question.isEmpty() || chosen.isEmpty() || !(label.isPresent() || UserWords.inMessage(message.text(), chosen))) {
                     return Optional.of(Result.refused(request.operation(), "Pick one of the card's options", Fix.BUTTONS));
                 }
                 // An option the message turns down, such as "the metadata table" in "not the metadata table", is not the user's answer.
-                if (saysNot(message, label.orElse(chosen))) {
+                if (UserWords.saysNot(message.text(), label.orElse(chosen))) {
                     return Optional.of(Result.refused(request.operation(), "Your message says not to do that"));
                 }
             }
@@ -790,32 +761,5 @@ class AssistantActions
         catch (IllegalArgumentException notAnApproval) {
             return Optional.empty();
         }
-    }
-
-    private static String normal(String text)
-    {
-        return text.toLowerCase(Locale.ROOT).replace('’', '\'').replaceAll("\\s+", " ").strip();
-    }
-
-    /**
-     * Whether the message says not to do what the words say: each place they appear follows a negation earlier in its clause. Both are
-     * normalized. Words that carry their own negation, such as "don't push", are not negated by it.
-     */
-    static boolean negated(String message, String words)
-    {
-        boolean found = false;
-        for (int at = message.indexOf(words); at >= 0; at = message.indexOf(words, at + 1)) {
-            found = true;
-            String before = message.substring(0, at);
-            Matcher end = CLAUSE_END.matcher(before);
-            int clause = 0;
-            while (end.find()) {
-                clause = end.end();
-            }
-            if (!NEGATION.matcher(before.substring(clause)).find()) {
-                return false;
-            }
-        }
-        return found;
     }
 }
