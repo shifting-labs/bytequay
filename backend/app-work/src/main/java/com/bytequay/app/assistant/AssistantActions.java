@@ -313,6 +313,24 @@ class AssistantActions
         return AssistantItem.receipt(conversationId, clock.instant(), (queued ? "Queued your words for " : "Sent your words to ") + clip(task.title(), 80), receipt, key);
     }
 
+    /** A task just started: where it runs, its agent and the automation it delivers with, and the turn it began. */
+    private AssistantReceipt started(ItemTaskStarter.Started started, String key)
+    {
+        AgentTask task = started.task();
+        ImmutableList.Builder<String> detail = ImmutableList.<String>builder().add(task.repository().toString(), started.agent());
+        switch (started.automation().level()) {
+            case COMMIT -> {}
+            case DRAFT_PR -> detail.add("Auto-Draft PR");
+            case CI_FIX -> detail.add("CI fix");
+            case REVIEW_FIX -> detail.add("Auto-Review fix");
+            case MERGE -> detail.add("Auto-merge");
+        }
+        Optional<String> turnId = turns.findTurnByIdempotencyKey(task.id(), key).map(turn -> turn.id().toString());
+        Optional<AgendaTarget> target = task.workspaceId().map(workspace -> AgendaTarget.of(AgendaTarget.Kind.TASK, workspace, task.id().toString()));
+        return new AssistantReceipt(Operation.START_TASK, Outcome.DONE, Optional.of(String.join(" · ", detail.build())), target, Optional.empty(), turnId, Optional.empty(),
+                Optional.empty());
+    }
+
     /**
      * Check 4 for anything but a card: the refs a message may name, which are what was on screen when it was sent, the tasks of the
      * cards it showed, and what the conversation's reads handed out.
@@ -764,17 +782,7 @@ class AssistantActions
                 // An issue that has a task already opens that task instead of starting another.
                 return new Result("Already started: “" + clip(task.title(), 80) + "”", AssistantReceipt.done(Operation.START_TASK, target), Optional.of(task.id().toString()));
             }
-            ImmutableList.Builder<String> detail = ImmutableList.<String>builder().add(task.repository().toString(), started.get().agent());
-            switch (started.get().automation().level()) {
-                case COMMIT -> {}
-                case DRAFT_PR -> detail.add("Auto-Draft PR");
-                case CI_FIX -> detail.add("CI fix");
-                case REVIEW_FIX -> detail.add("Auto-Review fix");
-                case MERGE -> detail.add("Auto-merge");
-            }
-            Optional<String> turnId = turns.findTurnByIdempotencyKey(task.id(), key).map(turn -> turn.id().toString());
-            return new Result("Started “" + clip(task.title(), 80) + "”", new AssistantReceipt(Operation.START_TASK, Outcome.DONE, Optional.of(String.join(" · ", detail.build())),
-                    target, Optional.empty(), turnId, Optional.empty(), Optional.empty()), Optional.of(task.id().toString()));
+            return new Result("Started “" + clip(task.title(), 80) + "”", started(started.get(), key), Optional.of(task.id().toString()));
         }
 
         /**
