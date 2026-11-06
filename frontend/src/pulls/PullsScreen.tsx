@@ -168,9 +168,9 @@ export async function findCodeTask(bridge: Pick<Bridge, 'findPullRequestTask' | 
   return task.checkoutRemovedAt === null ? task : null;
 }
 
-const DETAIL_MIN = 680;
+const DETAIL_MIN = 460;
 const DETAIL_MAX = 1600;
-const DETAIL_DEFAULT = 1120;
+const DETAIL_DEFAULT = 'min(1120px, calc(100% - 400px))';
 const PAGE_SIZE = 50;
 export { mergePullRequestDetailStatus,pullRequestDetailRefreshDelay } from './usePullRequestDetail';
 
@@ -442,7 +442,7 @@ function PullsContent({
   }, [closePane]);
   const zoom = useZoom(leaveZoom, zoomLayer);
   const zoomClass = zoomLayer ? ` is-zoomed ${zoom.cardClass}` : '';
-  const detailPane = useResizablePane(DETAIL_DEFAULT, DETAIL_MIN, DETAIL_MAX, 'start');
+  const detailPane = useResizablePane(null, DETAIL_MIN, DETAIL_MAX, 'start');
   const [loading, setLoading] = useState(!singlePullRequest);
   const [syncing, setSyncing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -1157,7 +1157,7 @@ function PullsContent({
         <section className={`pull-detail${overlay ? zoomClass : ''}${reviewWorkspace === undefined ? '' : ' agt-panel'}`}
           style={singlePullRequest
             ? reviewWorkspace === undefined ? undefined : { width: reviewPane.width }
-            : { width: detailPane.width }}>
+            : { width: detailPane.width ?? DETAIL_DEFAULT }}>
           <header className="pull-detail__header pull-detail__header--tabs">
             <div className="pull-detail__toolbar">
               <span>{initialPr?.repo} #{initialPr?.number}</span>
@@ -1178,7 +1178,7 @@ function PullsContent({
 
       {paneShown && selectedPr !== null && (
         <section className={`pull-detail${zoomLayer ? zoomClass : reviewWorkspace === undefined ? '' : ' agt-panel'}`}
-          style={zoomLayer ? undefined : { width: reviewWorkspace === undefined ? detailPane.width : reviewPane.width }}>
+          style={zoomLayer ? undefined : { width: reviewWorkspace === undefined ? detailPane.width ?? DETAIL_DEFAULT : reviewPane.width }}>
           {reviewWorkspace === undefined && <div className="pull-detail__resize" role="separator" aria-orientation="vertical"
             aria-label="Resize pull request panes" onMouseDown={event => detailPane.startResize(event, event.currentTarget.parentElement?.getBoundingClientRect().width)} title="Drag to resize" />}
           <PullDetailHeader
