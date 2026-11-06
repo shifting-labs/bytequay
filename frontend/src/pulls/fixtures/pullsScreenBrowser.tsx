@@ -60,7 +60,6 @@ export async function runMainScreen(keepMounted = false, explore = false, missin
     reviewers: [{ login: 'bob', avatarUrl: null, state: 'PENDING' }], deletions: 1,
     viewerCanWrite: false,
   });
-  // The list opens on Review, so the row has to be one bob is asked to review.
   const row = remotePullRequest(detail, 'bob');
   const comparisons: (string | undefined)[][] = [];
   let defaultReads = 0;
@@ -983,7 +982,11 @@ export async function runListSearch(): Promise<string> {
     const render = () => flushSync(() => root.render(<PullsScreen
       repositoryScope={{ workspaceId: 'workspace', repository: 'owner/repo' }} />));
     render();
-    await until(() => titles().length > 0, 'Review must open with its pull requests');
+    await until(() => titles().length > 0, 'Open must show its pull requests by default');
+    assert(host.querySelector('.pulls-tab')?.textContent === 'Open'
+      && host.querySelector('.pulls-tab[aria-selected="true"]')?.textContent === 'Open', 'Open must be the first and initially selected tab');
+    assert(titles().join('|') === 'Authored by bob|Requested of bob', `Open must show all open pull requests, but found ${titles().join('|')}`);
+    await pickTab('Review');
     assert(titles().join('|') === 'Requested of bob', `Review must open on the requested pull request, not ${titles().join('|')}`);
     const reads = listReads;
 
@@ -993,9 +996,9 @@ export async function runListSearch(): Promise<string> {
     assert(titles().join('|') === 'Requested of bob', `An @author prefix must match voonhous, not ${titles().join('|')}`);
     await type('requested');
     assert(titles().join('|') === 'Requested of bob', `A title term must still match, and found ${titles().join('|')}`);
-    // The search narrows the open filter; bob's own #31206 is My work, not Review.
+    // The search narrows the selected filter; bob's own #31206 is My work, not Review.
     await type('312');
-    assert(titles().length === 0, `A search must stay inside the open filter, but found ${titles().join('|')}`);
+    assert(titles().length === 0, `A search must stay inside the selected filter, but found ${titles().join('|')}`);
 
     await pickTab('My work');
     await type('312');
@@ -1161,7 +1164,6 @@ export async function runSelectionStability(): Promise<string> {
     id: number, repo: 'owner/repo', number, title, htmlUrl: null,
     mergeable: null, mergeableState: null, author: 'alice', updatedAt,
     body: '',
-    // The list opens on Review, so every row has to be one bob is asked to review.
     reviewers: [{ login: 'bob', avatarUrl: null, state: 'PENDING' }], deletions: 1,
     viewerCanWrite: false,
   }), title });

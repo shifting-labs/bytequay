@@ -52,15 +52,14 @@ export const EMPTY_TIMELINE_PAYLOAD: PullTimelinePayloadDto = {
 
 export type PullTab = 'all' | 'active' | 'req' | 'monitored' | 'reviewed' | 'done';
 /**
- * One fixed order, used for three things at once: the Command-digit
+ * One fixed order sets the initial selection, the Command-digit
  * shortcuts, the order tab slots fill, and the order of the overflow menu. A
  * filter therefore never moves to a different slot as the pane resizes.
- * `empty` names the filter in the empty state. Review leads because it is what
- * the list opens on: the work waiting on the reader comes before their own.
+ * `empty` names the filter in the empty state.
  */
 export const PULL_TABS: { key: PullTab; label: string; empty: string }[] = [
-  { key: 'req', label: 'Review', empty: 'pull requests needing your review' },
   { key: 'all', label: 'Open', empty: 'open pull requests' },
+  { key: 'req', label: 'Review', empty: 'pull requests needing your review' },
   { key: 'active', label: 'My work', empty: 'open pull requests you authored' },
   { key: 'monitored', label: 'Monitored', empty: 'monitored pull requests' },
   { key: 'reviewed', label: 'Reviewed', empty: 'pull requests you reviewed' },

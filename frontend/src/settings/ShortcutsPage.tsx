@@ -23,7 +23,7 @@ const SCOPED_SHORTCUTS: { title: string; rows: { label: string; keys: string; de
     { label: 'Next / previous match', keys: 'Enter / ⇧Enter', detail: 'While Find is open; Escape closes it.' },
   ] },
   { title: 'Pull requests and Circles', rows: [
-    { label: 'Select a PR list filter', keys: '⌘1–6', detail: 'Review, Open, My work, Monitored, Reviewed, Closed.' },
+    { label: 'Select a PR list filter', keys: '⌘1–6', detail: 'Open, Review, My work, Monitored, Reviewed, Closed.' },
     { label: 'Select a Circle tab', keys: '⌘1–4', detail: 'Needs you, Activity, Members, Insights.' },
     { label: 'Submit a PR comment', keys: '⌘Enter', detail: 'In a comment editor; Escape cancels where available.' },
   ] },

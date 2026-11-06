@@ -43,7 +43,7 @@ async function sharedRequests(workspace: WorkspaceDto) {
   const row = () => pr({ id: 70, repo: repository, number: 7, title, author: 'alice', origin: 'REVIEW_REQUESTED', htmlUrl,
     handledAction: 'COMMENTED', reviewedAt: '2026-02-02T00:00:00Z', monitoredAt: monitored ? '2026-02-01T00:00:00Z' : null, commentCount: 4 });
   const details = prDetail({ id: 70, repo: repository, number: 7, title, body: '**Shared detail** with #9.', author: 'alice', state: 'open', htmlUrl,
-    draft: false, viewerCanWrite: false });
+    draft: false, viewerCanWrite: false, ciStatus: 'PASSING' });
   const route = (workspaceId?: PullRequestRoute) => {
     assert(workspaceId === workspace.id, 'Request lost its workspace account');
     routed.push(workspaceId);
