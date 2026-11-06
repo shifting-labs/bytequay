@@ -554,7 +554,10 @@ describe('CI automation presentation', () => {
     expect(html).toContain('title="Choose the compatibility fix."');
     // A question the user can answer is shown, not only on hover.
     expect(html).toContain('>Choose the compatibility fix.<');
-    expect(render({ ...paused, task: { ...paused.task, developmentCi: { ...CI_PROJECTION, canMessage: false } } })).not.toContain('>Choose the compatibility fix.<');
+    expect(html).toContain('Reply with @ci in the message box.');
+    const unanswerable = render({ ...paused, task: { ...paused.task, developmentCi: { ...CI_PROJECTION, canMessage: false } } });
+    expect(unanswerable).not.toContain('>Choose the compatibility fix.<');
+    expect(unanswerable).not.toContain('Reply with @ci');
     expect(html).toContain('aria-label="Send to CI agent"');
     expect(html).toContain('aria-label="Stop automation"');
     expect(html).not.toContain('>Steer<');

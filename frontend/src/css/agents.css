@@ -2572,6 +2572,11 @@
   line-height: 1.5;
 }
 
+.agt-barrier__hint {
+  margin: 4px 0 0;
+  color: var(--fg-muted);
+}
+
 .agt-panel {
   flex: none;
   max-width: calc(100% - min(480px, 60%));

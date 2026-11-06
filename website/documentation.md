@@ -297,7 +297,8 @@ items that need attention; only those items can show as macOS notifications. An
 approval or question waits five minutes for your answer: its card shows the
 time left, and its alert comes back once in the last minute. With no answer by
 then, the turn stops and Results shows **No answer within 5 minutes**.
-A CI Autofix request alerts on its development task, whose page answers it.
+When CI Autofix pauses for your input, its development task shows the question.
+Reply there with a message that includes **@ci**.
 Memory's spec checks and learning runs don't alert: one that asks stops after
 five minutes, or sooner with **Stop**.
 

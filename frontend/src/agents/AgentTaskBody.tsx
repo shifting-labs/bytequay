@@ -590,7 +590,10 @@ export function AgentTaskBody({
       {(automationActive || currentCi != null) && ciApprovalError !== null && <div className="agt-notice" role="alert">{ciApprovalError}</div>}
 
       {currentCi?.status === 'PAUSED' && currentCi.canMessage && currentCi.summary !== null
-        && <div className="agt-barrier" role="status">{renderMarkdown(currentCi.summary, repository)}</div>}
+        && <div className="agt-barrier" role="status">
+          {renderMarkdown(currentCi.summary, repository)}
+          <p className="agt-barrier__hint">Reply with @ci in the message box.</p>
+        </div>}
 
       {!terminal && automationActive && currentCi == null && status !== 'recovery' && state.developmentProgress?.message
         && <div className="agt-barrier" role="status">{state.developmentProgress.message}</div>}
