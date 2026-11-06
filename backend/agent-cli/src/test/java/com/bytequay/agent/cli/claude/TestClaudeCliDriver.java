@@ -1448,6 +1448,33 @@ class TestClaudeCliDriver
     }
 
     @Test
+    void continuesWithTheSteerWhenClaudeCancelsTheInputItWasRunning()
+            throws Exception
+    {
+        supervisor.versionOutput = "2.1.304";
+        try (ClaudeCliDriver driver = driver(supervisor);
+                AgentSession session = driver.open(context(Optional.empty()), ignored -> {})) {
+            driver.probe();
+            RunningTurn turn = session.start(command("Squash the commits"));
+            ScriptedTurn process = supervisor.turns.getFirst();
+            process.inputLifecycle(0, "started");
+            turn.steer(new AgentTurnInput("Keep the commit message short", ImmutableList.of()));
+
+            process.streamingResult("Squashing");
+            process.inputLifecycle(0, "cancelled");
+            assertThat(process.cancelled).isFalse();
+            assertThat(process.inputClosed).isFalse();
+
+            process.inputLifecycle(1, "started");
+            process.streamingResult("Squashed with a short message");
+            process.inputLifecycle(1, "completed");
+            assertThat(process.inputClosed).isTrue();
+            process.exit.complete(new ProcessExit(0, ProcessExit.Reason.EXITED, ProcessExit.TreeTermination.VERIFIED_STOPPED, Duration.ofMillis(10), false, false));
+            assertThat(await(turn).state()).isEqualTo(AgentTurnResult.State.COMPLETED);
+        }
+    }
+
+    @Test
     void reportsClaudeErrorWhenItCancelsInputAfterAnErrorResult()
             throws Exception
     {

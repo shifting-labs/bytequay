@@ -905,6 +905,7 @@ public final class ClaudeCliDriver
         private final boolean streamingInput;
         private final Object inputLock = new Object();
         private final Map<String, CompletableFuture<Void>> pendingInputs = new HashMap<>();
+        private String runningInput;
         private boolean inputClosed;
         private volatile ManagedProcess process;
         private volatile ClaudeProtocol.ResultMessage result;
@@ -1040,7 +1041,11 @@ public final class ClaudeCliDriver
                     CompletableFuture<Void> receipt = pendingInputs.get(lifecycle.commandId());
                     if (receipt != null) {
                         switch (lifecycle.state()) {
-                            case "queued", "started" -> receipt.complete(null);
+                            case "queued" -> receipt.complete(null);
+                            case "started" -> {
+                                receipt.complete(null);
+                                runningInput = lifecycle.commandId();
+                            }
                             case "completed" -> {
                                 receipt.complete(null);
                                 pendingInputs.remove(lifecycle.commandId());
@@ -1050,6 +1055,10 @@ public final class ClaudeCliDriver
                                 receipt.completeExceptionally(new AgentUnavailableException(reason));
                                 // Claude also cancels the input of a turn that ended in an error result; that result explains the ending.
                                 if (result != null && !result.successful()) {
+                                    pendingInputs.remove(lifecycle.commandId());
+                                }
+                                // A steer stops the input Claude is running, which it already read, and the turn goes on with the steer.
+                                else if (lifecycle.commandId().equals(runningInput) && pendingInputs.size() > 1) {
                                     pendingInputs.remove(lifecycle.commandId());
                                 }
                                 else {
