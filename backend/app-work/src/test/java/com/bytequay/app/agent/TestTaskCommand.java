@@ -15,7 +15,10 @@ package com.bytequay.app.agent;
 
 import org.junit.jupiter.api.Test;
 
-import static com.bytequay.app.agent.TaskCommand.BRIEF;
+import java.util.Optional;
+
+import static com.bytequay.app.agent.TaskCommand.FOCUSES;
+import static com.bytequay.app.agent.TaskCommand.contribute;
 import static com.bytequay.app.agent.TaskCommand.expand;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -24,8 +27,21 @@ class TestTaskCommand
     @Test
     void replacesLeadingCommandWithBriefAndKeepsTheUsersWords()
     {
-        assertThat(expand("@contribute")).isEqualTo(BRIEF.strip());
-        assertThat(expand("  @Contribute  look at the Iceberg connector")).isEqualTo(BRIEF + "\nlook at the Iceberg connector");
+        String any = contribute(Optional.empty());
+        assertThat(expand("@contribute")).isEqualTo(any.strip());
+        assertThat(expand("  @Contribute  look at the Iceberg connector")).isEqualTo(any + "\nlook at the Iceberg connector");
+        assertThat(any).contains("read the source and tests yourself").contains(FOCUSES.values());
+    }
+
+    @Test
+    void leadingFocusWordNarrowsTheContributionToOneKind()
+    {
+        assertThat(expand("@contribute Performance in the Parquet reader"))
+                .isEqualTo(contribute(Optional.of(FOCUSES.get("performance"))) + "\nin the Parquet reader")
+                .contains("Look only for this kind of change:\n- A performance improvement")
+                .doesNotContain(FOCUSES.get("cleanup"));
+        assertThat(expand("@contribute cleanup")).isEqualTo(contribute(Optional.of(FOCUSES.get("cleanup"))).strip());
+        assertThat(expand("@contribute performances")).isEqualTo(contribute(Optional.empty()) + "\nperformances");
     }
 
     @Test

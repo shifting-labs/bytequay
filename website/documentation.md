@@ -551,9 +551,13 @@ suggestions without changing code or publishing a review.
 
 To contribute to a repository, start the message with **@contribute**, choose
 **Contribute** on Home, or ask the Assistant to find a contribution there. The
-task looks for one small, worthwhile problem real users hit, fixes it with
-evidence and a regression test, and writes a short PR description in the
-repository's own template and style. Add words after the command to narrow the
+task reads the code itself as well as open issues, picks one small, worthwhile
+change, makes it with the evidence that kind of change needs, and writes a short
+PR description in the repository's own template and style. To ask for one kind,
+put a focus right after the command: **bug** (with a regression test),
+**performance** (with before and after measurements), **cleanup** (same
+behavior, simpler code), **tests**, or **docs**, as in `@contribute performance`.
+Add more words to narrow the
 search. If nothing qualifies, the task says so instead of making a change. Your
 automation setting decides how far it goes. Leave **Auto-merge** off for these
 tasks: review and confirm the change yourself before it merges, so the
