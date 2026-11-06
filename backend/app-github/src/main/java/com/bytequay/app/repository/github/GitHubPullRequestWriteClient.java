@@ -384,6 +384,33 @@ public class GitHubPullRequestWriteClient
         }
     }
 
+    /** The commit a branch points at, or empty when the repository has no such branch. */
+    public Optional<String> branchHead(String pat, RepoRef repository, String branch)
+    {
+        requirePat(pat);
+        checkText(branch, "branch", 255);
+        String query = "query($owner:String!,$name:String!,$ref:String!){repository(owner:$owner,name:$name){ref(qualifiedName:$ref){target{oid}}}}";
+        JsonNode ref = graphqlData(pat, query, ImmutableMap.of("owner", repository.owner(), "name", repository.repo(), "ref", "refs/heads/" + branch),
+                HttpStatus.BAD_GATEWAY, "GitHub could not read the branch").path("repository").path("ref");
+        if (ref.isNull() || ref.isMissingNode()) {
+            return Optional.empty();
+        }
+        String oid = ref.path("target").path("oid").asText("");
+        if (oid.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "GitHub returned a branch without a commit");
+        }
+        return Optional.of(oid);
+    }
+
+    public void createBranch(String pat, RepoRef repository, String branch, String sha)
+    {
+        checkText(branch, "branch", 255);
+        checkText(sha, "sha", 64);
+        translating(() -> send(gitHubRestClient, HttpMethod.POST, pat, ImmutableMap.of("ref", "refs/heads/" + branch, "sha", sha),
+                "/repos/{owner}/{repo}/git/refs", repository.owner(), repository.repo())
+                .toBodilessEntity());
+    }
+
     /** Creates a pull request using the same authenticated write client as existing PR actions. */
     public CreatedPullRequest createPullRequest(String pat, RepoRef baseRepository, String head, String base, String title, String body, boolean draft)
     {

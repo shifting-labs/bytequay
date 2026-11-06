@@ -430,6 +430,29 @@ class TestGitLabPullRequestWriter
     }
 
     @Test
+    void createsABranchOnceAndRefusesOneAtAnotherCommit()
+            throws Exception
+    {
+        String branches = "/gitlab/api/v4/projects/42/repository/branches";
+        statuses.put("GET " + branches + "/fix%2Fcache", 404);
+        responses.put("POST " + branches, "{}");
+        statuses.put("POST " + branches, 201);
+        RepoRef project = RepoRef.of("group/nested", "repo");
+
+        writer.createBranch(target(), project, "fix/cache", HEAD);
+        assertThat(received).extracting(Request::key).containsExactly("GET " + branches + "/fix%2Fcache", "POST " + branches);
+        assertThat(mapper.readTree(received.getLast().body())).isEqualTo(mapper.readTree("{\"branch\":\"fix/cache\",\"ref\":\"" + HEAD + "\"}"));
+
+        received.clear();
+        statuses.remove("GET " + branches + "/fix%2Fcache");
+        responses.put("GET " + branches + "/fix%2Fcache", "{\"name\":\"fix/cache\",\"commit\":{\"id\":\"" + HEAD + "\"}}");
+        writer.createBranch(target(), project, "fix/cache", HEAD);
+        assertThatThrownBy(() -> writer.createBranch(target(), project, "fix/cache", BASE)).isInstanceOf(HostingFailure.class).hasMessageContaining("at another commit");
+        assertThat(received).extracting(Request::key).containsOnly("GET " + branches + "/fix%2Fcache");
+        assertThatThrownBy(() -> writer.createBranch(target(), RepoRef.of("someone", "repo"), "fix/cache", HEAD)).hasMessageContaining("fork");
+    }
+
+    @Test
     void commandOnlyCommentSucceedsWithoutInventingANoteIdentity()
     {
         responses.put("POST " + PREFIX + "/notes", "{\"commands_changes\":{\"state_event\":\"close\"},\"summary\":[\"Closed this merge request.\"]}");

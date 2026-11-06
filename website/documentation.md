@@ -310,6 +310,13 @@ with comments stays yours to send. Updating a branch merges its base in, or
 rebases it when you say rebase; GitLab can only rebase. Merging stays your
 click on the pull request's card.
 
+To rename the branch of one of your own pull requests, say so with the new
+name, such as "move #58 to fix-cache-v2". A pull request can't switch
+branches, so the Assistant opens a new one from the new branch with the same
+title, description and draft state, then closes the old one and keeps its
+branch. Reviews, comments and labels stay on the old one. A pull request a
+task follows moves through that task instead.
+
 Ask it to work on one of your own pull requests and it uses that PR's
 development task, as the PR's **Development** button does, and sends your
 words there. A task started some other way can't be linked to a PR later.

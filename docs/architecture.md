@@ -621,7 +621,12 @@ number the words give must be that pull request's, and approving goes through
 an empty review draft bound to the head commit ByteQuay held when the user asked.
 Updating a branch is bound to that head too: it merges the base in, or rebases
 only when the user's words say rebase, since a rebase rewrites the branch's
-commits and is GitLab's only way.
+commits and is GitLab's only way. Moving the user's own pull request to a new
+branch name the user wrote opens a replacement from a branch made at that head,
+with the same title, description and draft state, then closes the old one and
+keeps its branch, because a pull request cannot switch its head branch and
+GitHub closes one whose head branch is renamed; a retry reuses the branch and replacement an earlier attempt made, and a
+pull request a task follows is left to its task.
 Merging stays the card's click. Each call is logged and leaves a receipt in the
 conversation. The switches that let it act are off by default, except pull
 request work, which is on.

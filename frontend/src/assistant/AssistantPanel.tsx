@@ -13,8 +13,8 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import {
-  AlarmClock, ArrowUpRight, Ban, CalendarCheck, CheckCheck, CircleCheck, CircleDot, Clock, Flag, GitCompareArrows, GitMerge, GitPullRequest, GitPullRequestArrow,
-  GitPullRequestClosed, GitPullRequestDraft, History,
+  AlarmClock, ArrowUpRight, Ban, CalendarCheck, CheckCheck, CircleCheck, CircleDot, Clock, Flag, GitBranch, GitCompareArrows, GitMerge, GitPullRequest,
+  GitPullRequestArrow, GitPullRequestClosed, GitPullRequestDraft, History,
   ListEnd, ListPlus, ListTodo, MessageSquare, MessageSquareReply, Pencil, Play, RefreshCw, RotateCw, ScrollText, Send, ShieldCheck, SquarePen, SquarePlus,
   SlidersHorizontal, Tag, TriangleAlert, UserPlus, X, type LucideIcon,
 } from 'lucide-react';
@@ -699,7 +699,7 @@ const ACTED: Record<AssistantReceiptDto['operation'], LucideIcon> = {
   ADD_TO_EPIC: ListPlus, CREATE_WORK_ITEM: SquarePlus, CREATE_EPIC: CircleDot, ACKNOWLEDGE: CheckCheck, SNOOZE: AlarmClock,
   MAKE_AGENDA: CalendarCheck, SAVE_RULE: ScrollText, CLOSE_PULL_REQUEST: GitPullRequestClosed, MARK_READY: GitPullRequestArrow, RERUN_CHECKS: RefreshCw,
   REQUEST_REVIEW: UserPlus, SET_LABELS: Tag, COMMENT: MessageSquare, APPROVE: CircleCheck, EDIT_PULL_REQUEST: Pencil, MERGE: GitMerge,
-  REOPEN_PULL_REQUEST: GitPullRequest, MARK_DRAFT: GitPullRequestDraft, UPDATE_BRANCH: GitCompareArrows,
+  REOPEN_PULL_REQUEST: GitPullRequest, MARK_DRAFT: GitPullRequestDraft, UPDATE_BRANCH: GitCompareArrows, RENAME_BRANCH: GitBranch,
 };
 
 /**

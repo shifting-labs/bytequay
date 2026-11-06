@@ -207,6 +207,28 @@ class TestGitHubPullRequestWriteClient
     }
 
     @Test
+    void readsABranchHeadAndCreatesABranchAtACommit()
+    {
+        graphServer.expect(requestTo("https://api.github.test/graphql"))
+                .andExpect(jsonPath("$.variables.owner").value("contributor"))
+                .andExpect(jsonPath("$.variables.name").value("project"))
+                .andExpect(jsonPath("$.variables.ref").value("refs/heads/fix/cache"))
+                .andRespond(withSuccess("{\"data\":{\"repository\":{\"ref\":null}}}", MediaType.APPLICATION_JSON));
+        graphServer.expect(requestTo("https://api.github.test/graphql"))
+                .andRespond(withSuccess("{\"data\":{\"repository\":{\"ref\":{\"target\":{\"oid\":\"abc\"}}}}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo("https://api.github.test/repos/contributor/project/git/refs"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(header("Authorization", "Bearer pat"))
+                .andExpect(content().json("{\"ref\":\"refs/heads/fix/cache\",\"sha\":\"abc\"}", true))
+                .andRespond(withStatus(HttpStatus.CREATED));
+
+        RepoRef fork = RepoRef.of("contributor", "project");
+        assertThat(client.branchHead("pat", fork, "fix/cache")).isEmpty();
+        assertThat(client.branchHead("pat", fork, "fix/cache")).contains("abc");
+        client.createBranch("pat", fork, "fix/cache", "abc");
+    }
+
+    @Test
     void reportsGitHubsReasonWhenItRefusesTheBranchUpdate()
     {
         graphServer.expect(requestTo("https://api.github.test/graphql"))

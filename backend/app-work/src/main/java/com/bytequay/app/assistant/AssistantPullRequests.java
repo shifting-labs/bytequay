@@ -15,18 +15,23 @@ package com.bytequay.app.assistant;
 
 import com.bytequay.app.agenda.AgendaRefs;
 import com.bytequay.app.review.ReviewPublicationService;
+import com.bytequay.app.service.hosting.HostingIntegrations;
 import com.bytequay.app.service.pr.PullRequestRead;
 import com.bytequay.app.service.pr.PullRequestRoute;
 import com.bytequay.app.service.pr.PullRequestService;
 import com.bytequay.core.domain.AgendaTarget;
 import com.bytequay.core.domain.PullRequestDetail;
+import com.bytequay.core.domain.PullRequestIdentity;
 import com.bytequay.core.domain.RepoUser;
 import com.bytequay.core.domain.UserWords;
 import com.bytequay.core.domain.Workspace;
+import com.bytequay.core.hosting.HostingIntegration;
 import com.bytequay.core.hosting.HostingProvider;
+import com.bytequay.core.hosting.HostingTarget;
 import com.bytequay.core.review.ReviewDraft;
 import com.bytequay.core.store.PrDetailStore;
 import com.bytequay.core.store.PullRequestStore;
+import com.bytequay.core.store.PullRequestTaskStore;
 import com.bytequay.core.store.WorkspaceStore;
 import com.google.common.collect.ImmutableList;
 import org.springframework.stereotype.Component;
@@ -37,6 +42,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import static com.bytequay.app.agenda.AgendaReader.clip;
@@ -58,19 +64,27 @@ class AssistantPullRequests
     private static final int TITLE = 80;
     private static final int TEXT = 160;
 
+    // Branch names a host and Git both take as they are: letters, digits, dots, dashes and underscores, in slash-separated parts.
+    private static final Pattern BRANCH = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*");
+
     private final PullRequestService service;
     private final ReviewPublicationService reviews;
     private final PullRequestStore pullRequests;
     private final PrDetailStore details;
     private final WorkspaceStore workspaces;
+    private final PullRequestTaskStore tasks;
+    private final HostingIntegrations integrations;
 
-    AssistantPullRequests(PullRequestService service, ReviewPublicationService reviews, PullRequestStore pullRequests, PrDetailStore details, WorkspaceStore workspaces)
+    AssistantPullRequests(PullRequestService service, ReviewPublicationService reviews, PullRequestStore pullRequests, PrDetailStore details, WorkspaceStore workspaces,
+            PullRequestTaskStore tasks, HostingIntegrations integrations)
     {
         this.service = requireNonNull(service, "service is null");
         this.reviews = requireNonNull(reviews, "reviews is null");
         this.pullRequests = requireNonNull(pullRequests, "pullRequests is null");
         this.details = requireNonNull(details, "details is null");
         this.workspaces = requireNonNull(workspaces, "workspaces is null");
+        this.tasks = requireNonNull(tasks, "tasks is null");
+        this.integrations = requireNonNull(integrations, "integrations is null");
     }
 
     /** Closes it, as its page's Close pull request does. */
@@ -194,6 +208,60 @@ class AssistantPullRequests
         service.updateBranch(found.route(), pr.detail().headSha(), rebase);
         String base = pr.detail().baseRef();
         return pr.done(rebase ? "Rebasing onto " + base + ":" : "Merging " + base + " into", Optional.of("the host finishes it shortly"));
+    }
+
+    /**
+     * Moves the user's own open pull request to a new branch at the head commit they last saw. GitHub closes a pull request whose head branch
+     * is renamed, so a new one from the new branch takes its title, description and draft state, and then it closes, keeping its branch;
+     * reviews, comments and labels stay with it. A retry reuses the branch and pull request an earlier attempt made. One a task follows is
+     * the task's to move, so the task follows it.
+     */
+    AssistantWork.Done renameBranch(String ref, String branch)
+    {
+        checkArgument(branch.length() <= 200 && BRANCH.matcher(branch).matches() && !branch.contains("..") && !branch.endsWith(".lock"),
+                "“%s” isn't a branch name ByteQuay can use", branch);
+        Found found = resolve(ref);
+        checkState(tasks.find(found.workspace().id(), found.repo(), found.number()).isEmpty(),
+                "A task follows this pull request; ask the task to move it, so the task follows the new one");
+        Read pr = openAsSeen(found);
+        checkState(Optional.ofNullable(pr.detail().author()).filter(found.route().login()::equalsIgnoreCase).isPresent(), "Only your own pull request can move to a new branch");
+        HostingTarget target = found.route().target();
+        HostingIntegration hosting = integrations.of(target);
+        PullRequestIdentity current = hosting.contents().identity(target, found.number());
+        checkState(current.state() == PullRequestIdentity.State.OPEN && current.headSha().equals(pr.detail().headSha()), "It changed just now; look at it again");
+        checkArgument(!current.headBranch().equals(branch), "It's already on %s", branch);
+        int number = hosting.contents().identitiesByHead(target, current.headRepository(), branch).stream()
+                .filter(earlier -> earlier.state() == PullRequestIdentity.State.OPEN && earlier.baseBranch().equals(current.baseBranch())
+                        && earlier.headSha().equals(current.headSha()))
+                .mapToInt(earlier -> earlier.pullRequest().number())
+                .findFirst()
+                .orElseGet(() -> openOnBranch(hosting, target, current, branch, pr.detail().title(), found.number()));
+        try {
+            hosting.writer().close(target, found.number());
+        }
+        catch (RuntimeException failure) {
+            throw new IllegalStateException("Opened #" + number + " from " + branch + ", but closing #" + found.number() + " failed: " + failure.getMessage()
+                    + ". Ask again to finish", failure);
+        }
+        service.refreshForAction(found.route());
+        service.refreshForAction(service.prepareRead(found.workspace().id(), found.repo(), number));
+        AgendaTarget opens = pullRequests.findIdByRepoAndNumber(found.repo(), number)
+                .map(id -> AgendaTarget.pull(id, found.repo(), number, Optional.of(found.workspace().id()))).orElse(found.target());
+        return new AssistantWork.Done("Moved “" + clip(pr.detail().title(), TITLE) + "” to " + branch,
+                Optional.of(found.repo() + "#" + number + " · #" + found.number() + " closed, its branch kept"), Optional.of(opens), found.repo() + "#" + number);
+    }
+
+    private static int openOnBranch(HostingIntegration hosting, HostingTarget target, PullRequestIdentity current, String branch, String title, int previous)
+    {
+        hosting.writer().createBranch(target, current.headRepository(), branch, current.headSha());
+        try {
+            return hosting.writer().create(target, current.headRepository(), branch, current.baseBranch(), title, hosting.contents().description(target, previous),
+                    current.draft()).number();
+        }
+        catch (RuntimeException failure) {
+            throw new IllegalStateException("Made branch " + branch + ", but opening its pull request failed: " + failure.getMessage() + ". Ask again to retry",
+                    failure);
+        }
     }
 
     /** Sets its title or description to the user's own words, as its page's editors do. */

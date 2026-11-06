@@ -74,6 +74,12 @@ public interface PullRequestWriter
 
     boolean hasMergeQueue(HostingTarget target, String baseRef);
 
+    /**
+     * Points a new {@code branch} of {@code repository}, the target repository or a fork of it, at commit {@code sha}. A branch already at that
+     * commit is kept, so a retry succeeds; one at another commit is refused.
+     */
+    void createBranch(HostingTarget target, RepoRef repository, String branch, String sha);
+
     /** Opens a request from {@code branch} of {@code headRepository}, the target repository itself or a fork of it. */
     CreatedPullRequest create(HostingTarget target, RepoRef headRepository, String branch, String base, String title, String body, boolean draft);
 }

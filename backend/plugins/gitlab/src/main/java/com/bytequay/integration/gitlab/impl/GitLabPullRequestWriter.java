@@ -34,6 +34,7 @@ import com.bytequay.core.hosting.ReviewVerdict;
 import com.bytequay.core.hosting.SubmittedReview;
 import com.bytequay.integration.gitlab.impl.GitLabMergeRequestResponse.DiffRefs;
 import com.bytequay.integration.gitlab.impl.GitLabMergeRequestResponse.Pipeline;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableList;
@@ -51,6 +52,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static com.bytequay.core.hosting.HostingFailure.Kind.INVALID_RESPONSE;
+import static com.bytequay.core.hosting.HostingFailure.Kind.MISSING_OR_INACCESSIBLE;
 import static com.bytequay.core.hosting.HostingFailure.Kind.REVISION_CONFLICT;
 import static com.bytequay.integration.gitlab.impl.GitLabHttpClient.encode;
 import static com.bytequay.integration.gitlab.impl.GitLabHttpClient.mapped;
@@ -313,6 +315,32 @@ public final class GitLabPullRequestWriter
         return false;
     }
 
+    // GitLab answers an existing branch with a bare 400, so the branch is read first; a 404 also covers a branch this account cannot see.
+    @Override
+    public void createBranch(HostingTarget target, RepoRef repository, String branch, String sha)
+    {
+        checkArgument(repository.fullName().equals(target.repository().fullPath()), "GitLab branches of a fork are not supported yet");
+        String branches = projectPath(target) + "/repository/branches";
+        Optional<String> existing;
+        try {
+            GitLabBranch found = get(target.access(), branches + "/" + encode(branch), GitLabBranch.class);
+            existing = Optional.of(mapped("branch", () -> found.commit().id()));
+        }
+        catch (HostingFailure failure) {
+            if (failure.kind() != MISSING_OR_INACCESSIBLE) {
+                throw failure;
+            }
+            existing = Optional.empty();
+        }
+        if (existing.isPresent()) {
+            if (!existing.orElseThrow().equals(sha)) {
+                throw new HostingFailure(REVISION_CONFLICT, target.repository().fullPath() + " already has a branch " + branch + " at another commit");
+            }
+            return;
+        }
+        http.post(target.access(), branches, new NewBranch(branch, sha), Void.class);
+    }
+
     @Override
     public CreatedPullRequest create(HostingTarget target, RepoRef headRepository, String branch, String base, String title, String body, boolean draft)
     {
@@ -445,4 +473,11 @@ public final class GitLabPullRequestWriter
     private record Merge(String sha, boolean squash) {}
     private record Create(@JsonProperty("source_branch") String source, @JsonProperty("target_branch") String target, String title, String description) {}
     private record DiscussionBody(String body, GitLabDiffPosition position) {}
+    private record NewBranch(String branch, String ref) {}
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record GitLabBranch(Commit commit)
+    {
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        record Commit(String id) {}
+    }
 }

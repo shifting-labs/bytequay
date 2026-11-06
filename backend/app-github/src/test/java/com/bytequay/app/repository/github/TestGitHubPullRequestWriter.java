@@ -26,7 +26,10 @@ import java.util.Optional;
 
 import static com.bytequay.core.hosting.HostingServer.GITHUB_COM;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class TestGitHubPullRequestWriter
@@ -47,6 +50,20 @@ class TestGitHubPullRequestWriter
         when(writes.createPullRequest("pat", UPSTREAM, "feature", "main", "Title", "Body", true)).thenReturn(CREATED);
 
         assertThat(writer.create(target, RepoRef.of("Upstream", "Project"), "feature", "main", "Title", "Body", true)).isEqualTo(CREATED);
+    }
+
+    @Test
+    void createsABranchOnceAndRefusesOneAtAnotherCommit()
+    {
+        RepoRef fork = RepoRef.of("contributor", "project");
+        when(writes.branchHead("pat", fork, "fix-cache")).thenReturn(Optional.empty(), Optional.of("abc"), Optional.of("def"));
+
+        writer.createBranch(target, fork, "fix-cache", "abc");
+        writer.createBranch(target, fork, "fix-cache", "abc");
+        assertThatThrownBy(() -> writer.createBranch(target, fork, "fix-cache", "abc"))
+                .hasMessageContaining("contributor/project already has a branch fix-cache at another commit");
+
+        verify(writes, times(1)).createBranch("pat", fork, "fix-cache", "abc");
     }
 
     @Test

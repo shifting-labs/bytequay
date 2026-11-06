@@ -250,6 +250,20 @@ public class GitHubPullRequestWriter
     }
 
     @Override
+    public void createBranch(HostingTarget target, RepoRef repository, String branch, String sha)
+    {
+        ref(target, 1);
+        Optional<String> existing = writes.branchHead(target.access().token(), repository, branch);
+        if (existing.isPresent()) {
+            if (!existing.orElseThrow().equals(sha)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, repository.fullName() + " already has a branch " + branch + " at another commit");
+            }
+            return;
+        }
+        writes.createBranch(target.access().token(), repository, branch, sha);
+    }
+
+    @Override
     public CreatedPullRequest create(HostingTarget target, RepoRef headRepository, String branch, String base, String title, String body, boolean draft)
     {
         PullRequestRef ref = ref(target, 1);

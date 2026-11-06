@@ -88,8 +88,8 @@ import static java.util.stream.Collectors.joining;
  * only the user's words, never the assistant's: a task's own messages count as the user's authority for what it does next. It also
  * marks Epics, adds work to them, creates work items, and acknowledges or snoozes Needs attention items, all of which stay local, and
  * acts on a pull request the user names: close or reopen, ready for review or back to draft, rerun failed checks, reviewers, labels, a
- * comment or title in their own words, approval, and updating its branch with its base. Merging stays the user's click on the pull
- * request's card.
+ * comment or title in their own words, approval, updating its branch with its base, and moving it to a new branch. Merging stays the
+ * user's click on the pull request's card.
  */
 @Component
 class AssistantActions
@@ -115,6 +115,7 @@ class AssistantActions
             .put("mark_ready", Operation.MARK_READY)
             .put("mark_draft", Operation.MARK_DRAFT)
             .put("update_branch", Operation.UPDATE_BRANCH)
+            .put("rename_branch", Operation.RENAME_BRANCH)
             .put("rerun_checks", Operation.RERUN_CHECKS)
             .put("request_review", Operation.REQUEST_REVIEW)
             .put("set_labels", Operation.SET_LABELS)
@@ -137,6 +138,7 @@ class AssistantActions
             .put(Operation.MARK_READY, ImmutableSet.of("op", "words", "pr"))
             .put(Operation.MARK_DRAFT, ImmutableSet.of("op", "words", "pr"))
             .put(Operation.UPDATE_BRANCH, ImmutableSet.of("op", "words", "pr"))
+            .put(Operation.RENAME_BRANCH, ImmutableSet.of("op", "words", "pr", "branch"))
             .put(Operation.RERUN_CHECKS, ImmutableSet.of("op", "words", "pr"))
             .put(Operation.REQUEST_REVIEW, ImmutableSet.of("op", "words", "pr", "add", "remove"))
             .put(Operation.SET_LABELS, ImmutableSet.of("op", "words", "pr", "add", "remove"))
@@ -155,7 +157,7 @@ class AssistantActions
     /** The operations the "change pull requests" switch allows, each on a pr: ref the user could see. */
     private static final Set<Operation> PULL_REQUEST = Sets.immutableEnumSet(Operation.CLOSE_PULL_REQUEST, Operation.REOPEN_PULL_REQUEST, Operation.MARK_READY,
             Operation.MARK_DRAFT, Operation.RERUN_CHECKS, Operation.REQUEST_REVIEW, Operation.SET_LABELS, Operation.COMMENT, Operation.APPROVE,
-            Operation.EDIT_PULL_REQUEST, Operation.UPDATE_BRANCH);
+            Operation.EDIT_PULL_REQUEST, Operation.UPDATE_BRANCH, Operation.RENAME_BRANCH);
     // A number the user's words give, such as "#58" in "close #58", names the pull request they mean.
     private static final Pattern NUMBER = Pattern.compile("#(\\d+)");
     private static final Map<String, AttentionMarkService.Snooze> SNOOZES = ImmutableMap.of(
@@ -259,12 +261,14 @@ class AssistantActions
                 .put("body", ImmutableMap.of("type", "string", "description", "comment: the comment, exactly as the user wrote it in their message; "
                         + "edit_pull_request: the new description, exactly as the user wrote it"))
                 .put("title", ImmutableMap.of("type", "string", "description", "edit_pull_request: the new title, exactly as the user wrote it"))
+                .put("branch", ImmutableMap.of("type", "string", "description", "rename_branch: the new branch name, exactly as the user wrote it"))
                 .buildOrThrow(), "op", "words");
         return new ReviewTool(NAME, "Do one thing the user's latest message asks for: start a task, give the user's own pull request's task their words, "
                 + "answer a card, send the user's words to a task, mark an Epic, add work to an Epic, create a work item titled with the user's words, "
                 + "acknowledge or snooze a Needs attention item, or act on a pull request: close or reopen it, mark it ready for review or turn it back "
                 + "into a draft, rerun its failed checks, request or take back reviews, add or remove labels, comment or set its title or description in "
-                + "the user's own words, approve it, or update its branch with its base (a rebase when the user's words say rebase). "
+                + "the user's own words, approve it, update its branch with its base (a rebase when the user's words say rebase), or move it to a "
+                + "new branch the user named. "
                 + "Merging is the user's click on the pull request's card. The app checks every call and shows the user a receipt.", schema, run::call, false);
     }
 
@@ -356,7 +360,7 @@ class AssistantActions
                 case REPLY_TO_TASK -> text("task");
                 case OPEN, CREATE_EPIC, MAKE_AGENDA, SAVE_RULE, MERGE -> text("ref");
                 case CLOSE_PULL_REQUEST, REOPEN_PULL_REQUEST, MARK_READY, MARK_DRAFT, RERUN_CHECKS, REQUEST_REVIEW, SET_LABELS, COMMENT, APPROVE,
-                     EDIT_PULL_REQUEST, UPDATE_BRANCH -> text("pr");
+                     EDIT_PULL_REQUEST, UPDATE_BRANCH, RENAME_BRANCH -> text("pr");
                 case MARK_EPIC, ADD_TO_EPIC, ACKNOWLEDGE, SNOOZE -> text("item");
                 case CREATE_WORK_ITEM -> optional("epic").orElse(text("workspace"));
             };
@@ -460,6 +464,7 @@ class AssistantActions
                         "%s needs names to add or remove", body.path("op").asText());
                 case COMMENT -> checkArgument(request.optional("body").isPresent(), "comment needs the user's words as its body");
                 case EDIT_PULL_REQUEST -> checkArgument(request.optional("title").isPresent() || request.optional("body").isPresent(), "edit_pull_request needs a title or a body");
+                case RENAME_BRANCH -> checkArgument(request.optional("branch").isPresent(), "rename_branch needs the new branch name the user wrote");
             }
             if (PULL_REQUEST.contains(operation)) {
                 checkArgument(AgendaRefs.kind(request.text("pr")).equals("pr"), "%s needs a pr: ref", body.path("op").asText());
@@ -478,7 +483,7 @@ class AssistantActions
                 case MARK_EPIC, ADD_TO_EPIC, CREATE_WORK_ITEM -> allowed.changeWork() ? Optional.empty() : Optional.of("Changing Epics and work items is off");
                 case ACKNOWLEDGE, SNOOZE -> allowed.markAttention() ? Optional.empty() : Optional.of("Acknowledging and snoozing is off");
                 case CLOSE_PULL_REQUEST, REOPEN_PULL_REQUEST, MARK_READY, MARK_DRAFT, RERUN_CHECKS, REQUEST_REVIEW, SET_LABELS, COMMENT, APPROVE,
-                     EDIT_PULL_REQUEST, UPDATE_BRANCH -> allowed.changePullRequests() ? Optional.empty() : Optional.of("Changing pull requests is off");
+                     EDIT_PULL_REQUEST, UPDATE_BRANCH, RENAME_BRANCH -> allowed.changePullRequests() ? Optional.empty() : Optional.of("Changing pull requests is off");
                 case ANSWER_APPROVAL, ANSWER_QUESTION, REPLY_TO_TASK, OPEN, CREATE_EPIC, MAKE_AGENDA, SAVE_RULE, MERGE ->
                         allowed.answerTasks() ? Optional.empty() : Optional.of("Answering tasks is off");
             };
@@ -497,7 +502,7 @@ class AssistantActions
             Optional<Result> state = switch (operation) {
                 case START_TASK, OPEN, MARK_EPIC, ADD_TO_EPIC, CREATE_WORK_ITEM, CREATE_EPIC, ACKNOWLEDGE, SNOOZE, MAKE_AGENDA, SAVE_RULE, MERGE -> Optional.empty();
                 case CLOSE_PULL_REQUEST, REOPEN_PULL_REQUEST, MARK_READY, MARK_DRAFT, RERUN_CHECKS, REQUEST_REVIEW, SET_LABELS, COMMENT, APPROVE,
-                     EDIT_PULL_REQUEST, UPDATE_BRANCH -> named(request);
+                     EDIT_PULL_REQUEST, UPDATE_BRANCH, RENAME_BRANCH -> named(request);
                 case ANSWER_APPROVAL, ANSWER_QUESTION -> approvalState(request);
                 case REPLY_TO_TASK -> taskState(request);
             };
@@ -614,6 +619,7 @@ class AssistantActions
                 case SET_LABELS -> Stream.concat(names(request.body(), "add").stream(), names(request.body(), "remove").stream()).toList();
                 case COMMENT -> ImmutableList.of(request.text("body"));
                 case EDIT_PULL_REQUEST -> Stream.of(request.optional("title"), request.optional("body")).flatMap(Optional::stream).toList();
+                case RENAME_BRANCH -> ImmutableList.of(request.text("branch"));
                 default -> ImmutableList.of();
             };
             for (String said : words) {
@@ -622,6 +628,10 @@ class AssistantActions
                     return Optional.of(Result.refused(operation, unsaid.orElseThrow().equals("Those words aren't in your message")
                             ? "“" + clip(said, 60) + "” isn't in your message" : unsaid.orElseThrow()));
                 }
+            }
+            // A branch must be one the user wrote whole: "fix-cache" is not in "move it to fix-cache-2".
+            if (operation == Operation.RENAME_BRANCH && !UserWords.names(message.text(), request.text("branch"))) {
+                return Optional.of(Result.refused(operation, "“" + clip(request.text("branch"), 60) + "” isn't in your message"));
             }
             return Optional.empty();
         }
@@ -664,6 +674,7 @@ class AssistantActions
                 case MARK_READY -> done(request, pulls.markReady(request.target()));
                 case MARK_DRAFT -> done(request, pulls.markDraft(request.target()));
                 case UPDATE_BRANCH -> done(request, pulls.updateBranch(request.target(), request.words()));
+                case RENAME_BRANCH -> done(request, pulls.renameBranch(request.target(), request.text("branch")));
                 case RERUN_CHECKS -> done(request, pulls.rerunChecks(request.target()));
                 case REQUEST_REVIEW -> done(request, pulls.requestReview(request.target(), names(request.body(), "add"), names(request.body(), "remove")));
                 case SET_LABELS -> done(request, pulls.setLabels(request.target(), names(request.body(), "add"), names(request.body(), "remove")));
