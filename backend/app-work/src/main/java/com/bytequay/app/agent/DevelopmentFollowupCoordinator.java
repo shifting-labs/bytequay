@@ -724,8 +724,9 @@ public class DevelopmentFollowupCoordinator
                 Never run git push, a gh or glab command, or other remote writes; never read or ask for credentials.
 
                 For publicPublication=true, sanitize title/body against private sources using *** or synthetic examples.
-                Derive title and body from the actual change and repository PR template. Explain the plan and implementation
-                approach concisely in the description. Fill relevant sections only; leave other sections exactly as the template leaves them. Don't describe added or changed tests; they are in the diff.
+                Derive title and body from the actual change and repository PR template. The body adds only what the title leaves out:
+                the problem and why, then a sentence on how. When the title already explains the change, answer only the template's
+                required choices. Leave other sections exactly as the template leaves them. Don't describe tests; they are in the diff.
                 Keep local execution details private to this task: commands run, test classes, counts, pass/fail results,
                 build or validation outcomes, logs, tooling, sandbox and environment limitations. Never put these in the PR,
                 including Testing, Validation or Test plan sections. Never add an attribution, co-authorship, or generated-with trailer.

@@ -1127,7 +1127,8 @@ class TestDevelopmentFollowupCoordinator
     {
         String prompt = DevelopmentFollowupCoordinator.publicationPrompt(new DevelopmentBaseline(worktree, route, local(BASE, false)), local(HEAD, false), Optional.empty(), true);
         assertThat(prompt).contains(
-                "Fill relevant sections only", "leave other sections exactly as the template leaves them",
+                "The body adds only what the title leaves out", "the problem and why", "When the title already explains the change",
+                "answer only the template's", "Leave other sections exactly as the template leaves them",
                 "attribution, co-authorship, or generated-with trailer");
         assertThat(prompt).doesNotContain("preserve local-check limitations", "local-check limitations");
     }

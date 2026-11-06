@@ -43,8 +43,14 @@ tangents, filler, figurative language, and empty hedging; retain real uncertaint
 
 ## Pull-request descriptions
 
-When creating or updating a PR description, explain the problem, resulting
-behavior, and relevant design choices. Never include local execution details:
+A PR description adds only what the title leaves out: the problem and why it
+matters, then a sentence or two on how the change solves it. Keep it to a few
+short sentences. When the title already explains a simple change, write no
+description; with a template, leave its sections empty and answer only its
+required choices, such as a release-notes checkbox. Don't restate the title,
+list changed files or symbols, or add headings.
+
+Never include local execution details:
 commands run, test classes executed, test counts, pass/fail results, build or
 validation outcomes, logs, environment limitations, or a recap of the agent's
 work. These details belong only in the ByteQuay task conversation, even when a

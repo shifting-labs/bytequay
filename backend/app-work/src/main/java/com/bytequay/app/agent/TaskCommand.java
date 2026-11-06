@@ -68,7 +68,8 @@ final class TaskCommand
 
             Write the pull-request title and description as any contributor would:
             - Use the repository's template. Keep its headings and checkboxes and fill in only what applies.
-            - Stay under 100 words: the problem, why it matters, the evidence, and the change.
+            - Add only what the title leaves out, in a few short sentences: the problem and why it matters, then how the change solves it. \
+            When the title already explains the change, leave the description empty.
             - Leave tests and local verification out: no description of added tests, commands, test runs or their results, or "tested locally".
             - Add no AI attribution, disclosure, co-author, or generated-with text, and leave any AI-use question in the template unanswered.
             """;
