@@ -70,6 +70,7 @@ import com.bytequay.agent.spi.PullRequestCiBridge;
 import com.bytequay.agent.spi.PullRequestContextBridge;
 import com.bytequay.agent.spi.RelatedWorkspaceBridge;
 import com.bytequay.agent.spi.ReviewBridge;
+import com.bytequay.agent.spi.TaskPublicationBridge;
 import com.bytequay.agent.spi.TaskPullRequestReplacementBridge;
 import com.bytequay.agent.spi.WorkItemBridge;
 import com.bytequay.app.agent.runtime.AgentProperties;
@@ -154,6 +155,7 @@ public class AgentConfiguration
             BridgeResolver<ReviewBridge> reviews,
             BridgeResolver<DevelopmentResultBridge> developmentResults,
             BridgeResolver<TaskPullRequestReplacementBridge> pullRequestReplacements,
+            BridgeResolver<TaskPublicationBridge> taskPublications,
             BridgeResolver<LocalReviewBridge> localReviews,
             BridgeResolver<PullRequestCiBridge> pullRequestChecks,
             BridgeResolver<IssueContextBridge> issueContexts,
@@ -169,6 +171,7 @@ public class AgentConfiguration
                 .reviews(reviews)
                 .developments(developmentResults)
                 .pullRequestReplacements(pullRequestReplacements)
+                .taskPublications(taskPublications)
                 .draftPullRequests((taskId, title, body) -> developmentFollowups.getObject().publishDraftPullRequest(taskId, title, body))
                 .localReviews(localReviews)
                 .pullRequestChecks(pullRequestChecks)

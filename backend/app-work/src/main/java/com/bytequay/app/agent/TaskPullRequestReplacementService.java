@@ -80,6 +80,7 @@ public class TaskPullRequestReplacementService
     private final ObjectProvider<DevelopmentFollowupCoordinator> followups;
     private final AgentRuntimeRegistry runtime;
     private final AgentUnitOfWork unitOfWork;
+    private final TaskTurnWords words;
     private final Clock clock;
     private final Striped<Lock> operations = Striped.lock(64);
 
@@ -87,7 +88,7 @@ public class TaskPullRequestReplacementService
             PullRequestTaskStore assignments, PullRequestReplacementStore replacements, DevelopmentGitInspector git, WorkspaceHostingService hosting,
             HostingIntegrations integrations, PullRequestService pullRequests, PullRequestRefreshService refresh, CiAutofixService ci,
             ReviewFixService reviewFixes, AutoMergeService autoMerge, ObjectProvider<DevelopmentFollowupCoordinator> followups,
-            AgentRuntimeRegistry runtime, AgentUnitOfWork unitOfWork, Clock clock)
+            AgentRuntimeRegistry runtime, AgentUnitOfWork unitOfWork, TaskTurnWords words, Clock clock)
     {
         this.tasks = requireNonNull(tasks, "tasks is null");
         this.turns = requireNonNull(turns, "turns is null");
@@ -107,6 +108,7 @@ public class TaskPullRequestReplacementService
         this.followups = requireNonNull(followups, "followups is null");
         this.runtime = requireNonNull(runtime, "runtime is null");
         this.unitOfWork = requireNonNull(unitOfWork, "unitOfWork is null");
+        this.words = requireNonNull(words, "words is null");
         this.clock = requireNonNull(clock, "clock is null");
     }
 
@@ -116,7 +118,8 @@ public class TaskPullRequestReplacementService
                 .filter(task -> !task.permissionPolicy().unattended() && reviews.findReviewByTask(id.toString()).isEmpty());
     }
 
-    public Prepared prepare(TaskId id, TurnId turnId, String branch)
+    /** The replacement onto {@code branch}, which runs at once when {@code said} is the user's own request in this turn. */
+    public Prepared prepare(TaskId id, TurnId turnId, String branch, Optional<String> said)
     {
         AgentTask task = requireTask(id, turnId);
         Optional<PullRequestReplacement> stored = replacements.find(id.toString());
@@ -158,7 +161,8 @@ public class TaskPullRequestReplacementService
                 + "\nCreate and verify the replacement, keep this conversation and its enabled CI/review tracking connected, then close the previous PR."
                 + "\nExisting branches are kept. Existing GitHub reviews and checks remain on the previous PR; the replacement gets fresh checks."
                 + (plan.createStarted() && !plan.completed() ? "\nResume the saved operation; an uncertain create will be checked, never blindly repeated." : "");
-        return new Prepared(preview, () -> withLock(operations.get(id), () -> execute(id, turnId, plan, stored)));
+        return new Prepared(preview, () -> withLock(operations.get(id), () -> execute(id, turnId, plan, stored)),
+                words.authorize(id, turnId, said, plan.branch()).map(quoted -> "the user asked: “" + quoted + "”"));
     }
 
     private String execute(TaskId id, TurnId turnId, PullRequestReplacement approved, Optional<PullRequestReplacement> expected)

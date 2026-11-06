@@ -459,7 +459,8 @@ Send or publication; it can be considered at the next successful idle boundary.
 
 An ordinary development turn can request replacement of its linked GitHub pull
 request through a task-scoped tool. A one-shot approval binds the current PR,
-account, destination, commit and replacement branch. The application copies the
+account, destination, commit and replacement branch; the user's own words in a
+message of that turn that name the branch stand in for it. The application copies the
 already-published title, description and draft status, verifies the replacement,
 then reassigns the existing task before closing the previous PR. The local branch
 and checkout stay stable. A durable receipt retains uncertain creates and partial
@@ -467,6 +468,21 @@ completion; retries reconcile existing results before writing again. Pending
 replacement holds review and merge automation. Old review replies are retired,
 CI follows the replacement, and merge readiness is checked again with a fresh
 delay. Provider denials do not grant permission to execute a shell alternative.
+
+Agent tools never receive hosting credentials, so the same turns push the task
+branch and close the task's own pull request through task-scoped tools rather
+than handing commands to the user. Each action is prepared with what it will
+write and runs on the user's own words in that turn that name it, or else after a
+one-shot approval. Words count only when they appear in a message the user sent
+in the active turn and that message does not say not to; turns the application
+started, review-fix turns, and the first turn of a task whose message wraps an
+issue's, ticket's or pull request's text never authorize by words. A push sends
+the committed head of the task branch with a lease on the remote head read at
+preparation, and replaces only commits the task once had. A close applies only
+to the task's linked pull request while it is open and authored by the signed-in
+account, and keeps the branch. Both recheck the turn, queue, branch, commit and
+remote immediately before writing, verify the remote result, and stay with the
+root agent.
 
 A branch rename records a durable intent outside the checkout before changing Git.
 Recovery reconciles only the recorded old/new branch pair at the recorded commit, under

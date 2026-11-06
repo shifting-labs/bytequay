@@ -45,6 +45,6 @@ public class TaskPullRequestReplacementBridgeResolver
                 .filter(task -> task.laneId().usesClaude() || task.sessionReference().stream().noneMatch(reference -> reference.contractVersion() == 1))
                 .flatMap(task -> turns.findActive(id))
                 .filter(turn -> turn.developmentOrigin().isEmpty() && turn.cancellationRequestedAt().isEmpty())
-                .map(turn -> new TaskPullRequestReplacementBridge(branch -> replacements.getObject().prepare(id, turn.id(), branch)));
+                .map(turn -> new TaskPullRequestReplacementBridge((branch, said) -> replacements.getObject().prepare(id, turn.id(), branch, said)));
     }
 }

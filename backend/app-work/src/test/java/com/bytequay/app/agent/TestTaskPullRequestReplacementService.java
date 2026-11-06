@@ -138,8 +138,9 @@ class TestTaskPullRequestReplacementService
     private final PullRequestContentReader contents = mock(PullRequestContentReader.class);
     private final PullRequestWriter writer = mock(PullRequestWriter.class);
     private final PullRequestDetail detail = mock(PullRequestDetail.class, withSettings().mockMaker(MockMakers.INLINE));
+    private final TaskTurnWords words = mock(TaskTurnWords.class);
     private final TaskPullRequestReplacementService service = new TaskPullRequestReplacementService(tasks, turns, queue, reviews, ownership,
-            assignments, replacements, git, hosting, integrations, requests, refresh, ci, reviewFixes, autoMerge, followups, runtime, unitOfWork,
+            assignments, replacements, git, hosting, integrations, requests, refresh, ci, reviewFixes, autoMerge, followups, runtime, unitOfWork, words,
             Clock.fixed(Instant.EPOCH, ZoneOffset.UTC));
     private Optional<PullRequestReplacement> saved = Optional.empty();
     private Optional<PullRequestTask> assigned = Optional.empty();
@@ -221,8 +222,9 @@ class TestTaskPullRequestReplacementService
     @Test
     void createsAndVerifiesBeforeRebindingClosingAndResumingTracking()
     {
-        Prepared prepared = service.prepare(id, turn.id(), BRANCH);
+        Prepared prepared = service.prepare(id, turn.id(), BRANCH, Optional.empty());
         assertThat(prepared.description()).contains("owner/repo#11", BRANCH, HEAD, "keep this conversation");
+        assertThat(prepared.authorization()).isEmpty();
         verifyNoInteractions(writer, ci);
         verify(replacements, never()).save(any());
         assertThat(prepared.execute().get()).contains("closed PR #11", "CI/review tracking");
@@ -237,6 +239,15 @@ class TestTaskPullRequestReplacementService
         order.verify(ci).startDevelopment(any(), eq(id), eq(remoteReplacement.orElseThrow()), eq(Instant.EPOCH));
         verify(autoMerge).pullRequestReplaced(id.toString(), HEAD);
         verify(followup).pullRequestReplaced(task, turn.id());
+    }
+
+    @Test
+    void theUsersWordsNamingTheBranchAuthorizeTheReplacement()
+    {
+        Optional<String> said = Optional.of("rename the branch to fix-ordering");
+        when(words.authorize(id, turn.id(), said, BRANCH)).thenReturn(said);
+        assertThat(service.prepare(id, turn.id(), BRANCH, said).authorization()).contains("the user asked: “rename the branch to fix-ordering”");
+        verifyNoInteractions(writer);
     }
 
     @Test
@@ -332,7 +343,7 @@ class TestTaskPullRequestReplacementService
                 .markDeliveryStarted(Instant.EPOCH).running(new ProviderTurnRef("resumed-provider"), Optional.empty());
         when(turns.findActive(id)).thenReturn(Optional.of(resumed));
         clearInvocations(writer, ci, assignments);
-        assertThat(service.prepare(id, resumed.id(), BRANCH).execute().get()).contains("already completed");
+        assertThat(service.prepare(id, resumed.id(), BRANCH, Optional.empty()).execute().get()).contains("already completed");
         verifyNoInteractions(writer);
         verify(ci, never()).stopDevelopment(any());
         verify(ci).startDevelopment(any(), eq(id), eq(remoteReplacement.orElseThrow()), eq(Instant.EPOCH));
@@ -343,7 +354,7 @@ class TestTaskPullRequestReplacementService
     void stopDuringCompletedRetryIdentityReadPreventsCiUntilAFreshTurn()
     {
         execute();
-        Prepared prepared = service.prepare(id, turn.id(), BRANCH);
+        Prepared prepared = service.prepare(id, turn.id(), BRANCH, Optional.empty());
         doAnswer(ignored -> {
             when(turns.findActive(id)).thenReturn(Optional.of(turn.requestCancellation(Instant.EPOCH)));
             return remoteReplacement.orElseThrow();
@@ -357,7 +368,7 @@ class TestTaskPullRequestReplacementService
                 .markDeliveryStarted(Instant.EPOCH).running(new ProviderTurnRef("resumed-provider"), Optional.empty());
         when(turns.findActive(id)).thenReturn(Optional.of(resumed));
         doReturn(remoteReplacement.orElseThrow()).when(contents).identity(any(), eq(12));
-        assertThat(service.prepare(id, resumed.id(), BRANCH).execute().get()).contains("already completed");
+        assertThat(service.prepare(id, resumed.id(), BRANCH, Optional.empty()).execute().get()).contains("already completed");
         verifyNoInteractions(writer);
         verify(ci, never()).stopDevelopment(any());
         verify(ci).startDevelopment(any(), eq(id), eq(remoteReplacement.orElseThrow()), eq(Instant.EPOCH));
@@ -367,7 +378,7 @@ class TestTaskPullRequestReplacementService
     @Test
     void rejectsAStoppedTurnOrChangedRevisionBeforeAnyWrite()
     {
-        Prepared prepared = service.prepare(id, turn.id(), BRANCH);
+        Prepared prepared = service.prepare(id, turn.id(), BRANCH, Optional.empty());
         when(turns.findActive(id)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> prepared.execute().get()).hasMessageContaining("ended or was stopped");
         when(turns.findActive(id)).thenReturn(Optional.of(turn));
@@ -380,7 +391,7 @@ class TestTaskPullRequestReplacementService
     @Test
     void changedAccountRequiresAFreshApproval()
     {
-        Prepared prepared = service.prepare(id, turn.id(), BRANCH);
+        Prepared prepared = service.prepare(id, turn.id(), BRANCH, Optional.empty());
         selected = new WorkspaceHostingRead(new HostingReadSession(9, "selected", selected.session().access()), selected.repository(), selected.login());
         assertThatThrownBy(() -> prepared.execute().get()).hasMessageContaining("hosting account");
         verifyNoInteractions(writer, ci);
@@ -391,17 +402,17 @@ class TestTaskPullRequestReplacementService
     void refusesAnExistingPrOrAnotherCommitOnTheProposedBranch()
     {
         remoteReplacement = Optional.of(identity(12, BRANCH, PullRequestIdentity.State.OPEN));
-        assertThatThrownBy(() -> service.prepare(id, turn.id(), BRANCH)).hasMessageContaining("already has a pull request");
+        assertThatThrownBy(() -> service.prepare(id, turn.id(), BRANCH, Optional.empty())).hasMessageContaining("already has a pull request");
         remoteReplacement = Optional.empty();
         remoteHead = Optional.of("c".repeat(40));
-        assertThatThrownBy(() -> service.prepare(id, turn.id(), BRANCH)).hasMessageContaining("different commit");
+        assertThatThrownBy(() -> service.prepare(id, turn.id(), BRANCH, Optional.empty())).hasMessageContaining("different commit");
         verifyNoInteractions(writer, ci);
     }
 
     @Test
     void queuedInputInvalidatesThePreparedOperation()
     {
-        Prepared prepared = service.prepare(id, turn.id(), BRANCH);
+        Prepared prepared = service.prepare(id, turn.id(), BRANCH, Optional.empty());
         QueuedAgentInput input = mock(QueuedAgentInput.class, withSettings().mockMaker(MockMakers.INLINE));
         when(input.state()).thenReturn(QueuedAgentInput.State.QUEUED);
         when(queue.listQueued(id)).thenReturn(ImmutableList.of(input));
@@ -413,7 +424,7 @@ class TestTaskPullRequestReplacementService
     @Test
     void anotherAcceptedOperationInvalidatesThePreparedApproval()
     {
-        Prepared prepared = service.prepare(id, turn.id(), BRANCH);
+        Prepared prepared = service.prepare(id, turn.id(), BRANCH, Optional.empty());
         saved = Optional.of(new PullRequestReplacement(id.toString(), "workspace", selected.session().accountId(), selected.repository().id(),
                 HEAD_REPOSITORY, BASE_REPOSITORY, 11, "contributor/bytequay/old-branch", "main", HEAD, BRANCH, "Fix ordering", "Existing PR description",
                 true, true, Optional.empty(), false));
@@ -451,7 +462,7 @@ class TestTaskPullRequestReplacementService
 
     private String execute()
     {
-        return service.prepare(id, turn.id(), BRANCH).execute().get();
+        return service.prepare(id, turn.id(), BRANCH, Optional.empty()).execute().get();
     }
 
     private CreatedPullRequest createRemote()

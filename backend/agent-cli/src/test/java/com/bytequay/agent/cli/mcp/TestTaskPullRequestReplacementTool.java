@@ -51,12 +51,12 @@ class TestTaskPullRequestReplacementTool
     private final AtomicInteger prepared = new AtomicInteger();
     private final AtomicInteger writes = new AtomicInteger();
     private final SecretRedactor redactor = SecretRedactor.fromEnvironment(ImmutableMap.of("OPENAI_API_KEY", "known-secret"));
-    private final TaskPullRequestReplacementBridge replacement = new TaskPullRequestReplacementBridge(branch -> {
+    private final TaskPullRequestReplacementBridge replacement = new TaskPullRequestReplacementBridge((branch, said) -> {
         prepared.incrementAndGet();
         return new TaskPullRequestReplacementBridge.Prepared("Replace PR #7 at revision abc with branch " + branch + " known-secret", () -> {
             writes.incrementAndGet();
             return "Replaced PR #7 with PR #8 known-secret";
-        });
+        }, said.filter("replace it as fix-value"::equals));
     });
 
     @TempDir
@@ -95,6 +95,20 @@ class TestTaskPullRequestReplacementTool
         }
     }
 
+    @Test
+    void theUsersOwnWordsReplaceWithoutACard()
+            throws Exception
+    {
+        PermissionBroker broker = broker();
+        try (var registration = register(broker, (request, timeout) -> {
+            throw new AssertionError("The user's own words must not ask again");
+        })) {
+            assertThat(call(broker, registration, "{\"branch\":\"fix-value\",\"words\":\"replace it as fix-value\"}").at("/result/content/0/text").asText())
+                    .isEqualTo("Replaced PR #7 with PR #8 [REDACTED]");
+            assertThat(writes).hasValue(1);
+        }
+    }
+
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void refusalOrExpiryNeverExecutesReplacement(boolean expired)
@@ -110,7 +124,8 @@ class TestTaskPullRequestReplacementTool
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"{}", "[]", "{\"branch\":false}", "{\"branch\":\" \"}", "{\"branch\":\"fix-value\",\"authorized\":true}"})
+    @ValueSource(strings = {"{}", "[]", "{\"branch\":false}", "{\"branch\":\" \"}", "{\"branch\":\"fix-value\",\"authorized\":true}",
+            "{\"branch\":\"fix-value\",\"words\":\" \"}", "{\"branch\":\"fix-value\",\"words\":7}", "{\"words\":\"replace it\"}"})
     void invalidInputCannotPrepareOrApproveAnOperation(String arguments)
             throws Exception
     {

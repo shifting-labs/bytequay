@@ -1241,7 +1241,8 @@ class TestClaudeCliDriver
     void replacementToolIsAvailableOnResumeAndDisablesUnverifiedChildren()
             throws Exception
     {
-        var replacement = new TaskPullRequestReplacementBridge(branch -> new TaskPullRequestReplacementBridge.Prepared("Replace with " + branch, () -> "replaced"));
+        var replacement = new TaskPullRequestReplacementBridge((branch, said) -> new TaskPullRequestReplacementBridge.Prepared("Replace with " + branch, () -> "replaced",
+                Optional.empty()));
         PermissionBroker broker = PermissionBroker.builder(() -> URI.create("http://127.0.0.1:9000/internal/agent/claude/mcp"), objectMapper, (taskId, query) -> "")
                 .pullRequestReplacements(taskId -> Optional.of(replacement)).build();
         try (ClaudeCliDriver driver = new ClaudeCliDriver("/fake/claude", objectMapper, broker, supervisor, claudeHome(), ImmutableMap.of())) {

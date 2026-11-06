@@ -602,8 +602,9 @@ branch has commits the task never had. When automation stops on an error, your
 next message retries the delivery, even if that turn changes nothing.
 
 To replace a task's GitHub PR with one from a different branch, ask the agent in
-that task's conversation and give the new branch name. Choose **Allow once** on
-the **Replace task pull request** card after checking its PR, branch and commit.
+that task's conversation and give the new branch name. When your message names
+the branch, ByteQuay starts at once; otherwise choose **Allow once** on the
+**Replace task pull request** card after checking its PR, branch and commit.
 ByteQuay copies the current PR's title, description and draft status, verifies
 the replacement, connects it to the same task, then closes the previous PR.
 Your conversation, working copy and enabled CI/review automation stay connected;
@@ -613,6 +614,13 @@ commit, and queued messages must be finished or removed first. If a step fails,
 ask the agent to retry with the same branch name: ByteQuay checks the saved
 result and continues without blindly creating another PR. No terminal command
 is needed.
+
+Ask the agent to push the task's branch or close its PR, and ByteQuay does it
+with your account, so you never run a command yourself. When your message in
+that turn says push or close, it runs at once; otherwise a **Push task branch**
+or **Close task pull request** card asks first. A push sends only committed work
+and stops if the branch has commits the task never had. Closing keeps the
+branch.
 
 Every step after Auto-Commit writes to GitHub, and repairs use your model
 allowance. The stop square above the composer halts automation and keeps your

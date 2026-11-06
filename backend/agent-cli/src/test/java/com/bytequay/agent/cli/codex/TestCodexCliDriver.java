@@ -3663,10 +3663,10 @@ class TestCodexCliDriver
             calls.incrementAndGet();
             return "linked";
         });
-        var replacement = new TaskPullRequestReplacementBridge(branch -> new TaskPullRequestReplacementBridge.Prepared("Replace the task pull request with " + branch, () -> {
+        var replacement = new TaskPullRequestReplacementBridge((branch, said) -> new TaskPullRequestReplacementBridge.Prepared("Replace the task pull request with " + branch, () -> {
             calls.incrementAndGet();
             return "replaced";
-        }));
+        }, Optional.empty()));
         PermissionBroker broker = PermissionBroker.builder(() -> URI.create(MCP_ENDPOINT), objectMapper, (taskId, query) -> "")
                 .relatedWork(taskId -> toolName.equals(RelatedWorkspaceBridge.TOOL_NAME) ? Optional.of(related) : Optional.empty())
                 .pullRequestReplacements(taskId -> toolName.equals(TaskPullRequestReplacementBridge.TOOL_NAME) ? Optional.of(replacement) : Optional.empty()).build();
