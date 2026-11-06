@@ -389,7 +389,9 @@ describe('review details', () => {
       steps: [{ number: 1, kind: 'INVESTIGATE', repair: false, investigation: null, validation: null }] }] });
     expect(review.runs[0].investigation?.candidates[0]).toMatchObject({ originStep: 1, originTurnId: 'turn-1', attributedSource: 'PR discussion' });
     const html = tab(review);
-    expect(html).toContain('Other recorded findings · 1');
+    // A running review shows its saved finding as a provisional card rather than in the details.
+    expect(html).not.toContain('Other recorded findings');
+    expect(html).toContain('<span class="agr-pill is-provisional">Provisional</span>');
     expect(html).not.toContain('Unsealed checkpoint');
     expect(html).not.toContain('Behavior and contracts');
     expect(html).not.toContain('The callback may outlive its owner');

@@ -115,10 +115,12 @@ export function reviewRecoveryRequired(review: AgentReviewDto): boolean {
     && (review.task.mutationClaim === 'RECOVERY' || (review.task.mutationClaim === 'TURN' && !reviewRunning(review)));
 }
 
-/** Automatic cards use the sealed selection; explicit discussion and user history remain visible. */
+/** Automatic cards use the sealed selection, or each saved finding while the run is going; explicit discussion and user history remain visible. */
 export function findingInResults(review: AgentReviewDto, finding: ReviewFindingDto): boolean {
   if (review.draft?.items.some(item => item.findingId === finding.id && (item.published || item.publication !== null))) return true;
   const source = review.runs.find(run => run.id === finding.runId);
+  // A running review shows each finding once it is saved, so the wait is not blank; it stays unpublishable until accepted.
+  if (source?.state === 'RUNNING' && finding.origin === 'AUTOMATIC') return true;
   if (source?.state !== 'ACCEPTED' || !completeCoverage(source)) return false;
   return finding.origin === 'DISCUSSION'
     || source.steps.findLast(step => step.validation !== null)?.validation?.selectedFindingIds.includes(finding.id) === true;

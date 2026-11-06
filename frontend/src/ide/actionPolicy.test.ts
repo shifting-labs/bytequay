@@ -53,14 +53,17 @@ describe('IDE action boundary', () => {
     expect(() => validateIdeAction('finding.editDraft', ['finding-1', 'Edited', 4], context, true)).toThrow('cannot publish');
   });
 
-  it('does not expose unselected or unfinished findings as IDE action targets', () => {
+  it('does not expose unselected or failed findings as IDE action targets', () => {
     const source = review.runs[0];
     const unselected = { ...context, review: { ...review, runs: [{ ...source, steps: source.steps.map((step): ReviewStepDto => ({ ...step,
       validation: step.validation === null ? null : { ...step.validation, selectedFindingIds: [] },
     })) }] } };
     expect(() => validateIdeAction('finding.ask', ['finding-1', 'Explain this'], unselected, true)).toThrow('Unknown finding');
-    const unfinished = { ...context, review: { ...review, runs: [{ ...source, state: 'RUNNING' as const }] } };
-    expect(() => validateIdeAction('finding.ask', ['finding-1', 'Explain this'], unfinished, true)).toThrow('Unknown finding');
+    const failed = { ...context, review: { ...review, runs: [{ ...source, state: 'FAILED' as const }] } };
+    expect(() => validateIdeAction('finding.ask', ['finding-1', 'Explain this'], failed, true)).toThrow('Unknown finding');
+    // A running review shows each saved finding, so the IDE can ask about it too.
+    const running = { ...context, review: { ...review, runs: [{ ...source, state: 'RUNNING' as const }] } };
+    expect(() => validateIdeAction('finding.ask', ['finding-1', 'Explain this'], running, true)).not.toThrow();
   });
 
   it('retains backend version checks at the private finding boundary', () => {

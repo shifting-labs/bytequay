@@ -890,7 +890,7 @@ export default function AgentReviewTab({
               {findings.length === 0 && status?.status !== 'nofindings' && provisional(review) && running && (
                 <div className="agr-pending">
                   <span className="agr-spinner" aria-hidden="true" />
-                  <span>Findings appear after the agent checks its candidates. The report stays provisional until validation and complete coverage are accepted.</span>
+                  <span>Findings appear here as the agent confirms each one. They stay provisional until validation and complete coverage are accepted.</span>
                 </div>
               )}
               {groups.flatMap(group => [

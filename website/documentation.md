@@ -450,10 +450,11 @@ Watch the repository and pick a ready Review model first.
    task. If the task's agent is working, the review starts when it finishes.
    To review only some commits, pick them in **Commits** first. **Review
    again** later covers the whole pull request.
-2. Read **What changed** and the findings. **Walkthrough** follows one example
-   input through the code, step by step, to the result that goes wrong, then
-   shows the fix; it is never posted. **Ask reviewer** opens a private
-   discussion.
+2. Read **What changed** and the findings. Each finding appears as soon as the
+   agent confirms it and stays Provisional until the review finishes.
+   **Walkthrough** follows one example input through the code, step by step,
+   to the result that goes wrong, then shows the fix; it is never posted.
+   **Ask reviewer** opens a private discussion.
 3. **Add to my review** turns a finding into a comment you publish with **Submit
    review**. **Request fix → Send to developer** asks the development agent to
    fix it instead.

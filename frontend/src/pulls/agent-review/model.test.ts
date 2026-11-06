@@ -753,7 +753,11 @@ describe('sealed result selection', () => {
     expect(findingInResults(review, { ...review.findings[1], state: 'RESOLVED' })).toBe(false);
     expect(findingInResults(review, { ...review.findings[0], state: 'RESOLVED' })).toBe(true);
     expect(findingInResults(review, { ...review.findings[1], origin: 'DISCUSSION' })).toBe(true);
-    expect(findingInResults({ ...review, runs: [{ ...review.runs[0], state: 'RUNNING' }] }, review.findings[0])).toBe(false);
+    const running: AgentReviewDto = { ...review, runs: [{ ...review.runs[0], state: 'RUNNING' }] };
+    expect(findingInResults(running, review.findings[1])).toBe(true);
+    expect(findingPublication(running, review.findings[1])).toEqual({ kind: 'blocked', reason: 'Publishing unlocks when validation and complete coverage are accepted' });
+    expect(findingInResults(running, { ...review.findings[1], origin: 'DISCUSSION' })).toBe(false);
+    expect(findingInResults({ ...review, runs: [{ ...review.runs[0], state: 'FAILED' }] }, review.findings[0])).toBe(false);
     expect(findingInResults({ ...review, runs: [{ ...review.runs[0], state: 'INCOMPLETE' }] }, { ...review.findings[1], origin: 'DISCUSSION' })).toBe(false);
     expect(findingInResults({ ...review, draft: draft([draftItem({ findingId: 'finding-2', published: false })]) }, review.findings[1])).toBe(false);
     expect(findingInResults({ ...review, draft: draft([draftItem({ findingId: 'finding-2', published: true })]) }, review.findings[1])).toBe(true);

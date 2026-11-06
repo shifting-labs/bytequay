@@ -682,7 +682,10 @@ perspectives, candidates, assessed files and per-pass validation are the agent's
 handoff between passes; they stay in storage and in its context, not on screen,
 and the Evidence tab lists what it read. The main result shows selected
 automatic findings and separately labelled discussion follow-ups; internal
-unselected saves remain accessible through details.
+unselected saves remain accessible through details. While a run is still
+going, each automatic finding it saves shows in the main result as soon as it is
+saved, marked provisional and not publishable, so the wait is not blank; the
+accepted selection decides what stays there.
 
 Keep every finding in domain storage and HTTP data so details, direct links,
 discussion, and outgoing drafts retain their identities. Use the derived selection
