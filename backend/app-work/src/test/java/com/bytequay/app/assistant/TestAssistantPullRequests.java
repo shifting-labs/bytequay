@@ -209,7 +209,7 @@ class TestAssistantPullRequests
         order.verify(writer).create(any(), any(), any(), any(), any(), any(), eq(false));
         order.verify(writer).close(any(), eq(58));
         order.verify(service).refreshForAction(moved);
-        assertThat(done).isEqualTo(new AssistantWork.Done("Moved “Fix the cache” to fix-cache-v2", Optional.of("owner/repository#59 · #58 closed, its branch kept"),
+        assertThat(done).isEqualTo(new AssistantWork.Done("Moved “Fix the cache” to #59 on fix-cache-v2; closed #58", Optional.of("owner/repository#59 · #58's branch kept"),
                 Optional.of(AgendaTarget.pull(6, REPO, 59, Optional.of("ws1"))), "owner/repository#59"));
     }
 
@@ -218,7 +218,7 @@ class TestAssistantPullRequests
     {
         renamable(ImmutableList.of(identity(59, "fix-cache-v2", HEAD, PullRequestIdentity.State.OPEN)));
 
-        assertThat(pulls.renameBranch(REF, "fix-cache-v2").detail()).contains("owner/repository#59 · #58 closed, its branch kept");
+        assertThat(pulls.renameBranch(REF, "fix-cache-v2").line()).isEqualTo("Moved “Fix the cache” to #59 on fix-cache-v2; closed #58");
 
         verify(writer, never()).createBranch(any(), any(), any(), any());
         verify(writer, never()).create(any(), any(), any(), any(), any(), any(), anyBoolean());

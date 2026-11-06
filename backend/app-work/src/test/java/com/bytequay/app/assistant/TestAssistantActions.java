@@ -460,8 +460,8 @@ class TestAssistantActions
     {
         String pr = "pr:owner/repository#58";
         AgendaTarget opens = AgendaTarget.pull(6, "owner/repository", 59, Optional.of("ws1"));
-        when(pulls.renameBranch(pr, "fix-cache-2")).thenReturn(new AssistantWork.Done("Moved “Fix the cache” to fix-cache-2", Optional.empty(), Optional.of(opens),
-                "owner/repository#59"));
+        when(pulls.renameBranch(pr, "fix-cache-2")).thenReturn(new AssistantWork.Done("Moved “Fix the cache” to #59 on fix-cache-2; closed #58", Optional.empty(),
+                Optional.of(opens), "owner/repository#59"));
 
         act(message("rename the branch of #58 to fix-cache-2", ImmutableList.of(), Optional.of(pr)), "{\"op\":\"rename_branch\",\"pr\":\"" + pr
                 + "\",\"branch\":\"fix-cache\",\"words\":\"rename the branch of #58\"}");

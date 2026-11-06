@@ -247,8 +247,9 @@ class AssistantPullRequests
         service.refreshForAction(service.prepareRead(found.workspace().id(), found.repo(), number));
         AgendaTarget opens = pullRequests.findIdByRepoAndNumber(found.repo(), number)
                 .map(id -> AgendaTarget.pull(id, found.repo(), number, Optional.of(found.workspace().id()))).orElse(found.target());
-        return new AssistantWork.Done("Moved “" + clip(pr.detail().title(), TITLE) + "” to " + branch,
-                Optional.of(found.repo() + "#" + number + " · #" + found.number() + " closed, its branch kept"), Optional.of(opens), found.repo() + "#" + number);
+        // The line is all the assistant reads back, so it names the new pull request: a move is a new one, never the old one on a new branch.
+        return new AssistantWork.Done("Moved “" + clip(pr.detail().title(), TITLE) + "” to #" + number + " on " + branch + "; closed #" + found.number(),
+                Optional.of(found.repo() + "#" + number + " · #" + found.number() + "'s branch kept"), Optional.of(opens), found.repo() + "#" + number);
     }
 
     private static int openOnBranch(HostingIntegration hosting, HostingTarget target, PullRequestIdentity current, String branch, String title, int previous)
