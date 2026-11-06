@@ -223,7 +223,7 @@ allowance.
 3. Ask it to find work or open a page, such as a repository's Tasks. A page
    with a message box, such as a task, opens with the cursor in it. Pull
    request cards can **Approve**, **Merge**, **Comment**, and, on your own PRs,
-   **Close**.
+   **Close**. Each click leaves a receipt.
 4. Ask it for today's agenda. It reads the one on Home, or makes it when you
    ask, as **Make again** does.
 5. Ask for a new Epic issue. Nothing is created until you click **Create
@@ -298,7 +298,15 @@ ByteQuay.
 
 In **Settings → Agents → Features**, you can let the Assistant start tasks,
 answer tasks, change Epics and work items, or acknowledge and snooze items. Each
-switch is off by default.
+of these switches is off by default.
+
+**Assistant can change pull requests** is on by default. Name the pull request,
+such as "close #58" or "label #58 as bug". The Assistant can close it, mark it
+ready for review, rerun its failed checks, ask or stop asking reviewers, add or
+remove labels, approve it, and comment or change its title or description in
+your own words. It approves only the commits you last saw, and a review draft
+with comments stays yours to send. Merging stays your click on the pull
+request's card.
 
 Ask it to work on one of your own pull requests and it uses that PR's
 development task, as the PR's **Development** button does, and sends your

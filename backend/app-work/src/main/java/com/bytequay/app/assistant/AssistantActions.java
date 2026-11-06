@@ -73,6 +73,7 @@ import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import static com.bytequay.agent.spi.ProviderApprovalRequest.QUESTION_TOOL;
 import static com.bytequay.agent.spi.ToolSchemas.object;
@@ -85,7 +86,9 @@ import static java.util.stream.Collectors.joining;
  * The {@code assistant_act} tool: what the assistant may do for the user, and only in the run their own message started. A call passes
  * the checks in order or is refused, and either way leaves a receipt in the conversation and a row in the action log. It sends a task
  * only the user's words, never the assistant's: a task's own messages count as the user's authority for what it does next. It also
- * marks Epics, adds work to them, creates work items, and acknowledges or snoozes Needs attention items, all of which stay local.
+ * marks Epics, adds work to them, creates work items, and acknowledges or snoozes Needs attention items, all of which stay local, and
+ * acts on a pull request the user names: close, ready for review, rerun failed checks, reviewers, labels, a comment or title in their
+ * own words, and approval. Merging stays the user's click on the pull request's card.
  */
 @Component
 class AssistantActions
@@ -106,6 +109,14 @@ class AssistantActions
             .put("create_work_item", Operation.CREATE_WORK_ITEM)
             .put("acknowledge", Operation.ACKNOWLEDGE)
             .put("snooze", Operation.SNOOZE)
+            .put("close_pull_request", Operation.CLOSE_PULL_REQUEST)
+            .put("mark_ready", Operation.MARK_READY)
+            .put("rerun_checks", Operation.RERUN_CHECKS)
+            .put("request_review", Operation.REQUEST_REVIEW)
+            .put("set_labels", Operation.SET_LABELS)
+            .put("comment", Operation.COMMENT)
+            .put("approve", Operation.APPROVE)
+            .put("edit_pull_request", Operation.EDIT_PULL_REQUEST)
             .buildOrThrow();
     private static final Map<Operation, Set<String>> FIELDS = ImmutableMap.<Operation, Set<String>>builder()
             .put(Operation.START_TASK, ImmutableSet.of("op", "words", "workspace", "from", "agent", "command"))
@@ -117,6 +128,14 @@ class AssistantActions
             .put(Operation.CREATE_WORK_ITEM, ImmutableSet.of("op", "words", "workspace", "epic"))
             .put(Operation.ACKNOWLEDGE, ImmutableSet.of("op", "words", "item"))
             .put(Operation.SNOOZE, ImmutableSet.of("op", "words", "item", "until"))
+            .put(Operation.CLOSE_PULL_REQUEST, ImmutableSet.of("op", "words", "pr"))
+            .put(Operation.MARK_READY, ImmutableSet.of("op", "words", "pr"))
+            .put(Operation.RERUN_CHECKS, ImmutableSet.of("op", "words", "pr"))
+            .put(Operation.REQUEST_REVIEW, ImmutableSet.of("op", "words", "pr", "add", "remove"))
+            .put(Operation.SET_LABELS, ImmutableSet.of("op", "words", "pr", "add", "remove"))
+            .put(Operation.COMMENT, ImmutableSet.of("op", "words", "pr", "body"))
+            .put(Operation.APPROVE, ImmutableSet.of("op", "words", "pr"))
+            .put(Operation.EDIT_PULL_REQUEST, ImmutableSet.of("op", "words", "pr", "title", "body"))
             .buildOrThrow();
     /** The operations the "change Epics and work items" switch allows; each stays local. */
     private static final Set<Operation> WORK = Sets.immutableEnumSet(Operation.MARK_EPIC, Operation.ADD_TO_EPIC, Operation.CREATE_WORK_ITEM);
@@ -126,6 +145,11 @@ class AssistantActions
     /** The operations the "acknowledge and snooze" switch allows, on what Needs attention lists. */
     private static final Set<Operation> MARKS = Sets.immutableEnumSet(Operation.ACKNOWLEDGE, Operation.SNOOZE);
     private static final Set<String> ATTENTION = ImmutableSet.of("pr", "issue", "jira", "task");
+    /** The operations the "change pull requests" switch allows, each on a pr: ref the user could see. */
+    private static final Set<Operation> PULL_REQUEST = Sets.immutableEnumSet(Operation.CLOSE_PULL_REQUEST, Operation.MARK_READY, Operation.RERUN_CHECKS,
+            Operation.REQUEST_REVIEW, Operation.SET_LABELS, Operation.COMMENT, Operation.APPROVE, Operation.EDIT_PULL_REQUEST);
+    // A number the user's words give, such as "#58" in "close #58", names the pull request they mean.
+    private static final Pattern NUMBER = Pattern.compile("#(\\d+)");
     private static final Map<String, AttentionMarkService.Snooze> SNOOZES = ImmutableMap.of(
             "hour", AttentionMarkService.Snooze.HOUR,
             "tomorrow", AttentionMarkService.Snooze.TOMORROW,
@@ -148,6 +172,7 @@ class AssistantActions
     private final AppNoticeService notices;
     private final AgentReviewStore reviews;
     private final AssistantWork work;
+    private final AssistantPullRequests pulls;
     private final ObjectMapper mapper;
     private final Clock clock;
 
@@ -165,6 +190,7 @@ class AssistantActions
             AppNoticeService notices,
             AgentReviewStore reviews,
             AssistantWork work,
+            AssistantPullRequests pulls,
             ObjectMapper mapper,
             Clock clock)
     {
@@ -181,6 +207,7 @@ class AssistantActions
         this.notices = requireNonNull(notices, "notices is null");
         this.reviews = requireNonNull(reviews, "reviews is null");
         this.work = requireNonNull(work, "work is null");
+        this.pulls = requireNonNull(pulls, "pulls is null");
         this.mapper = requireNonNull(mapper, "mapper is null");
         this.clock = requireNonNull(clock, "clock is null");
     }
@@ -215,10 +242,21 @@ class AssistantActions
                 .put("until", ImmutableMap.of("type", "string", "enum", ImmutableList.copyOf(SNOOZES.keySet()),
                         "description", "snooze: for an hour, until tomorrow at 9:00, or until Monday at 9:00"))
                 .put("epic", ImmutableMap.of("type", "string", "description", "add_to_epic, and create_work_item in an Epic: the epic: ref"))
+                .put("pr", ImmutableMap.of("type", "string", "description", "the pull request operations: the pr: ref of a pull request on screen or that "
+                        + "assistant_context returned"))
+                .put("add", ImmutableMap.of("type", "array", "items", ImmutableMap.of("type", "string"), "description", "request_review: logins or org/team "
+                        + "names the user wrote; set_labels: label names the user wrote"))
+                .put("remove", ImmutableMap.of("type", "array", "items", ImmutableMap.of("type", "string"), "description", "request_review: review requests "
+                        + "to take back; set_labels: labels to take off; each as the user wrote it"))
+                .put("body", ImmutableMap.of("type", "string", "description", "comment: the comment, exactly as the user wrote it in their message; "
+                        + "edit_pull_request: the new description, exactly as the user wrote it"))
+                .put("title", ImmutableMap.of("type", "string", "description", "edit_pull_request: the new title, exactly as the user wrote it"))
                 .buildOrThrow(), "op", "words");
         return new ReviewTool(NAME, "Do one thing the user's latest message asks for: start a task, give the user's own pull request's task their words, "
                 + "answer a card, send the user's words to a task, mark an Epic, add work to an Epic, create a work item titled with the user's words, "
-                + "or acknowledge or snooze a Needs attention item. The app checks every call and shows the user a receipt.", schema, run::call, false);
+                + "acknowledge or snooze a Needs attention item, or act on a pull request: close it, mark it ready for review, rerun its failed checks, "
+                + "request or take back reviews, add or remove labels, comment or set its title or description in the user's own words, or approve it. "
+                + "Merging is the user's click on the pull request's card. The app checks every call and shows the user a receipt.", schema, run::call, false);
     }
 
     /**
@@ -307,7 +345,8 @@ class AssistantActions
                 case START_TASK -> optional("from").orElse(text("workspace"));
                 case ANSWER_APPROVAL, ANSWER_QUESTION -> text("approval");
                 case REPLY_TO_TASK -> text("task");
-                case OPEN, CREATE_EPIC, MAKE_AGENDA, SAVE_RULE -> text("ref");
+                case OPEN, CREATE_EPIC, MAKE_AGENDA, SAVE_RULE, MERGE -> text("ref");
+                case CLOSE_PULL_REQUEST, MARK_READY, RERUN_CHECKS, REQUEST_REVIEW, SET_LABELS, COMMENT, APPROVE, EDIT_PULL_REQUEST -> text("pr");
                 case MARK_EPIC, ADD_TO_EPIC, ACKNOWLEDGE, SNOOZE -> text("item");
                 case CREATE_WORK_ITEM -> optional("epic").orElse(text("workspace"));
             };
@@ -406,6 +445,14 @@ class AssistantActions
                     checkArgument(ATTENTION.contains(AgendaRefs.kind(request.text("item"))), "snooze takes a pr:, issue:, jira: or task: ref");
                     checkArgument(SNOOZES.containsKey(request.text("until")), "until must be hour, tomorrow or monday");
                 }
+                case CLOSE_PULL_REQUEST, MARK_READY, RERUN_CHECKS, APPROVE -> {}
+                case REQUEST_REVIEW, SET_LABELS -> checkArgument(!(names(body, "add").isEmpty() && names(body, "remove").isEmpty()),
+                        "%s needs names to add or remove", body.path("op").asText());
+                case COMMENT -> checkArgument(request.optional("body").isPresent(), "comment needs the user's words as its body");
+                case EDIT_PULL_REQUEST -> checkArgument(request.optional("title").isPresent() || request.optional("body").isPresent(), "edit_pull_request needs a title or a body");
+            }
+            if (PULL_REQUEST.contains(operation)) {
+                checkArgument(AgendaRefs.kind(request.text("pr")).equals("pr"), "%s needs a pr: ref", body.path("op").asText());
             }
             checkArgument(!request.target().isEmpty(), "%s needs a ref", body.path("op").asText());
             return request;
@@ -420,7 +467,9 @@ class AssistantActions
                 case START_TASK -> allowed.startTasks() ? Optional.empty() : Optional.of("Starting tasks is off");
                 case MARK_EPIC, ADD_TO_EPIC, CREATE_WORK_ITEM -> allowed.changeWork() ? Optional.empty() : Optional.of("Changing Epics and work items is off");
                 case ACKNOWLEDGE, SNOOZE -> allowed.markAttention() ? Optional.empty() : Optional.of("Acknowledging and snoozing is off");
-                case ANSWER_APPROVAL, ANSWER_QUESTION, REPLY_TO_TASK, OPEN, CREATE_EPIC, MAKE_AGENDA, SAVE_RULE ->
+                case CLOSE_PULL_REQUEST, MARK_READY, RERUN_CHECKS, REQUEST_REVIEW, SET_LABELS, COMMENT, APPROVE, EDIT_PULL_REQUEST ->
+                        allowed.changePullRequests() ? Optional.empty() : Optional.of("Changing pull requests is off");
+                case ANSWER_APPROVAL, ANSWER_QUESTION, REPLY_TO_TASK, OPEN, CREATE_EPIC, MAKE_AGENDA, SAVE_RULE, MERGE ->
                         allowed.answerTasks() ? Optional.empty() : Optional.of("Answering tasks is off");
             };
             if (off.isPresent()) {
@@ -436,7 +485,8 @@ class AssistantActions
             }
             // An item's own rules, such as a ticket that already has a task, are its service's, and a refusal there reads as a failure.
             Optional<Result> state = switch (operation) {
-                case START_TASK, OPEN, MARK_EPIC, ADD_TO_EPIC, CREATE_WORK_ITEM, CREATE_EPIC, ACKNOWLEDGE, SNOOZE, MAKE_AGENDA, SAVE_RULE -> Optional.empty();
+                case START_TASK, OPEN, MARK_EPIC, ADD_TO_EPIC, CREATE_WORK_ITEM, CREATE_EPIC, ACKNOWLEDGE, SNOOZE, MAKE_AGENDA, SAVE_RULE, MERGE -> Optional.empty();
+                case CLOSE_PULL_REQUEST, MARK_READY, RERUN_CHECKS, REQUEST_REVIEW, SET_LABELS, COMMENT, APPROVE, EDIT_PULL_REQUEST -> named(request);
                 case ANSWER_APPROVAL, ANSWER_QUESTION -> approvalState(request);
                 case REPLY_TO_TASK -> taskState(request);
             };
@@ -467,7 +517,7 @@ class AssistantActions
             if (request.operation() == Operation.ADD_TO_EPIC) {
                 return shown.contains(request.text("epic")) && shown.contains(request.text("item"));
             }
-            if (WORK.contains(request.operation()) || MARKS.contains(request.operation())) {
+            if (WORK.contains(request.operation()) || MARKS.contains(request.operation()) || PULL_REQUEST.contains(request.operation())) {
                 return shown.contains(request.target());
             }
             if (request.operation() == Operation.START_TASK && request.optional("from").isPresent()) {
@@ -534,6 +584,37 @@ class AssistantActions
             return Optional.empty();
         }
 
+        /**
+         * A pull request operation acts only on what the user wrote: the pull request their words number, if they give one, and the reviewers,
+         * labels, comment, title or description in their own words, each not something the message says not to do.
+         */
+        private Optional<Result> named(Request request)
+        {
+            Operation operation = request.operation();
+            Matcher numbers = NUMBER.matcher(request.words());
+            List<String> named = numbers.results().map(found -> found.group(1)).toList();
+            String number = AgendaRefs.numbered(request.target()).map(pr -> Integer.toString(pr.number())).orElse("");
+            if (!named.isEmpty() && !named.contains(number)) {
+                return Optional.of(Result.refused(operation, "Your words name another pull request"));
+            }
+            List<String> words = switch (operation) {
+                case REQUEST_REVIEW -> Stream.concat(names(request.body(), "add").stream(), names(request.body(), "remove").stream())
+                        .map(login -> login.startsWith("@") ? login.substring(1) : login).toList();
+                case SET_LABELS -> Stream.concat(names(request.body(), "add").stream(), names(request.body(), "remove").stream()).toList();
+                case COMMENT -> ImmutableList.of(request.text("body"));
+                case EDIT_PULL_REQUEST -> Stream.of(request.optional("title"), request.optional("body")).flatMap(Optional::stream).toList();
+                default -> ImmutableList.of();
+            };
+            for (String said : words) {
+                Optional<String> unsaid = UserWords.unsaid(message.text(), said);
+                if (unsaid.isPresent()) {
+                    return Optional.of(Result.refused(operation, unsaid.orElseThrow().equals("Those words aren't in your message")
+                            ? "“" + clip(said, 60) + "” isn't in your message" : unsaid.orElseThrow()));
+                }
+            }
+            return Optional.empty();
+        }
+
         /** A reply goes to an open development task; one at work takes it after its current turn, as its own page's send does. */
         private Optional<Result> taskState(Request request)
         {
@@ -567,9 +648,17 @@ class AssistantActions
                         UUID.nameUUIDFromBytes(identity(request).getBytes(StandardCharsets.UTF_8)).toString()));
                 case ACKNOWLEDGE -> done(request, work.acknowledge(request.text("item")));
                 case SNOOZE -> done(request, work.snooze(request.text("item"), SNOOZES.get(request.text("until"))));
-                // assistant_show opens and makes the agenda, and only the user's click creates a draft's issue or saves an offered rule; this tool
-                // parses none of them.
-                case OPEN, CREATE_EPIC, MAKE_AGENDA, SAVE_RULE -> throw new IllegalStateException("assistant_act does not " + request.operation());
+                case CLOSE_PULL_REQUEST -> done(request, pulls.close(request.target()));
+                case MARK_READY -> done(request, pulls.markReady(request.target()));
+                case RERUN_CHECKS -> done(request, pulls.rerunChecks(request.target()));
+                case REQUEST_REVIEW -> done(request, pulls.requestReview(request.target(), names(request.body(), "add"), names(request.body(), "remove")));
+                case SET_LABELS -> done(request, pulls.setLabels(request.target(), names(request.body(), "add"), names(request.body(), "remove")));
+                case COMMENT -> done(request, pulls.comment(request.target(), request.text("body")));
+                case APPROVE -> done(request, pulls.approve(request.target()));
+                case EDIT_PULL_REQUEST -> done(request, pulls.edit(request.target(), request.optional("title"), request.optional("body")));
+                // assistant_show opens and makes the agenda, and only the user's click creates a draft's issue, saves an offered rule or merges; this
+                // tool parses none of them.
+                case OPEN, CREATE_EPIC, MAKE_AGENDA, SAVE_RULE, MERGE -> throw new IllegalStateException("assistant_act does not " + request.operation());
             };
         }
 
@@ -746,6 +835,13 @@ class AssistantActions
         List<String> picked = Splitter.on(',').trimResults().omitEmptyStrings().splitToList(chosen);
         List<String> labels = picked.stream().flatMap(name -> offered.options().stream().filter(label -> label.equalsIgnoreCase(name)).findFirst().stream()).toList();
         return !labels.isEmpty() && labels.size() == picked.size() ? Optional.of(String.join(", ", labels)) : Optional.empty();
+    }
+
+    /** The strings of an array field, each trimmed and not blank. */
+    private static List<String> names(JsonNode body, String field)
+    {
+        checkArgument(body.path(field).isMissingNode() || body.path(field).isArray(), "%s is a list", field);
+        return Streams.stream(body.path(field)).map(value -> value.asText("").strip()).filter(value -> !value.isEmpty()).distinct().toList();
     }
 
     private static String taskRef(AppNotice notice)

@@ -59,6 +59,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.MockMakers;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -103,6 +104,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.withSettings;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -631,6 +633,29 @@ class TestAssistantConversation
         assertThatThrownBy(() -> assistant.ruled(C1, another.id(), Optional.of("review my PRs"))).isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("A rule starts with a line of three dashes, then its header");
         verify(rules, times(1)).add(any());
+    }
+
+    @Test
+    void keepsAReceiptForAPullRequestTheUserActedOnWithItsCard()
+    {
+        String ref = "pr:owner/repository#58";
+        AgendaTarget opens = AgendaTarget.pull(5, "owner/repository", 58, Optional.of("ws1"));
+        AssistantRow row = mock(AssistantRow.class, withSettings().mockMaker(MockMakers.INLINE));
+        when(row.kind()).thenReturn(AssistantRow.Kind.PULL);
+        when(row.title()).thenReturn("Fix the cache");
+        when(row.target()).thenReturn(opens);
+        when(row.state()).thenReturn(Optional.of("open"));
+        when(rows.rows(ImmutableList.of(ref))).thenReturn(ImmutableMap.of(ref, row));
+
+        assistant.pullActed(C1, ref, "merge");
+        when(row.state()).thenReturn(Optional.of("merged"));
+        assistant.pullActed(C1, ref, "merge");
+        assistant.pullActed(C1, ref, "approve");
+
+        assertThat(store.items(C1)).extracting(AssistantItem::text).containsExactly("Set to merge “Fix the cache”", "Merged “Fix the cache”", "Approved “Fix the cache”");
+        assertThat(store.items(C1).get(1).receipt()).contains(AssistantReceipt.done(AssistantReceipt.Operation.MERGE, Optional.of(opens)));
+        assertThatThrownBy(() -> assistant.pullActed(C1, ref, "delete")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> assistant.pullActed(C1, "pr:owner/repository#59", "close")).hasMessage("ByteQuay no longer holds that pull request");
     }
 
     @Test

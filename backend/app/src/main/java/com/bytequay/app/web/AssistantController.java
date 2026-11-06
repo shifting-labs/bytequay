@@ -135,6 +135,18 @@ public class AssistantController
         assistant.drafted(request.conversationId(), request.itemId());
     }
 
+    /** A pull request the user approved, merged or closed with its card's own button in the panel; the conversation keeps its receipt. */
+    @PostMapping("/assistant/pull-actions")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void pullActed(@RequestBody PullActedRequest request)
+    {
+        checkArgument(request != null, "ref is required");
+        checkConversation(request.conversationId());
+        checkText(request.ref(), "ref", REF);
+        checkText(request.action(), "action", REF);
+        assistant.pullActed(request.conversationId(), request.ref(), request.action());
+    }
+
     /** What the user answered on a rule the assistant offered: Save, with the rule as offered or edited, or Not now. */
     @PostMapping("/assistant/rules")
     @ResponseStatus(HttpStatus.NO_CONTENT)
@@ -182,6 +194,12 @@ public class AssistantController
     public record AnsweredRequest(String conversationId, String approvalId) {}
 
     public record DraftedRequest(String conversationId, String itemId) {}
+
+    /**
+     * @param ref the pull request's pr: ref
+     * @param action approve, merge or close
+     */
+    public record PullActedRequest(String conversationId, String ref, String action) {}
 
     /**
      * @param text the rule to save, as offered or as the user edited it; absent for Not now

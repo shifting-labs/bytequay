@@ -165,8 +165,9 @@ class TestAssistantActions
     private final WorkItemService workItemService = mock(WorkItemService.class);
     private final AssistantRows rows = mock(AssistantRows.class);
     private final AttentionMarkService attentionMarks = mock(AttentionMarkService.class);
+    private final AssistantPullRequests pulls = mock(AssistantPullRequests.class);
     private final ObjectMapper mapper = AgendaFixtures.mapper();
-    private final AtomicReference<AssistantPermissions> allowed = new AtomicReference<>(new AssistantPermissions(true, true, true, true));
+    private final AtomicReference<AssistantPermissions> allowed = new AtomicReference<>(new AssistantPermissions(true, true, true, true, true));
     private final List<AssistantItem> receipts = new ArrayList<>();
     private final AgentTask task = task("Retry Iceberg commit on conflict");
     private final Workspace repository = new Workspace("ws1", "Repository", 1, RepoRef.of("owner", "repository"), Optional.empty(), Optional.empty(), 1,
@@ -209,7 +210,7 @@ class TestAssistantActions
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
         work = new AssistantWork(issueDevelopment, jira, epics, workItemService, workItems, workspaces, rows, attentionMarks);
         actions = new AssistantActions(store, permissions, approvals, approvalService, tasks, turns, new ItemTaskStarter(starter, models, settings, workspaces, workItems,
-                issues, jira), pullRequestTasks, pullRequests, workspaces, notices, reviews, work, mapper, clock);
+                issues, jira), pullRequestTasks, pullRequests, workspaces, notices, reviews, work, pulls, mapper, clock);
     }
 
     @Test
@@ -241,12 +242,12 @@ class TestAssistantActions
     @Test
     void refusesWhileItsSwitchIsOff()
     {
-        allowed.set(new AssistantPermissions(false, true, true, true));
+        allowed.set(new AssistantPermissions(false, true, true, true, true));
         AssistantItem message = message("start one in repository: add a metadata table", ImmutableList.of());
         act(message, ImmutableMap.of("ws:ws1", SERVED), "{\"op\":\"start_task\",\"workspace\":\"ws:ws1\",\"words\":\"add a metadata table\"}");
         assertRefused("Starting tasks is off", Optional.of(SETTINGS));
 
-        allowed.set(new AssistantPermissions(true, false, true, true));
+        allowed.set(new AssistantPermissions(true, false, true, true, true));
         card(ProviderApprovalRequest.Kind.COMMAND, ImmutableList.of("Bash"), "{}", true);
         act(message("deny it", ImmutableList.of(CARD)), "{\"op\":\"answer_approval\",\"approval\":\"" + CARD + "\",\"decision\":\"deny\",\"words\":\"deny it\"}");
         assertRefused("Answering tasks is off", Optional.of(SETTINGS));
@@ -397,6 +398,53 @@ class TestAssistantActions
                         + "\"words\":\"use the hidden column\"}");
         assertRefused("Your message says not to do that", Optional.empty());
         verify(approvalService, times(1)).resolve(any());
+    }
+
+    @Test
+    void actsOnAPullRequestTheUsersWordsName()
+    {
+        String pr = "pr:owner/repository#31402";
+        AgendaTarget opens = AgendaTarget.pull(5, "owner/repository", 31402, Optional.of("ws1"));
+        when(pulls.close(pr)).thenReturn(new AssistantWork.Done("Closed “Retry Iceberg commit”", Optional.of("owner/repository#31402"), Optional.of(opens),
+                "owner/repository#31402"));
+        AssistantItem message = message("close #31402, it's superseded", ImmutableList.of(), Optional.of(pr));
+
+        assertThat(act(message, "{\"op\":\"close_pull_request\",\"pr\":\"" + pr + "\",\"words\":\"close #31402\"}"))
+                .isEqualTo("{\"outcome\":\"done\",\"message\":\"Closed “Retry Iceberg commit”\"}");
+        assertThat(receipts.getLast().receipt().orElseThrow()).isEqualTo(new AssistantReceipt(AssistantReceipt.Operation.CLOSE_PULL_REQUEST, DONE,
+                Optional.of("owner/repository#31402"), Optional.of(opens), Optional.empty(), Optional.empty(), Optional.empty(), Optional.of("close #31402")));
+
+        when(pulls.comment(pr, "Superseded by #31500")).thenReturn(new AssistantWork.Done("Commented on “Retry Iceberg commit”", Optional.empty(), Optional.of(opens), "x"));
+        AssistantItem comment = message("comment on #31402: Superseded by #31500", ImmutableList.of(), Optional.of(pr));
+        act(comment, "{\"op\":\"comment\",\"pr\":\"" + pr + "\",\"body\":\"Superseded by #31500\",\"words\":\"comment on #31402\"}");
+        assertThat(receipts.getLast().text()).isEqualTo("Commented on “Retry Iceberg commit”");
+        verify(pulls).comment(pr, "Superseded by #31500");
+    }
+
+    @Test
+    void refusesPullRequestWorkTheUserDidNotAskFor()
+    {
+        String pr = "pr:owner/repository#31402";
+        AssistantItem message = message("close #58 and label #31402 as bug", ImmutableList.of(), Optional.of(pr));
+        act(message, "{\"op\":\"close_pull_request\",\"pr\":\"" + pr + "\",\"words\":\"close #58\"}");
+        assertRefused("Your words name another pull request", Optional.empty());
+        act(message, "{\"op\":\"set_labels\",\"pr\":\"" + pr + "\",\"add\":[\"wip\"],\"words\":\"label #31402\"}");
+        assertRefused("“wip” isn't in your message", Optional.empty());
+        act(message("don't close #31402", ImmutableList.of(), Optional.of(pr)), "{\"op\":\"close_pull_request\",\"pr\":\"" + pr + "\",\"words\":\"close #31402\"}");
+        assertRefused("Your message says not to do that", Optional.empty());
+        act(message("comment LGTM on #31402", ImmutableList.of(), Optional.empty()), "{\"op\":\"comment\",\"pr\":\"" + pr
+                + "\",\"body\":\"LGTM\",\"words\":\"comment LGTM on #31402\"}");
+        assertRefused("That isn't on screen", Optional.empty());
+        act(message("comment on #31402", ImmutableList.of(), Optional.of(pr)), "{\"op\":\"comment\",\"pr\":\"" + pr
+                + "\",\"body\":\"Looks good to me\",\"words\":\"comment on #31402\"}");
+        assertRefused("“Looks good to me” isn't in your message", Optional.empty());
+
+        allowed.set(new AssistantPermissions(true, true, true, true, false));
+        act(message("close #31402", ImmutableList.of(), Optional.of(pr)), "{\"op\":\"close_pull_request\",\"pr\":\"" + pr + "\",\"words\":\"close #31402\"}");
+        assertRefused("Changing pull requests is off", Optional.of(SETTINGS));
+        verify(pulls, never()).close(any());
+        verify(pulls, never()).setLabels(any(), any(), any());
+        verify(pulls, never()).comment(any(), any());
     }
 
     @Test
@@ -652,7 +700,7 @@ class TestAssistantActions
     @Test
     void refusesWorkChangesWhileTheirSwitchIsOff()
     {
-        allowed.set(new AssistantPermissions(true, true, false, true));
+        allowed.set(new AssistantPermissions(true, true, false, true, true));
         act(message("make #77 an epic", ImmutableList.of()), ImmutableMap.of("issue:owner/repository#77", SERVED),
                 "{\"op\":\"mark_epic\",\"item\":\"issue:owner/repository#77\",\"words\":\"make #77 an epic\"}");
         assertRefused("Changing Epics and work items is off", Optional.of(SETTINGS));
@@ -813,7 +861,7 @@ class TestAssistantActions
     @Test
     void refusesToAcknowledgeWhileItsSwitchIsOff()
     {
-        allowed.set(new AssistantPermissions(true, true, true, false));
+        allowed.set(new AssistantPermissions(true, true, true, false, true));
         act(message("clear the metadata cache PR", ImmutableList.of()), ImmutableMap.of("pr:owner/repository#31402", SERVED),
                 "{\"op\":\"acknowledge\",\"item\":\"pr:owner/repository#31402\",\"words\":\"clear the metadata cache PR\"}");
         assertRefused("Acknowledging and snoozing is off", Optional.of(SETTINGS));

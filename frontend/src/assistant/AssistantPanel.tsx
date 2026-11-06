@@ -13,8 +13,9 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import {
-  AlarmClock, ArrowUpRight, Ban, CalendarCheck, CheckCheck, CircleDot, Clock, Flag, History, ListEnd, ListPlus, ListTodo,
-  MessageSquareReply, Play, RotateCw, ScrollText, Send, ShieldCheck, SquarePen, SquarePlus, SlidersHorizontal, TriangleAlert, X, type LucideIcon,
+  AlarmClock, ArrowUpRight, Ban, CalendarCheck, CheckCheck, CircleCheck, CircleDot, Clock, Flag, GitMerge, GitPullRequestArrow, GitPullRequestClosed, History,
+  ListEnd, ListPlus, ListTodo, MessageSquare, MessageSquareReply, Pencil, Play, RefreshCw, RotateCw, ScrollText, Send, ShieldCheck, SquarePen, SquarePlus,
+  SlidersHorizontal, Tag, TriangleAlert, UserPlus, X, type LucideIcon,
 } from 'lucide-react';
 import { relativeTime } from '@bytequay/ui/relativeTime';
 import Composer from '../Composer';
@@ -266,10 +267,13 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
       show(target);
       return Promise.resolve();
     }
+    // The conversation keeps a receipt of the click, as it does for the assistant's own actions; a lost receipt never undoes the click.
+    const kept = (done: 'approve' | 'merge' | 'close') => Promise.resolve()
+      .then(() => window.bridge.recordAssistantPullAction(conversation, `pr:${target.repo}#${target.number}`, done)).catch(() => {}).then(refresh);
     // A review draft the user wrote goes out from the pull request's own review, never from a one-click button.
-    if (action === 'approve') return approvePull(target.repo, target.number, head, target.workspaceId ?? undefined).then(sent => sent ? refresh() : show(target));
+    if (action === 'approve') return approvePull(target.repo, target.number, head, target.workspaceId ?? undefined).then(sent => sent ? kept('approve') : show(target));
     const acted = action === 'merge' ? mergePull(target.repo, target.number, head, target.workspaceId ?? undefined) : closePull(target.repo, target.number, target.workspaceId ?? undefined);
-    return acted.then(refresh);
+    return acted.then(() => kept(action));
   };
   const noticeAction = (action: Promise<void>, message: string, then?: () => void) => {
     setFailure(null);
@@ -692,7 +696,8 @@ function ReplyToTask({ onSend }: { onSend: (text: string, key: string) => Promis
 const ACTED: Record<AssistantReceiptDto['operation'], LucideIcon> = {
   START_TASK: Play, ANSWER_APPROVAL: ShieldCheck, ANSWER_QUESTION: MessageSquareReply, REPLY_TO_TASK: Send, OPEN: ArrowUpRight, MARK_EPIC: Flag,
   ADD_TO_EPIC: ListPlus, CREATE_WORK_ITEM: SquarePlus, CREATE_EPIC: CircleDot, ACKNOWLEDGE: CheckCheck, SNOOZE: AlarmClock,
-  MAKE_AGENDA: CalendarCheck, SAVE_RULE: ScrollText,
+  MAKE_AGENDA: CalendarCheck, SAVE_RULE: ScrollText, CLOSE_PULL_REQUEST: GitPullRequestClosed, MARK_READY: GitPullRequestArrow, RERUN_CHECKS: RefreshCw,
+  REQUEST_REVIEW: UserPlus, SET_LABELS: Tag, COMMENT: MessageSquare, APPROVE: CircleCheck, EDIT_PULL_REQUEST: Pencil, MERGE: GitMerge,
 };
 
 /**

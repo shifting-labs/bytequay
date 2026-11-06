@@ -194,6 +194,10 @@ function AssistantPermissionRows({ onError }: { onError: (failure: unknown) => v
       <Toggle label="Assistant can acknowledge and snooze items" on={value.markAttention} disabled={busy}
         onChange={markAttention => save({ ...value, markAttention })} />
     </SettingsRow>
+    <SettingsRow title="Assistant can change pull requests" subtitle="Close, comment, label, approve and more when you ask. Merging stays your click.">
+      <Toggle label="Assistant can change pull requests" on={value.changePullRequests} disabled={busy}
+        onChange={changePullRequests => save({ ...value, changePullRequests })} />
+    </SettingsRow>
   </>;
 }
 

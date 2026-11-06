@@ -399,6 +399,7 @@ const bridge: Bridge = {
   recordAssistantAnswer: invoke('assistant:answered'),
   recordAssistantDraft: invoke('assistant:drafted'),
   answerAssistantRule: invoke('assistant:rule'),
+  recordAssistantPullAction: invoke('assistant:pull-acted'),
   askAssistantResult: invoke('assistant:result-discussion'),
   replyFromAssistant: invoke('assistant:reply'),
   getAssistantPermissions: invoke('settings:assistant'),

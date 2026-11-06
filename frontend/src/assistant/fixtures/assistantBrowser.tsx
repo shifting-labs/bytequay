@@ -889,6 +889,8 @@ async function readsTheMarksTheAssistantMade(): Promise<void> {
 
 async function actsOnAPullRequestFromItsCard(): Promise<void> {
   const steps: unknown[][] = [];
+  // What each click left in the conversation: the pull request and what was done to it.
+  const receipts: unknown[][] = [];
   let ready = false;
   let unsettled = true;
   let written = false;
@@ -914,6 +916,7 @@ async function actsOnAPullRequestFromItsCard(): Promise<void> {
       await new Promise<void>(resolve => { release = () => resolve(); });
     },
     closePr: async (...args: unknown[]) => { steps.push(['close', ...args]); },
+    recordAssistantPullAction: async (_conversation: string, ...args: unknown[]) => { receipts.push(args); },
   });
   try {
     await settle();
@@ -945,6 +948,7 @@ async function actsOnAPullRequestFromItsCard(): Promise<void> {
     await settle();
     assert(JSON.stringify(steps) === '[["save","owner/repository",31377,3,"","APPROVE","ws1"],["submit","owner/repository",31377,4,"","APPROVE","abc123","ws1"]]',
       `Approve goes through the review draft, as the review sheet does: ${JSON.stringify(steps)}`);
+    assert(JSON.stringify(receipts) === '[["pr:owner/repository#31377","approve"]]', `The approval leaves one receipt, the refusal none: ${JSON.stringify(receipts)}`);
     assert(view.calls.closed === 0, 'A card’s button never opens the card it sits on');
 
     steps.length = 0;
@@ -973,6 +977,8 @@ async function actsOnAPullRequestFromItsCard(): Promise<void> {
     press('Close #31402');
     await settle();
     assert(JSON.stringify(steps.at(-1)) === '["close","owner/repository",31402,"ws1"]', `Close closes the user's own pull request: ${JSON.stringify(steps.at(-1))}`);
+    assert(JSON.stringify(receipts.slice(1)) === '[["pr:owner/repository#31377","merge"],["pr:owner/repository#31402","close"]]',
+      `Only the merge that went through and the close leave receipts: ${JSON.stringify(receipts)}`);
 
     const opened: unknown[] = [];
     const listener = (event: Event) => { opened.push((event as CustomEvent).detail); };

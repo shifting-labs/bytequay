@@ -14,14 +14,16 @@
 package com.bytequay.app.assistant;
 
 /**
- * What the assistant may do from the user's words; each is off until the user turns it on.
+ * What the assistant may do from the user's words. Pull request work starts on; the rest is off until the user turns it on.
  *
  * @param startTasks whether it may start a task the user asks for
  * @param answerTasks whether it may answer a sandboxed command or a question, and send the user's reply to a task
  * @param changeWork whether it may mark an Epic, add work to one and create a work item, all of which stay local
  * @param markAttention whether it may acknowledge or snooze a Needs attention item, which stays local too
+ * @param changePullRequests whether it may close, mark ready, rerun, review-request, label, comment on, approve or retitle a pull request the user
+ *         names; merging stays the user's click
  */
-public record AssistantPermissions(boolean startTasks, boolean answerTasks, boolean changeWork, boolean markAttention)
+public record AssistantPermissions(boolean startTasks, boolean answerTasks, boolean changeWork, boolean markAttention, boolean changePullRequests)
 {
-    public static final AssistantPermissions DEFAULT = new AssistantPermissions(false, false, false, false);
+    public static final AssistantPermissions DEFAULT = new AssistantPermissions(false, false, false, false, true);
 }

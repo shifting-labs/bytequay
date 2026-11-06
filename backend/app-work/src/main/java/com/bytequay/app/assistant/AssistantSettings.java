@@ -15,7 +15,9 @@ package com.bytequay.app.assistant;
 
 import com.bytequay.core.store.AppSettingsStore;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -28,6 +30,7 @@ public class AssistantSettings
 {
     private static final Logger log = LoggerFactory.getLogger(AssistantSettings.class);
     private static final String KEY = "assistant.permissions";
+    private static final AssistantPermissions OFF = new AssistantPermissions(false, false, false, false, false);
 
     private final AppSettingsStore settings;
     private final ObjectMapper mapper;
@@ -42,12 +45,20 @@ public class AssistantSettings
     {
         return settings.get(KEY).map(value -> {
             try {
-                return mapper.readValue(value, AssistantPermissions.class);
+                JsonNode saved = mapper.readTree(value);
+                if (!(saved instanceof ObjectNode switches)) {
+                    log.warn("Ignoring assistant permissions that are not an object");
+                    return OFF;
+                }
+                // A switch added after the user last saved reads as its default, not as off.
+                ObjectNode current = mapper.valueToTree(AssistantPermissions.DEFAULT);
+                current.setAll(switches);
+                return mapper.treeToValue(current, AssistantPermissions.class);
             }
             catch (JsonProcessingException unreadable) {
                 // Unreadable switches read as off, which is the safe way for them to fail.
                 log.warn("Ignoring unreadable assistant permissions: {}", unreadable.getMessage());
-                return AssistantPermissions.DEFAULT;
+                return OFF;
             }
         }).orElse(AssistantPermissions.DEFAULT);
     }

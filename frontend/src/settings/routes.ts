@@ -56,7 +56,7 @@ export const SETTINGS_ENTRIES: SettingsEntry[] = [
   { section: 'workflow', group: 'Agents', label: 'Workflow', slug: 'workflow', rows: ['Automation', 'Auto-Commit', 'Auto-Draft PR', 'Auto-CI fix', 'Auto-Review fix', 'Auto-merge', 'Auto-merge delay', 'CI repair agent'] },
   { section: 'features', group: 'Agents', label: 'Features', slug: 'features', rows: ['Today', 'Enable daily agenda', 'Daily agenda', 'Make it at', 'Working days',
     "Use my calendar's busy times", 'Assistant', 'Enable Assistant', 'Assistant can start tasks', 'Assistant can answer tasks',
-    'Assistant can change Epics and work items', 'Assistant can acknowledge and snooze items'] },
+    'Assistant can change Epics and work items', 'Assistant can acknowledge and snooze items', 'Assistant can change pull requests'] },
   {
     section: 'general',
     group: 'Personal',

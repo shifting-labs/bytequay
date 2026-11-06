@@ -1725,7 +1725,8 @@ export type AssistantRowDto = {
 /** What one action left, done or refused: by the assistant from the user's words, or by a card's own button. */
 export type AssistantReceiptDto = {
   operation: 'START_TASK' | 'ANSWER_APPROVAL' | 'ANSWER_QUESTION' | 'REPLY_TO_TASK' | 'OPEN' | 'MARK_EPIC' | 'ADD_TO_EPIC' | 'CREATE_WORK_ITEM' | 'CREATE_EPIC' | 'ACKNOWLEDGE'
-    | 'SNOOZE' | 'MAKE_AGENDA' | 'SAVE_RULE';
+    | 'SNOOZE' | 'MAKE_AGENDA' | 'SAVE_RULE' | 'CLOSE_PULL_REQUEST' | 'MARK_READY' | 'RERUN_CHECKS' | 'REQUEST_REVIEW' | 'SET_LABELS' | 'COMMENT' | 'APPROVE'
+    | 'EDIT_PULL_REQUEST' | 'MERGE';
   outcome: 'DONE' | 'REFUSED' | 'FAILED';
   /** A second line, such as where a started task runs. */
   detail: string | null;
@@ -1741,7 +1742,7 @@ export type AssistantReceiptDto = {
 };
 
 /** What the Assistant may do from the user's words; each starts off. Changing Epics and work items, and marking Needs attention, stay local. */
-export type AssistantPermissionsDto = { startTasks: boolean; answerTasks: boolean; changeWork: boolean; markAttention: boolean };
+export type AssistantPermissionsDto = { startTasks: boolean; answerTasks: boolean; changeWork: boolean; markAttention: boolean; changePullRequests: boolean };
 
 export type AssistantViewDto = {
   assessing: number;
@@ -2243,6 +2244,8 @@ export type Bridge = LabBridge & WorkItemBridge & JiraBridge & GoogleBridge & Ar
   recordAssistantDraft: (conversationId: string, itemId: string) => Promise<void>;
   /** Saves a rule the assistant offered, as offered or edited, or with null leaves it unsaved; the conversation keeps the receipt. */
   answerAssistantRule: (conversationId: string, itemId: string, text: string | null) => Promise<void>;
+  /** Keeps the receipt for a pull request the user approved, merged or closed with its card's own button. */
+  recordAssistantPullAction: (conversationId: string, ref: string, action: 'approve' | 'merge' | 'close') => Promise<void>;
   /** Sends the user's words straight to the task a report named, with no model between; the conversation keeps the receipt. */
   askAssistantResult: (target: AgendaTargetDto, sourceTurnId: string, question: string) => Promise<TaskDiscussionDto>;
   replyFromAssistant: (conversationId: string, itemId: string, text: string, key: string) => Promise<{ itemId: string }>;

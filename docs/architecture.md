@@ -579,7 +579,7 @@ or such an item only on the user's own words, checked as for an action, and
 leaves a receipt. A pull request's card carries Approve, Merge, Comment and
 Close, which are the user's clicks through the pull request page's own paths:
 the review draft, the merge sheet's check on the pull request read again with
-its head commit, and close. A new GitHub issue as an Epic is only a draft there:
+its head commit, and close; each click leaves a receipt. A new GitHub issue as an Epic is only a draft there:
 the user edits it, and their click creates the work item, marks it as a local
 Epic and pushes it with the work item's own publish path, which refuses a second
 push while one's outcome is unknown. It is the one agent that names other tasks,
@@ -594,9 +594,17 @@ to main", are refused, and each receipt shows the exact words acted on. By words
 it answers only Claude shell commands that stay in the sandbox, with Allow once
 or Deny, and question cards; everything else stays a button. It may also mark an
 Epic, add work to one, create a work item titled with the user's words, and
-acknowledge or snooze a Needs attention item, all of it local. Each call is
-logged and leaves a receipt in the conversation, and the switches that let it
-act are off by default.
+acknowledge or snooze a Needs attention item, all of it local. On a pull request
+the user could see, it may close it, mark it ready for review, rerun its failed
+checks, request or take back reviews, add or remove labels, approve it, and
+comment or set its title or description. Each reads the pull request from its
+host again first and writes through the page's own service under the
+workspace's account. Reviewers, labels and text must be in the user's words, a
+number the words give must be that pull request's, and approving goes through
+an empty review draft bound to the head commit ByteQuay held when the user asked.
+Merging stays the card's click. Each call is logged and leaves a receipt in the
+conversation. The switches that let it act are off by default, except pull
+request work, which is on.
 
 A task-start or task-reply receipt atomically saves the conversation's follow
 relationship and request context. Several conversations can follow the same task.

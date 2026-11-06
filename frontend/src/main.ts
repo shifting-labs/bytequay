@@ -1682,6 +1682,8 @@ function registerIpc(): void {
     backendJson(`${backendBase()}/api/assistant/answers`, jsonInit('POST', { conversationId, approvalId }, agentHeaders())));
   ipcMain.handle('assistant:drafted', (_event, conversationId: unknown, itemId: unknown) =>
     backendJson(`${backendBase()}/api/assistant/drafts`, jsonInit('POST', { conversationId, itemId }, agentHeaders())));
+  ipcMain.handle('assistant:pull-acted', (_event, conversationId: unknown, ref: unknown, action: unknown) =>
+    backendJson(`${backendBase()}/api/assistant/pull-actions`, jsonInit('POST', { conversationId, ref, action }, agentHeaders())));
   ipcMain.handle('assistant:rule', (_event, conversationId: unknown, itemId: unknown, text: unknown) =>
     backendJson(`${backendBase()}/api/assistant/rules`, jsonInit('POST', { conversationId, itemId, text }, agentHeaders())));
   ipcMain.handle('assistant:result-discussion', (_event, target: unknown, sourceTurnId: unknown, question: unknown) =>
@@ -1690,9 +1692,10 @@ function registerIpc(): void {
     backendJson(`${backendBase()}/api/assistant/replies`, jsonInit('POST', { conversationId, itemId, text, key }, agentHeaders())));
   ipcMain.handle('settings:assistant', () => backendJson(`${backendBase()}/api/settings/assistant`, { headers: agentHeaders() }));
   ipcMain.handle('settings:assistant:save', (_event, permissions: unknown) => {
-    const value = permissions as Partial<Record<'startTasks' | 'answerTasks' | 'changeWork' | 'markAttention', unknown>> | null;
+    const value = permissions as Partial<Record<'startTasks' | 'answerTasks' | 'changeWork' | 'markAttention' | 'changePullRequests', unknown>> | null;
     return backendJson(`${backendBase()}/api/settings/assistant`, jsonInit('PUT', {
       startTasks: value?.startTasks === true, answerTasks: value?.answerTasks === true, changeWork: value?.changeWork === true, markAttention: value?.markAttention === true,
+      changePullRequests: value?.changePullRequests === true,
     }, agentHeaders()));
   });
   ipcMain.handle('settings:agenda', () => backendJson(`${backendBase()}/api/settings/agenda`, { headers: agentHeaders() }));
