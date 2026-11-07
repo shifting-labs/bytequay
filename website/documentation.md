@@ -367,8 +367,8 @@ report sends your words straight to that task.
 ## Dictate instead of typing
 
 Speak into any agent composer, the Assistant, a review, or a discussion. Your
-Mac turns the speech into text, and nothing is sent until you press **Send**.
-Dictation needs macOS 26 or later.
+Mac turns the speech into text, and when you stop talking, ByteQuay sends it
+after a short countdown. Dictation needs macOS 26 or later.
 
 1. Turn on **Enable dictation** in **Settings → Agents → Features**. If this
    Mac still needs something, such as a speech model or microphone access, the
@@ -377,6 +377,15 @@ Dictation needs macOS 26 or later.
    microphone to start and again to stop. **Esc** cancels.
 3. Your words show above the draft as you talk. The finished text lands at the
    cursor, and **⌘Z** removes it.
+4. When you stop talking, a countdown shows above the draft. After 3 seconds,
+   ByteQuay presses **Send** for you. With right ⌥, the countdown starts once
+   you let go.
+
+Talk again and the countdown starts over. **Esc**, typing, a click in the
+composer or on the microphone, or switching to another app stops it, and your
+words stay in the draft. To send only when you press **Send**, turn off **Send
+when I stop talking** on the Voice card. Its **Countdown** can be 1 to 10
+seconds.
 
 To speak one language and write in another, choose **I speak** and **Write it
 in** on the Voice card. The first time, Apple asks in a small window to

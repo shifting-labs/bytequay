@@ -81,12 +81,15 @@ microphone and turns speech into text, and optionally into another language,
 with Apple's on-device speech and translation frameworks, so audio never leaves
 the Mac. Because ByteQuay starts it, macOS charges microphone access to
 ByteQuay. Events go only to the window that started the dictation, and only the
-finished text enters that composer's draft, where the user still sends it. A
+finished text enters that composer's draft. The user sends it, or, once the
+user stops talking, the composer presses its own Send after a visible countdown
+that typing, a click or Esc stops. A
 recording stays in the app's data folder only until its text is inserted, it is
 discarded, or ByteQuay quits. Apple supplies the speech models and translation
 pairs; a pair downloads only after the user agrees in Apple's own sheet, which
 the helper shows in a small window of its own. The Voice switch and languages
-are a per-Mac setting kept by Electron main.
+are a per-Mac setting kept by Electron main; the automatic send and its
+countdown are kept by the renderer, the only part that uses them.
 
 ## Backend organization
 

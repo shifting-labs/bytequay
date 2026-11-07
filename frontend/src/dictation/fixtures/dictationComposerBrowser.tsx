@@ -15,10 +15,11 @@ import { createRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import Composer from '../../Composer';
 import { createFixtureRoot } from '../../fixtures/reactFixture';
-import { assert, button, runScenarios, settle, until } from '../../fixtures/harness';
+import { assert, button, controlTimers, runScenarios, settle, until } from '../../fixtures/harness';
 import { settingsRoute } from '../../settings/routes';
 import type { Bridge } from '../../types';
 import type { DictationEvent, DictationStart, VoiceSettings } from '../contracts';
+import { AUTO_SEND, QUIET_MS, saveAutoSend } from '../useDictation';
 import '../../css/base.css';
 import '../../css/agents.css';
 
@@ -28,6 +29,8 @@ let emit: (event: DictationEvent) => void = () => {};
 let voiceChanged: (settings: VoiceSettings) => void = () => {};
 let nextStart: DictationStart = { id: 'd1' };
 let sent = 0;
+let submitted: string | null = null;
+let canSend = true;
 let escapes = 0;
 
 window.bridge = {
@@ -52,12 +55,13 @@ let mounts = 0;
 function Host() {
   const [draft, setDraft] = useState(DRAFT);
   return <Composer inputRef={field} aria-label="Message" value={draft} onChange={event => setDraft(event.target.value)}
-    onSubmit={() => { sent++; }} submitEnabled />;
+    onSubmit={() => { sent++; submitted = draft; }} submitEnabled={canSend} />;
 }
 
 async function mount(focus = true): Promise<HTMLTextAreaElement> {
   calls = [];
   sent = 0;
+  submitted = null;
   escapes = 0;
   flushSync(() => root.render(<Host key={++mounts} />));
   await settle();
@@ -78,6 +82,13 @@ const rightOption = { key: 'Alt', code: 'AltRight', altKey: true };
 const send = async (event: DictationEvent) => {
   flushSync(() => emit(event));
   await settle();
+};
+const escape = (input: HTMLTextAreaElement) => key(input, 'keydown', { key: 'Escape', code: 'Escape' });
+// The default countdown is 3 seconds; tests hold its timer and run it, so the quiet before it shows is the only real wait.
+const counting = () => /sending in [1-3] · Esc stops/.test(strip());
+const type = (input: HTMLTextAreaElement, text: string) => {
+  input.focus();
+  document.execCommand('insertText', false, text);
 };
 
 async function listening(id: string): Promise<HTMLTextAreaElement> {
@@ -199,6 +210,170 @@ export function run() {
       const input = await listening('d6');
       await send({ id: 'd6', type: 'done', text: '' });
       assert(strip().includes('No speech heard') && input.value === DRAFT, 'Silence inserts nothing');
+    }],
+    ['Presses Send once the user stops talking, with the dictated words', async () => {
+      const timers = controlTimers(3000);
+      try {
+        const input = await listening('d11');
+        await send({ id: 'd11', type: 'partial', text: 'add a test' });
+        assert(!counting(), 'No countdown while the words keep coming');
+        await until(counting, 'A countdown shows once the words are still');
+        await send({ id: 'd11', type: 'partial', text: 'add a test' });
+        assert(counting(), 'The same live words again are not new speech');
+        assert(timers.tick() === 1 && sent === 0, 'One countdown runs, and nothing is sent before the words land');
+        await until(() => calls.includes('stop d11'), 'The countdown stops listening');
+        await send({ id: 'd11', type: 'finishing' });
+        await send({ id: 'd11', type: 'done', text: 'Add a test.' });
+        await until(() => sent === 1, 'Send is pressed once the words are in the draft');
+        assert(submitted === `${DRAFT} Add a test.` && input.value === submitted, `Send carries the dictated words: ${submitted}`);
+        assert(strip() === '', 'The strip closes');
+      }
+      finally { timers.restore(); }
+    }],
+    ['Speaking again restarts the countdown', async () => {
+      const timers = controlTimers(3000);
+      try {
+        await listening('d12');
+        await send({ id: 'd12', type: 'partial', text: 'add' });
+        await until(counting, 'A countdown shows in the quiet');
+        await send({ id: 'd12', type: 'final', text: 'Add' });
+        assert(counting(), 'Finished words are not new speech');
+        await send({ id: 'd12', type: 'partial', text: ' a test' });
+        assert(!counting(), 'New words hide the countdown');
+        assert(timers.tick() === 1, 'Only the quiet after the newest words counts');
+        await until(() => calls.includes('stop d12'), 'That quiet stops listening');
+        await send({ id: 'd12', type: 'cancelled' });
+      }
+      finally { timers.restore(); }
+    }],
+    ['Esc, typing, a click in the text, or the mic stops the countdown and keeps the words', async () => {
+      const timers = controlTimers(3000);
+      try {
+        let input = await listening('d13');
+        await send({ id: 'd13', type: 'partial', text: 'add a test' });
+        await until(counting, 'A countdown shows');
+        escape(input);
+        await settle();
+        assert(escapes === 0 && !calls.includes('cancel d13'), 'Esc stops at the composer and keeps listening');
+        assert(strip().includes('add a test') && strip().includes('Esc cancels'), `The words stay, and the next Esc cancels: ${strip()}`);
+        await send({ id: 'd13', type: 'partial', text: 'add a test now' });
+        assert(timers.tick() === 0, 'Nothing counts down for this dictation any more');
+        mic()?.click();
+        await until(() => calls.includes('stop d13'), 'The mic still stops listening');
+        await send({ id: 'd13', type: 'done', text: 'Add a test now.' });
+        await until(() => input.value === `${DRAFT} Add a test now.`, 'The words land as a draft');
+
+        input = await listening('d14');
+        await send({ id: 'd14', type: 'partial', text: 'add a test' });
+        await until(counting, 'A countdown shows again');
+        type(input, '!');
+        await settle();
+        assert(!counting() && timers.tick() === 0, 'Typing stops it');
+        escape(input);
+        await until(() => calls.includes('cancel d14'), 'Esc then cancels as usual');
+        await send({ id: 'd14', type: 'cancelled' });
+
+        input = await listening('d15');
+        await send({ id: 'd15', type: 'partial', text: 'add a test' });
+        await until(counting, 'A countdown shows once more');
+        input.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        await settle();
+        assert(!counting() && timers.tick() === 0, 'A click in the text stops it');
+        await send({ id: 'd15', type: 'partial', text: 'add a test here' });
+        mic()?.click();
+        await until(() => calls.includes('stop d15'), 'The mic stops listening');
+        await send({ id: 'd15', type: 'done', text: 'Add a test here.' });
+        await until(() => input.value === `${DRAFT} Add a test here.`, 'The words land as a draft');
+        await settle();
+        assert(sent === 0, 'Nothing is sent');
+      }
+      finally { timers.restore(); }
+    }],
+    ['Holding right ⌥ counts down once its words are in the draft', async () => {
+      const timers = controlTimers(3000);
+      try {
+        nextStart = { id: 'd16' };
+        let input = await mount();
+        key(input, 'keydown', rightOption);
+        await until(() => strip().includes('release to stop'), 'Holding right ⌥ starts dictation');
+        await send({ id: 'd16', type: 'partial', text: 'add a test' });
+        assert(timers.tick() === 0, 'Holding the key is still talking');
+        key(input, 'keyup', rightOption);
+        await until(() => calls.includes('stop d16'), 'Letting go stops listening');
+        await send({ id: 'd16', type: 'finishing' });
+        await send({ id: 'd16', type: 'done', text: 'Add a test.' });
+        await until(() => strip().includes('Sending in 3'), `A countdown shows once the words are in the draft: ${strip()}`);
+        assert(input.value === `${DRAFT} Add a test.` && sent === 0, 'The words wait in the draft');
+        assert(timers.tick() === 1, 'One countdown runs');
+        await until(() => sent === 1 && strip() === '', 'Then Send is pressed and the strip closes');
+        assert(submitted === `${DRAFT} Add a test.`, `Send carries the dictated words: ${submitted}`);
+
+        nextStart = { id: 'd17' };
+        input = await mount();
+        key(input, 'keydown', rightOption);
+        await until(() => strip().includes('release to stop'), 'Dictation starts again');
+        key(input, 'keyup', rightOption);
+        await until(() => calls.includes('stop d17'), 'Letting go stops it');
+        await send({ id: 'd17', type: 'done', text: 'Add a test.' });
+        await until(() => strip().includes('Sending in'), 'Its countdown shows');
+        escape(input);
+        await settle();
+        assert(strip() === '' && escapes === 0 && timers.tick() === 0, 'Esc stops the countdown at the composer');
+        assert(sent === 0 && input.value === `${DRAFT} Add a test.`, 'and keeps the draft');
+      }
+      finally { timers.restore(); }
+    }],
+    ['Never presses a disabled Send, or sends when no words were heard', async () => {
+      const timers = controlTimers(3000);
+      try {
+        canSend = false;
+        let input = await listening('d18');
+        await send({ id: 'd18', type: 'partial', text: 'add a test' });
+        assert(timers.tick() === 1, 'The countdown runs');
+        await until(() => calls.includes('stop d18'), 'and stops listening');
+        await send({ id: 'd18', type: 'done', text: 'Add a test.' });
+        await until(() => input.value === `${DRAFT} Add a test.`, 'The words land in the draft');
+        await settle();
+        assert(sent === 0, 'A disabled Send stays unpressed');
+
+        canSend = true;
+        input = await listening('d19');
+        await send({ id: 'd19', type: 'partial', text: 'um' });
+        assert(timers.tick() === 1, 'The countdown runs');
+        await until(() => calls.includes('stop d19'), 'and stops listening');
+        await send({ id: 'd19', type: 'done', text: '' });
+        await settle();
+        assert(strip().includes('No speech heard') && input.value === DRAFT && sent === 0, 'Nothing is sent without words');
+      }
+      finally {
+        timers.restore();
+        canSend = true;
+      }
+    }],
+    ['Stays a draft with the switch off, and counts the seconds chosen in Settings', async () => {
+      saveAutoSend({ on: false, seconds: 3 });
+      let timers = controlTimers(3000);
+      try {
+        await listening('d20');
+        await send({ id: 'd20', type: 'partial', text: 'add a test' });
+        await new Promise(resolve => window.setTimeout(resolve, QUIET_MS + 200));
+        assert(!counting() && strip().includes('click the mic to stop') && timers.tick() === 0, 'No countdown with the switch off');
+        await send({ id: 'd20', type: 'cancelled' });
+      }
+      finally { timers.restore(); }
+      saveAutoSend({ on: true, seconds: 1 });
+      timers = controlTimers(1000);
+      try {
+        await listening('d21');
+        await send({ id: 'd21', type: 'partial', text: 'add a test' });
+        assert(timers.tick() === 1, 'The countdown takes the chosen second');
+        await until(() => calls.includes('stop d21'), 'and then stops listening');
+        await send({ id: 'd21', type: 'cancelled' });
+      }
+      finally {
+        timers.restore();
+        saveAutoSend(AUTO_SEND);
+      }
     }],
   ], () => {
     flushSync(() => root.render(null));

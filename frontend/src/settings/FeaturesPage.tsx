@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { GoogleStatus } from '@bytequay/google/contracts';
 import { useAgentAvailability } from '../agents/availability';
 import type { VoiceLanguages, VoiceSettings, VoiceState, VoiceSupport, VoiceToggle } from '../dictation/contracts';
+import { AUTO_SEND_SECONDS, saveAutoSend, useAutoSend } from '../dictation/useDictation';
 import { SETUP_CHANGED } from '../onboarding/setup';
 import { errorMessage } from '../errorMessage';
 import type { AgendaDay, AgendaScheduleDto, AssistantPermissionsDto, QuietHoursDto, SetupPreferencesDto } from '../types';
@@ -251,6 +252,8 @@ export function downloadProgress(current: number | null, fraction: number): numb
   return current === null ? null : fraction;
 }
 
+const secondsLabel = (seconds: number) => `${seconds} second${seconds === 1 ? '' : 's'}`;
+
 /** The switch always turns off; it turns on only on a Mac that passes every check. */
 export function voiceSwitchDisabled(on: boolean, state: VoiceState | undefined, busy: boolean): boolean {
   return busy || state === undefined || !on && state !== 'ready';
@@ -263,6 +266,7 @@ function VoiceFeature() {
   const [languages, setLanguages] = useState<VoiceLanguages | null>(null);
   const [translating, setTranslating] = useState(false);
   const [busy, setBusy] = useState(false);
+  const autoSend = useAutoSend();
   const { error, fail, clear } = useFeatureError();
   const loaded = settings !== null;
   const spoken = settings?.spoken ?? null;
@@ -345,6 +349,14 @@ function VoiceFeature() {
         <Toggle label="Enable dictation" on={on}
           disabled={voiceSwitchDisabled(on, fraction === null ? support?.state : 'downloading', busy || translating || settings === null)} onChange={toggle} />
       </SettingsRow>
+      {on && <SettingsRow title="Send when I stop talking">
+        <Toggle label="Send when I stop talking" on={autoSend.on} onChange={value => saveAutoSend({ ...autoSend, on: value })} />
+      </SettingsRow>}
+      {on && autoSend.on && <SettingsRow title="Countdown">
+        <SelectPill quiet ariaLabel="Countdown before sending" value={String(autoSend.seconds)} label={secondsLabel(autoSend.seconds)}
+          options={AUTO_SEND_SECONDS.map(seconds => ({ value: String(seconds), label: secondsLabel(seconds) }))}
+          onSelect={value => saveAutoSend({ ...autoSend, seconds: Number(value) })} />
+      </SettingsRow>}
       {choosing && <>
         <SettingsRow title="I speak">
           <SelectPill quiet ariaLabel="Spoken language" value={spoken ?? ''} label={spokenName ?? 'This Mac’s language'} disabled={busy || translating}

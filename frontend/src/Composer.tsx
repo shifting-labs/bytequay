@@ -24,7 +24,7 @@ type Dictation = ReturnType<typeof useDictation>;
 
 const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
-/** The line above the draft while dictating; only finished segments are announced. */
+/** The line above the draft while dictating; only finished segments and a countdown to sending are announced. */
 function strip(dictation: Dictation): ReactNode {
   const { view } = dictation;
   switch (view.kind) {
@@ -42,10 +42,15 @@ function strip(dictation: Dictation): ReactNode {
             : `${dictation.into !== null && view.finished !== '' && view.partial !== '' ? ' ' : ''}${view.partial}`}</span>
         </span>
         <span className="agt-dictation__meta">
-          {view.kind === 'finishing' ? 'Finishing up' : [
-            clock(dictation.elapsed), dictation.into === null ? null : `into ${dictation.into}`, view.hold ? 'release to stop' : 'click the mic to stop', 'Esc cancels',
-          ].filter(part => part !== null).join(' · ')}
+          {view.kind === 'finishing' ? 'Finishing up' : <>{clock(dictation.elapsed)} · <span aria-live="polite">{(dictation.countdown === null
+            ? [dictation.into === null ? null : `into ${dictation.into}`, view.hold ? 'release to stop' : 'click the mic to stop', 'Esc cancels']
+            : [`sending in ${dictation.countdown}`, 'Esc stops']).filter(part => part !== null).join(' · ')}</span></>}
         </span>
+      </div>;
+    case 'sending':
+      return dictation.countdown === null ? null : <div className="agt-dictation" role="status">
+        <span className="agt-dictation__words">Sending in {dictation.countdown}</span>
+        <span className="agt-dictation__meta">Esc stops</span>
       </div>;
     case 'failed':
       return <div className="agt-dictation is-failed" role="alert">
@@ -62,9 +67,10 @@ function strip(dictation: Dictation): ReactNode {
 }
 
 /** The shared composer plus dictation; hosts still own the draft, and dictated words reach it as if typed. */
-export default function Composer({ inputRef, header, children, onKeyDown, onKeyUp, disabled, ...props }: ComposerProps) {
+export default function Composer({ inputRef, header, children, onKeyDown, onKeyUp, onChange, onPointerDown, onSubmit, submitEnabled, disabled, ...props }: ComposerProps) {
   const field = useRef<HTMLTextAreaElement | null>(null);
-  const dictation = useDictation(field, disabled === true);
+  // An automatic send presses Send as a click does, so a disabled Send stays unpressed.
+  const dictation = useDictation(field, disabled === true, () => { if (submitEnabled) onSubmit(); });
   const ref = useCallback((node: HTMLTextAreaElement | null) => {
     field.current = node;
     if (typeof inputRef === 'function') inputRef(node);
@@ -78,8 +84,20 @@ export default function Composer({ inputRef, header, children, onKeyDown, onKeyU
       <Mic size={15} aria-hidden="true" />
     </IconButton>
     : null;
-  return <SharedComposer {...props} disabled={disabled} inputRef={ref}
+  return <SharedComposer {...props} disabled={disabled} inputRef={ref} submitEnabled={submitEnabled}
     header={line === null ? header : <>{header}{line}</>}
+    onSubmit={() => {
+      dictation.stepIn();
+      onSubmit();
+    }}
+    onChange={event => {
+      dictation.stepIn();
+      onChange?.(event);
+    }}
+    onPointerDown={event => {
+      dictation.stepIn();
+      onPointerDown?.(event);
+    }}
     onKeyDown={event => {
       dictation.keyDown(event);
       if (!event.isPropagationStopped()) onKeyDown?.(event);

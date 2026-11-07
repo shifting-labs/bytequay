@@ -17,32 +17,55 @@ import type { DictationEvent, DictationRefusal, VoiceSettings } from './contract
 
 /** How long right ⌥ must be held alone before dictation starts; a shorter press stays an ordinary ⌥. */
 export const HOLD_MS = 250;
+/** The countdown to an automatic send shows once the live words have been still this long, so it stays hidden while the user talks. */
+export const QUIET_MS = 500;
+
+/** `armed` may still press Send on its own, `due` presses it once the words are in the draft, `off` leaves them there as a draft. */
+export type AutoSendState = 'armed' | 'due' | 'off';
 
 export type DictationView =
   | { kind: 'idle' }
-  /** `finished` is in the written language; `originals` holds the spoken words it was translated from. */
-  | { kind: 'listening'; id: string; hold: boolean; finished: string; originals: string; partial: string; since: number }
-  | { kind: 'finishing'; id: string; finished: string; originals: string; partial: string }
+  /**
+   * `finished` is in the written language; `originals` holds the spoken words it was translated from. `heard` is when the live
+   * words last changed, which starts the quiet that counts down to an automatic send.
+   */
+  | { kind: 'listening'; id: string; hold: boolean; finished: string; originals: string; partial: string; since: number; heard: number | null; send: AutoSendState }
+  | { kind: 'finishing'; id: string; hold: boolean; finished: string; originals: string; partial: string; send: AutoSendState }
+  /** The dictated words are in the draft, and Send is pressed `wait` milliseconds after `since` unless the user steps in. */
+  | { kind: 'sending'; since: number; wait: number }
   | { kind: 'failed'; id: string; seconds: number }
   | { kind: 'notice'; text: string; settings: boolean };
 
 const idle: DictationView = { kind: 'idle' };
 
-/** Applies one helper event to a composer's view. `done` carries text to insert, which the caller does. */
-export function nextView(view: DictationView, event: DictationEvent): DictationView {
+/** The letters and digits of live words. Apple's engine adds an ending stop and capitals once the user pauses, which is not speech. */
+const spoken = (text: string) => text.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+
+/**
+ * Applies one helper event, received at `now`, to a composer's view. `done` carries text to insert, which the caller does. Once
+ * those words are in the draft, a countdown that already ran out presses Send at once, and a held dictation counts `wait` first.
+ */
+export function nextView(view: DictationView, event: DictationEvent, now = Date.now(), wait = 0): DictationView {
   if (!('id' in view) || view.id !== event.id) return view;
   switch (event.type) {
     case 'listening':
       return view;
     case 'partial':
-      return view.kind === 'listening' || view.kind === 'finishing' ? { ...view, partial: event.text } : view;
+      if (view.kind === 'finishing') return { ...view, partial: event.text };
+      return view.kind === 'listening'
+        ? { ...view, partial: event.text, heard: spoken(event.text) === '' || spoken(event.text) === spoken(view.partial) ? view.heard : now }
+        : view;
     case 'final':
       return view.kind === 'listening' || view.kind === 'finishing'
         ? { ...view, finished: view.finished + event.text, originals: view.originals + (event.original ?? ''), partial: '' }
         : view;
     case 'finishing':
-      return view.kind === 'listening' ? { kind: 'finishing', id: view.id, finished: view.finished, originals: view.originals, partial: view.partial } : view;
+      return view.kind === 'listening'
+        ? { kind: 'finishing', id: view.id, hold: view.hold, finished: view.finished, originals: view.originals, partial: view.partial, send: view.send }
+        : view;
     case 'done':
+      if (event.text.trim() === '' || (view.kind !== 'listening' && view.kind !== 'finishing')) return idle;
+      return view.send === 'due' ? { kind: 'sending', since: now, wait: 0 } : view.send === 'armed' && view.hold ? { kind: 'sending', since: now, wait } : idle;
     case 'cancelled':
       return idle;
     case 'failed':
@@ -83,6 +106,65 @@ export function spaced(before: string, text: string, after = ''): string {
   return `${before === '' || /\s$/.test(before) ? '' : ' '}${words}${after === '' || /^\s/.test(after) ? '' : ' '}`;
 }
 
+/** The user typed, clicked, pressed Send or Esc during a countdown, or left the window: this dictation no longer sends on its own. */
+export function stepIn(view: DictationView): DictationView {
+  if (view.kind === 'sending') return idle;
+  return (view.kind === 'listening' || view.kind === 'finishing') && view.send !== 'off' ? { ...view, send: 'off' } : view;
+}
+
+/** The whole seconds left before Send is pressed on its own, while the user should see them; null when nothing counts down. */
+export function countdown(view: DictationView, now: number, wait: number): number | null {
+  // Holding right ⌥ means still talking, so a held dictation counts down only once its words are in the draft.
+  const at = view.kind === 'sending' ? view.since + view.wait
+    : view.kind === 'listening' && view.send === 'armed' && !view.hold && view.heard !== null && now - view.heard >= QUIET_MS ? view.heard + wait : null;
+  return at === null || at <= now ? null : Math.ceil((at - now) / 1000);
+}
+
+/** Pressing Send once the user has been quiet for `seconds`; only composers use it, so this window's storage keeps it. */
+export type AutoSend = { on: boolean; seconds: number };
+export const AUTO_SEND: AutoSend = { on: true, seconds: 3 };
+export const AUTO_SEND_SECONDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+const AUTO_SEND_KEY = 'bytequay.dictation.auto-send';
+
+export function readAutoSend(saved: string | null): AutoSend {
+  try {
+    const value: unknown = JSON.parse(saved ?? 'null');
+    if (typeof value !== 'object' || value === null) return AUTO_SEND;
+    const { on, seconds } = value as Record<string, unknown>;
+    return { on: on !== false, seconds: typeof seconds === 'number' && AUTO_SEND_SECONDS.includes(seconds) ? seconds : AUTO_SEND.seconds };
+  }
+  catch {
+    return AUTO_SEND;
+  }
+}
+
+let autoSend: AutoSend | null = null;
+const autoSendListeners = new Set<() => void>();
+
+function currentAutoSend(): AutoSend {
+  if (autoSend === null) {
+    try { autoSend = readAutoSend(window.localStorage.getItem(AUTO_SEND_KEY)); }
+    catch { autoSend = AUTO_SEND; }
+  }
+  return autoSend;
+}
+
+function subscribeAutoSend(listener: () => void): () => void {
+  autoSendListeners.add(listener);
+  return () => { autoSendListeners.delete(listener); };
+}
+
+export function saveAutoSend(next: AutoSend): void {
+  autoSend = next;
+  try { window.localStorage.setItem(AUTO_SEND_KEY, JSON.stringify(next)); }
+  catch { /* Storage is optional; this window keeps the choice until it reloads. */ }
+  for (const notify of autoSendListeners) notify();
+}
+
+export function useAutoSend(): AutoSend {
+  return useSyncExternalStore(subscribeAutoSend, currentAutoSend, () => AUTO_SEND);
+}
+
 // The Voice setting, read once and kept current for every composer in this window.
 const OFF: VoiceSettings = { enabled: false, spoken: null, written: null };
 let voice = OFF;
@@ -118,19 +200,30 @@ function subscribeOwner(listener: () => void): () => void {
   return () => { ownerListeners.delete(listener); };
 }
 
-/** Dictation for one composer: the mic, hold right ⌥, the strip's view, and insertion of the finished text. */
-export function useDictation(field: RefObject<HTMLTextAreaElement | null>, disabled: boolean) {
+/**
+ * Dictation for one composer: the mic, hold right ⌥, the strip's view, insertion of the finished text, and the automatic send,
+ * which calls `send` the way the composer's own Send button would.
+ */
+export function useDictation(field: RefObject<HTMLTextAreaElement | null>, disabled: boolean, send: () => void) {
   const [me] = useState(() => ({}));
   // Server-rendered markup has no voice bridge, so no mic.
   const settings = useSyncExternalStore(subscribeVoice, () => voice, () => OFF);
   const on = settings.enabled;
+  const auto = useAutoSend();
+  const wait = auto.seconds * 1000;
   const elsewhere = useSyncExternalStore(subscribeOwner, () => owner !== null && owner !== me, () => false);
   const [view, setView] = useState<DictationView>(idle);
   const [now, setNow] = useState(() => Date.now());
   const hold = useRef<{ timer: number | undefined; held: boolean }>({ timer: undefined, held: false });
   const live = useRef<string | null>(null);
+  const press = useRef(send);
+  // Inserted words reach the host through the same change event as typing, which would otherwise count as stepping in.
+  const inserting = useRef(false);
   const id = 'id' in view ? view.id : null;
   const listening = view.kind === 'listening' ? view.id : null;
+  const quiet = view.kind === 'listening' && view.send === 'armed' && !view.hold ? view.heard : null;
+  const sending = view.kind === 'sending' ? view : null;
+  const left = countdown(view, now, wait);
 
   const release = () => {
     if (owner === me) setOwner(null);
@@ -147,7 +240,7 @@ export function useDictation(field: RefObject<HTMLTextAreaElement | null>, disab
       }
       const since = Date.now();
       setNow(since);
-      setView({ kind: 'listening', id: result.id, hold: byHold, finished: '', originals: '', partial: '', since });
+      setView({ kind: 'listening', id: result.id, hold: byHold, finished: '', originals: '', partial: '', since, heard: null, send: auto.on ? 'armed' : 'off' });
       // Right ⌥ came up while the helper was starting.
       if (byHold && !hold.current.held) void window.bridge.stopDictation(result.id);
     }
@@ -159,8 +252,8 @@ export function useDictation(field: RefObject<HTMLTextAreaElement | null>, disab
 
   useEffect(() => {
     live.current = view.kind === 'listening' || view.kind === 'finishing' ? view.id : null;
+    press.current = send;
   });
-
 
   useEffect(() => {
     if (id === null) return;
@@ -174,23 +267,68 @@ export function useDictation(field: RefObject<HTMLTextAreaElement | null>, disab
           return;
         }
         input.focus();
-        // Typed through the editing stack, so the host's onChange saves it and ⌘Z removes it.
-        document.execCommand('insertText', false, spaced(input.value.slice(0, input.selectionStart), event.text, input.value.slice(input.selectionEnd)));
+        inserting.current = true;
+        try {
+          // Typed through the editing stack, so the host's onChange saves it and ⌘Z removes it.
+          document.execCommand('insertText', false, spaced(input.value.slice(0, input.selectionStart), event.text, input.value.slice(input.selectionEnd)));
+        }
+        finally {
+          inserting.current = false;
+        }
       }
-      setView(current => nextView(current, event));
+      const at = Date.now();
+      setNow(at);
+      setView(current => nextView(current, event, at, currentAutoSend().seconds * 1000));
     });
   }, [id, field, me]);
 
   useEffect(() => {
     if (listening === null) return;
     const tick = window.setInterval(() => setNow(Date.now()), 1000);
-    const blur = () => { void window.bridge.stopDictation(listening); };
+    const blur = () => {
+      // Nothing is sent while the user looks elsewhere; the words stay in the draft.
+      setView(stepIn);
+      void window.bridge.stopDictation(listening);
+    };
     window.addEventListener('blur', blur);
     return () => {
       window.clearInterval(tick);
       window.removeEventListener('blur', blur);
     };
   }, [listening]);
+
+  // Each second of a countdown shows as it starts, which the clock's tick would miss.
+  const counting = quiet !== null || sending !== null;
+  useEffect(() => {
+    if (!counting) return;
+    const tick = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(tick);
+  }, [counting]);
+
+  // The quiet ran out: listening stops, and Send is pressed once the words are in the draft.
+  useEffect(() => {
+    if (quiet === null || listening === null) return;
+    const timer = window.setTimeout(() => {
+      setView(current => (current.kind === 'listening' && current.id === listening && current.send === 'armed' ? { ...current, send: 'due' } : current));
+      void window.bridge.stopDictation(listening);
+    }, wait);
+    return () => window.clearTimeout(timer);
+  }, [quiet, listening, wait]);
+
+  useEffect(() => {
+    if (sending === null) return;
+    const leave = () => setView(stepIn);
+    window.addEventListener('blur', leave);
+    const timer = window.setTimeout(() => {
+      setView(current => (current === sending ? idle : current));
+      // Never an emptied draft; `press` also leaves a disabled Send alone, as a click would.
+      if (field.current !== null && field.current.value.trim() !== '') press.current();
+    }, sending.wait);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('blur', leave);
+    };
+  }, [sending, field]);
 
   useEffect(() => {
     if (view.kind !== 'notice') return;
@@ -205,7 +343,7 @@ export function useDictation(field: RefObject<HTMLTextAreaElement | null>, disab
     if (owner === me) setOwner(null);
   }, [me]);
 
-  const ready = view.kind === 'idle' || view.kind === 'notice';
+  const ready = view.kind === 'idle' || view.kind === 'notice' || view.kind === 'sending';
   const stop = () => {
     if (view.kind === 'listening') void window.bridge.stopDictation(view.id);
   };
@@ -223,7 +361,13 @@ export function useDictation(field: RefObject<HTMLTextAreaElement | null>, disab
     into: settings.written === null ? null : languageName(settings.written),
     view,
     elapsed: view.kind === 'listening' ? Math.max(0, Math.floor((now - view.since) / 1000)) : 0,
+    /** Seconds left before Send is pressed on its own, while that countdown shows. */
+    countdown: left,
     micDisabled: disabled || elsewhere || view.kind === 'finishing',
+    /** The user's own edit, click in the text, or Send: a dictation that would send itself stays a draft. */
+    stepIn: () => {
+      if (!inserting.current) setView(stepIn);
+    },
     toggle: () => {
       const input = field.current;
       if (input !== null) {
@@ -232,6 +376,8 @@ export function useDictation(field: RefObject<HTMLTextAreaElement | null>, disab
         // Esc and the finished words both work through the text box.
         input.focus();
       }
+      // The mic stops a countdown too: listening ends and the words stay a draft.
+      setView(stepIn);
       if (view.kind === 'listening') stop();
       else if (ready) void begin(false);
     },
@@ -243,7 +389,8 @@ export function useDictation(field: RefObject<HTMLTextAreaElement | null>, disab
         release();
         setView(refusalNotice(result.refused));
       }
-      else setView({ kind: 'finishing', id: result.id, finished: '', originals: '', partial: '' });
+      // Retried words land as a draft; only speech the user just finished sends itself.
+      else setView({ kind: 'finishing', id: result.id, hold: false, finished: '', originals: '', partial: '', send: 'off' });
     },
     discard: () => {
       if (view.kind !== 'failed') return;
@@ -253,6 +400,13 @@ export function useDictation(field: RefObject<HTMLTextAreaElement | null>, disab
     openSettings: () => { window.location.hash = settingsRoute('features'); },
     keyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => {
       if (!on) return;
+      if (event.key === 'Escape' && (left !== null || view.kind === 'sending' || (view.kind === 'finishing' && view.send === 'due'))) {
+        // Esc during a countdown stops only the countdown; the words stay, and a second Esc cancels a dictation still listening.
+        event.preventDefault();
+        event.stopPropagation();
+        setView(stepIn);
+        return;
+      }
       if (event.key === 'Escape' && (view.kind === 'listening' || view.kind === 'finishing')) {
         // Esc ends the dictation only; it must not also close the panel around the composer.
         event.preventDefault();
