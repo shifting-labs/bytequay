@@ -531,6 +531,24 @@ describe('PullOverview', () => {
     expect(html).toContain('role="menuitemcheckbox" class="is-active" aria-checked="true" aria-label="Add or remove thumbs up reaction"');
   });
 
+  it('shows the commit author avatar, linking only a GitHub user', () => {
+    const value = detail();
+    value.recentActivity = [
+      timelineActivity({ actor: 'carol', eventType: 'committed', timestamp: '2026-08-20T09:20:00Z', remoteId: null },
+        { commitSha: 'aaaaaaa', commitMessage: 'Linked', actorAvatarUrl: 'https://avatars.example.com/carol' }),
+      timelineActivity({ actor: 'Dave Example', eventType: 'committed', timestamp: '2026-08-20T09:30:00Z', remoteId: null },
+        { commitSha: 'bbbbbbb', commitMessage: 'Unlinked' }),
+    ];
+
+    const commits = renderToStaticMarkup(<PullOverview pr={pullRequest()} detail={value} onRefresh={async () => {}} />)
+      .split('class="pr-commit-event"').slice(1);
+
+    expect(commits[0]).toContain('aria-label="Open carol&#x27;s GitHub profile"');
+    expect(commits[0]).toContain('src="https://avatars.example.com/carol"');
+    expect(commits[1]).not.toContain('user-avatar-trigger');
+    expect(commits[1]).toContain('alt="Dave Example"');
+  });
+
   it('greys approvals from reviewers who cannot push', () => {
     const value = detail();
     value.recentActivity = [

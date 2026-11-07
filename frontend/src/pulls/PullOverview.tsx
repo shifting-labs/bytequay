@@ -26,6 +26,7 @@ import { recordAttentionAction } from '../home/useAttentionVisit';
 import LearnFromPullButton from '../memory/LearnFromPullButton';
 import ReplayReviewButton from '../memory/ReplayReviewButton';
 import { relativeTime } from '@bytequay/ui/relativeTime';
+import Avatar from '../Avatar';
 import RepoAvatar from '../RepoAvatar';
 import type {
   Bridge,
@@ -524,6 +525,10 @@ function CommitEvent({ activity }: { activity: Activity }) {
     <div className="pr-commit-event">
       <span aria-hidden="true"><GitCommitHorizontal size={14} aria-hidden="true" /></span>
       <div>
+        {/* Without a GitHub user the actor is the git author's name, which has no profile to open. */}
+        {activity.actor && (payload.actorAvatarUrl
+          ? <UserAvatar login={activity.actor} avatarUrl={payload.actorAvatarUrl} size={20} />
+          : <Avatar login={activity.actor} size={20} />)}
         {payload.commitMessage?.split('\n')[0] ?? 'Committed'}
         {payload.commitSha && <code>{shortSha(payload.commitSha)}</code>}
         <time> · {relativeTime(activity.timestamp)}</time>

@@ -268,6 +268,23 @@ class TestGitHubPullRequestContentReader
     }
 
     @Test
+    void prefersTheCommitListCopyWithItsGitHubUser()
+    {
+        Instant committedAt = Instant.parse("2026-08-15T10:00:00Z");
+        PrTimelineEvent timelineCopy = commit("Jane Doe", null, "abc", committedAt);
+        PrTimelineEvent timelineOnly = commit("Jane Doe", null, "def", committedAt);
+        PrTimelineEvent listCopy = commit("jane", "https://avatars.example.com/jane", "abc", committedAt);
+        when(gitHub.fetchPrReviews("pat", REF)).thenReturn(ImmutableList.of());
+        when(gitHub.fetchPrTimeline("pat", REF)).thenReturn(ImmutableList.of(timelineCopy, timelineOnly));
+        when(gitHub.fetchPrIssueComments("pat", REF)).thenReturn(ImmutableList.of());
+        when(gitHub.fetchPrCommits("pat", REF)).thenReturn(ImmutableList.of(listCopy));
+
+        StoredPrDetail stored = GitHubPullRequestContentReader.await(fetcher.fetchDiscussion("pat", REF, existing()));
+
+        assertThat(stored.timeline()).containsExactly(timelineOnly, listCopy);
+    }
+
+    @Test
     void refetchesTheFullMutableTimeline()
     {
         when(gitHub.fetchPrReviews("pat", REF)).thenReturn(ImmutableList.of());
@@ -309,6 +326,12 @@ class TestGitHubPullRequestContentReader
     private static PrTimelineEvent comment(Long remoteId, String actor, Instant timestamp, String body)
     {
         return new PrTimelineEvent(remoteId, "commented", actor, timestamp, body, Optional.empty());
+    }
+
+    private static PrTimelineEvent commit(String actor, String avatarUrl, String sha, Instant timestamp)
+    {
+        return new PrTimelineEvent(null, "committed", actor, timestamp, null,
+                PrTimelinePayload.builder().actorAvatarUrl(avatarUrl).commitSha(sha).commitMessage("Fix").build(), Optional.empty());
     }
 
     @Test

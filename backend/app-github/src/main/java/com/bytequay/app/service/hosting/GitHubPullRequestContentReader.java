@@ -361,15 +361,17 @@ public class GitHubPullRequestContentReader
                 .map(GitHubPullRequestContentReader::commentKey)
                 .filter(Objects::nonNull)
                 .collect(toImmutableSet());
-        List<PrTimelineEvent> base = Stream.concat(
-                        timeline.stream().filter(event -> !"commented".equals(event.event()) || !commentKeys.contains(commentKey(event))),
-                        comments.stream())
-                .collect(toImmutableList());
-        Set<String> commitShas = base.stream()
+        // The pull request's commit list names each commit's GitHub user; the issue timeline only has the git author's name.
+        Set<String> commitShas = commits.stream()
                 .map(event -> event.payload().commitSha())
                 .filter(Objects::nonNull)
                 .collect(toImmutableSet());
-        Stream<PrTimelineEvent> events = Stream.of(base.stream(), commits.stream().filter(event -> !commitShas.contains(event.payload().commitSha())), threads.stream())
+        Stream<PrTimelineEvent> base = Stream.concat(
+                timeline.stream()
+                        .filter(event -> !"commented".equals(event.event()) || !commentKeys.contains(commentKey(event)))
+                        .filter(event -> !"committed".equals(event.event()) || !commitShas.contains(event.payload().commitSha())),
+                comments.stream());
+        Stream<PrTimelineEvent> events = Stream.of(base, commits.stream(), threads.stream())
                 .flatMap(stream -> stream);
         if (!descriptionReactions.isEmpty()) {
             events = Stream.concat(events, Stream.of(new PrTimelineEvent(
