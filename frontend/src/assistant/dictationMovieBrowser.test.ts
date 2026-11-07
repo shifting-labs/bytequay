@@ -44,9 +44,9 @@ function play(story: 'start' | 'agent', frames: string | undefined) {
 }
 
 it('talks to the Assistant to start a task, then asks it to open the running task', async () => {
-  expect(await play('start', process.env.BYTEQUAY_DICTATION_FRAMES)).toHaveLength(24);
+  expect(await play('start', process.env.BYTEQUAY_DICTATION_FRAMES)).toHaveLength(26);
 }, deadline(60_000));
 
 it('carries a task in one conversation from the ask to its result and the next step on its pull request', async () => {
-  expect(await play('agent', process.env.BYTEQUAY_AGENT_MOVIE_FRAMES)).toHaveLength(23);
+  expect(await play('agent', process.env.BYTEQUAY_AGENT_MOVIE_FRAMES)).toHaveLength(25);
 }, deadline(60_000));

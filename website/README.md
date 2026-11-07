@@ -98,8 +98,10 @@ the `start` story of `src/assistant/dictationMovieBrowser.test.ts`: from
 each frame's hold in milliseconds. Encode the frames in order at 1100 × 700
 with one 256-color palette per frame and no dithering, for example with
 Pillow's fast octree quantizer; one shared palette turns the window buttons and
-running spinner gray. The still is `frame-08.png`, where the strip shows the
-words as heard.
+running spinner gray. Both stories talk hands-free with no pointer, as the
+default Voice setting does: once the words stop, the strip counts down in real
+seconds and the words send themselves. The still is `frame-08.png`, where the
+strip shows the words as heard and the countdown starting.
 
 `app-one-agent.webp` and its reduced-motion still `app-one-agent.jpg` show the
 Assistant's band loop. They come from the same test's `agent` story: run it with

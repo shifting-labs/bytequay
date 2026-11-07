@@ -112,9 +112,9 @@ function running(step: number): AgentTaskState {
   };
 }
 
-// How far the story has moved past now, so what happens after the task worked a while carries a later time.
-let later = 0;
-const at = () => new Date(Date.now() + later).toISOString();
+// How far the story's clock is from now. The ask happened a while before its result, which arrives now, so no clock time crosses midnight.
+let shift = 0;
+const at = () => new Date(Date.now() + shift).toISOString();
 const item = (id: string, kind: AssistantItemDto['kind'], text: string, more: Partial<AssistantItemDto> = {}): AssistantItemDto =>
   ({ id, conversationId: 'c1', at: at(), kind, text, targets: {}, notReady: false, receipt: null, list: null, draft: null, report: null, ...more });
 let conversation: AssistantViewDto = { id: 'c1', assessing: 0, model: 'Claude Sonnet', running: false, waiting: [], items: [], rows: {} };
@@ -122,17 +122,27 @@ const reply = (...items: AssistantItemDto[]) => { conversation = { ...conversati
 
 let emit: (event: DictationEvent) => void = () => {};
 let dictation = 0;
+// What the user is saying, which the speech helper hands back as finished text once listening stops.
+let saying = '';
+const sent: string[] = [];
 window.bridge = new Proxy({
   getVoiceSettings: async () => ({ enabled: true, spoken: null, written: null }),
   onVoiceChanged: () => () => {},
   startDictation: async () => ({ id: `d${++dictation}` }),
-  stopDictation: async () => {},
+  // The countdown ran out and listening stops: the helper finishes and hands over the words, which Send then takes.
+  stopDictation: async (id: string) => {
+    window.setTimeout(() => {
+      emit({ id, type: 'finishing' });
+      emit({ id, type: 'done', text: saying });
+    }, 40);
+  },
   cancelDictation: async () => {},
   onDictationEvent: (listener: typeof emit) => { emit = listener; return () => {}; },
   listAssistantConversations: async () => conversation.items.length === 0 ? []
     : [{ id: conversation.id, title: 'Webhook retries', updatedAt: at(), running: conversation.running }],
   getAssistantConversation: async (id: string) => ({ ...conversation, id }),
   sendAssistantMessage: async (id: string, text: string) => {
+    sent.push(text);
     conversation = { ...conversation, id, running: true, items: [...conversation.items, item(`u${conversation.items.length}`, 'USER', text)] };
     return { itemId: 'u' };
   },
@@ -154,7 +164,6 @@ const { host, root } = createFixtureRoot();
 let page: 'finished' | 'running' = 'finished';
 let step = 0;
 let open = false;
-let pointer: { x: number; y: number } | null = null;
 
 function render() {
   flushSync(() => root.render(
@@ -169,10 +178,6 @@ function render() {
         </div>
       </div>
       <AssistantPanel open={open} notices={notices} request={null} onScreen={null} onClose={() => { open = false; render(); }} />
-      {pointer && <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"
-        style={{ position: 'fixed', left: pointer.x, top: pointer.y, zIndex: 99999, pointerEvents: 'none', filter: 'drop-shadow(0 1px 2px rgba(0,0,0,.5))' }}>
-        <path d="M3 2l14 9-6.5 1.3L7 19z" fill="white" stroke="black" strokeWidth="1.2" strokeLinejoin="round" />
-      </svg>}
     </div>,
   ));
 }
@@ -190,23 +195,26 @@ const button = (pattern: RegExp) => {
   return found;
 };
 const mic = () => button(/^(Dictate|Stop dictation)/);
-const pointAt = (node: Element) => {
-  const box = node.getBoundingClientRect();
-  pointer = { x: box.left + box.width / 2 - 4, y: box.top + box.height / 2 - 3 };
-  render();
-};
 // The Assistant reads its conversation again on focus, as it does when the window comes back.
 const reread = async () => { window.dispatchEvent(new Event('focus')); await wait(80); };
+const until = async (done: () => boolean, what: string) => {
+  for (const started = Date.now(); !done(); await wait(20)) {
+    assert(Date.now() - started < 5000, what);
+  }
+};
+const strip = () => host.querySelector('.agt-dictation')?.textContent ?? '';
 
-/** Each yield is a frame on screen, with how long it holds in milliseconds. */
+/**
+ * Each yield is a frame on screen, with how long it holds in milliseconds. The user talks hands-free: once the words stop, the strip
+ * counts down in real seconds and the composer sends them by itself.
+ */
 async function* talk(words: string): AsyncGenerator<number> {
-  pointAt(mic());
-  yield 500;
+  saying = words;
+  const before = sent.length;
   mic().click();
   await wait(80);
   const id = `d${dictation}`;
   flushSync(() => emit({ id, type: 'listening' }));
-  pointAt(mic());
   yield 450;
   const parts = words.split(' ');
   const steps = Math.min(5, parts.length);
@@ -215,22 +223,14 @@ async function* talk(words: string): AsyncGenerator<number> {
     await wait(30);
     yield index === steps ? 650 : 380;
   }
-  assert(host.querySelector('.agt-dictation')?.textContent?.includes(words) === true, `The strip shows what was heard: ${words}`);
-  mic().click();
-  await wait(50);
-  flushSync(() => emit({ id, type: 'finishing' }));
-  flushSync(() => emit({ id, type: 'done', text: words }));
-  await wait(80);
-  assert(panel()?.querySelector('textarea')?.value === words, 'The words land in the draft');
-  pointAt(button(/send/i));
-  yield 800;
-}
-
-async function* send(): AsyncGenerator<number> {
-  button(/send/i).click();
-  await wait(150);
-  pointer = null;
-  render();
+  assert(strip().includes(words), `The strip shows what was heard: ${words}`);
+  for (const left of [3, 2, 1]) {
+    await until(() => strip().includes(`sending in ${left}`), `The strip counts down: ${left}`);
+    yield 1000;
+  }
+  await until(() => sent.length > before, 'The words send themselves once the countdown ends');
+  assert(sent[sent.length - 1] === words, `What was said is what was sent: ${sent[sent.length - 1]}`);
+  await wait(100);
   yield 800;
 }
 
@@ -246,7 +246,6 @@ async function* opening(): AsyncGenerator<number> {
   yield 700;
 
   yield* talk(START_WORDS);
-  yield* send();
   reply(
     item('r1', 'RECEIPT', `Started “${TITLE}”`, { receipt: { operation: 'START_TASK', outcome: 'DONE', detail: 'example/harbor · Claude Code Opus 5.5 · Auto-Draft PR',
       target: TASK, page: null, turnId: 'turn-new', fix: null, words: 'start a task to add retry backoff' } }),
@@ -258,10 +257,10 @@ async function* opening(): AsyncGenerator<number> {
 
 /** The task works on its own; its result comes back to the conversation that asked, and words take the pull request on. */
 async function* agent(): AsyncGenerator<number> {
+  shift = -14 * 60_000;
   yield* opening();
   yield 1800;
-  later = 14 * 60_000;
-  // The result is fresh, so its age reads from now while the conversation's clock has moved on.
+  shift = 0;
   notices = [{ ...FINISHED, occurredAt: new Date().toISOString() }];
   render();
   reply(item('p1', 'REPORT', `“${TITLE}”: Draft PR #58 · checks passing. Added exponential backoff with jitter; 9 retry tests pass.`, {
@@ -276,7 +275,6 @@ async function* agent(): AsyncGenerator<number> {
   yield 2600;
 
   yield* talk(READY_WORDS);
-  yield* send();
   const done = (id: string, operation: 'MARK_READY' | 'REQUEST_REVIEW', text: string, words: string) => item(id, 'RECEIPT', text,
     { receipt: { operation, outcome: 'DONE', detail: 'example/harbor#58', target: PULL, page: null, turnId: null, fix: null, words } });
   reply(
@@ -300,7 +298,6 @@ async function* start(): AsyncGenerator<number> {
   yield 2000;
 
   yield* talk(OPEN_WORDS);
-  yield* send();
   reply(item('r2', 'RECEIPT', `Opened “${TITLE}”`, { receipt: { operation: 'OPEN', outcome: 'DONE', detail: null, target: TASK, page: null, turnId: null, fix: null,
     words: 'take me to that task' } }));
   await reread();
