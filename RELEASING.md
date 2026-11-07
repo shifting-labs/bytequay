@@ -1,20 +1,22 @@
 # Releasing ByteQuay
 
 This file documents how a release moves from a `git tag` to an
-installer on a user's Mac. It covers the current workflow (signed-yet
-or not), the Gatekeeper / quarantine model that decides what users
-see on first launch, and the planned auto-update path.
+installer on a user's Mac. It covers the release workflow, the
+Gatekeeper / quarantine model that decides what users see on first
+launch, and updates from the sidebar. The
+[signed macOS releases runbook](scripts/macos-release.md) covers
+certificates, notarization credentials, and signing checks.
 
 ---
 
 ## The release flow at a glance
 
-| Stage             | Today                                        | Future (signed builds)                           |
-|-------------------|----------------------------------------------|--------------------------------------------------|
-| Build the DMG     | GitHub Actions on tag push (`release.yml`)   | Same workflow — adds signing + notarization steps |
-| Hosting           | GitHub Releases asset                        | Same                                              |
-| User installs     | Download → `xattr` workaround OR right-click → Open | Standard "downloaded from internet" prompt → Open |
-| User upgrades     | Download next DMG manually                   | `update-electron-app` polls Releases, applies in background |
+| Stage         | How                                                                 |
+|---------------|---------------------------------------------------------------------|
+| Build the DMG | GitHub Actions on tag push (`release.yml`), signed with Developer ID and notarized |
+| Hosting       | GitHub Releases assets: DMG, ZIP, and `update-darwin-<arch>.json`   |
+| User installs | Download → standard "downloaded from the Internet" prompt → Open    |
+| User upgrades | Sidebar **Update to v…** button, from the first signed release on   |
 
 ---
 
@@ -45,11 +47,13 @@ mvn versions:set -DnewVersion=0.5.2 -DgenerateBackupPoms=false
 `npm version --workspaces` leaves the `@bytequay/*` dependency versions
 behind, so edit the frontend rows by hand. Then check that
 `git grep -n '<old version>'` finds only unrelated dependency versions.
+The release workflow refuses a tag that differs from the version in
+`frontend/package.json`.
 
 ### Tag + push
 
 ```bash
-# bump the three version fields, commit, push to main first
+# bump the versions above, commit, push to main first
 git push origin main
 
 # then tag and push the tag
@@ -64,27 +68,32 @@ any tag matching `v*`:
 
 1. Spins up a `macos-latest` runner.
 2. Installs JDK 25 LTS + the Node 24 LTS version pinned in `.nvmrc`.
-3. Runs `npm ci` then `npm run make`. The `generateAssets` Forge hook
+3. Imports the signing certificate and notarization key into a
+   temporary keychain.
+4. Runs `npm ci` then `npm run make`. The `generateAssets` Forge hook
    builds the Spring Boot JAR without tests, Checkstyle or license
-   checks if it's missing; CI runs those gates.
-4. Uploads every `.dmg` and `.zip` in `frontend/out/make/` to the
-   matching GitHub Release.
-5. Marks the release as a pre-release if the tag contains a `-`
+   checks if it's missing; CI runs those gates. Forge signs the app
+   and staples its notarization ticket.
+5. Checks the signature, ticket, and Gatekeeper on the app and the
+   app inside the ZIP, then signs, notarizes, and staples the DMG.
+6. Writes `update-darwin-<arch>.json` beside the ZIP.
+7. Uploads the DMG, ZIP, and update manifest to the matching GitHub
+   Release.
+8. Marks the release as a pre-release if the tag contains a `-`
    (e.g. `v0.2.0-rc1`).
 
-You only have to fill in the release notes on github.com.
+If any check fails, nothing is uploaded. You only have to fill in the
+release notes on github.com.
 
-### Manual fallback (no CI)
+### Manual fallback
 
-If the workflow is broken or you want to ship from your local checkout:
+If a tag run fails for a flaky reason, use **Actions → Release → Run
+workflow** with the tag, which overwrites assets of the same name. A
+run on a branch keeps verified installers as an Actions artifact
+without publishing.
 
-```bash
-cd frontend && npm run make
-# → drops files in frontend/out/make/
-```
-
-Then on github.com → **Releases → Draft a new release**, pick the tag,
-drag the DMG/ZIP into the assets dropzone, publish.
+Don't publish a DMG built locally with `npm run make`. It is unsigned,
+so users would hit Gatekeeper's block, and it has no update manifest.
 
 ---
 
@@ -123,74 +132,29 @@ open frontend/out/make/.../ByteQuay-0.1.0-arm64.dmg
 | State                                  | First-launch dialog                                                                | Has an "Open" button? |
 |----------------------------------------|-----------------------------------------------------------------------------------|----------------------|
 | Locally built, no quarantine attribute | _nothing_ — opens silently                                                        | n/a                  |
-| Unsigned (today's GitHub release path) | "ByteQuay can't be opened because the developer cannot be verified."              | ❌ no — must right-click → Open |
+| Unsigned (0.5.5 and older releases)    | "ByteQuay can't be opened because the developer cannot be verified."              | ❌ no — must right-click → Open |
 | Signed but not notarized               | "macOS cannot verify ByteQuay is free of malware."                                | ✅ yes               |
-| Signed + notarized                     | "ByteQuay is an app downloaded from the Internet. Are you sure you want to open it?" | ✅ yes               |
+| Signed + notarized (0.5.6 and later)   | "ByteQuay is an app downloaded from the Internet. Are you sure you want to open it?" | ✅ yes               |
 | App Store                              | _nothing_                                                                          | n/a                  |
 
-Until ByteQuay is signed + notarized, ship with this README snippet so
-users aren't lost:
-
-```
-First-time install on macOS:
-  1. Drag ByteQuay.app to /Applications.
-  2. Right-click the app, choose Open, then Open in the dialog.
-     (Gatekeeper blocks unsigned apps on first launch; this only
-     happens once.)
-```
+Signing a new release does not change files users downloaded before.
+Users of an unsigned release download a signed one once.
 
 ---
 
-## Path forward: code signing + notarization
+## Updates from the sidebar
 
-To move from "right-click → Open" to the soft download prompt, the
-work is bounded but not trivial:
+An installed signed build checks the latest stable release's
+`update-darwin-<arch>.json` every hour. When a newer version is
+published, the sidebar shows **Update to v…**. One click checks for
+running work, downloads and verifies the ZIP, then restarts into the
+new version.
 
-1. **Enrol in Apple Developer Program** — $99/year. Issues a
-   "Developer ID Application" certificate.
-2. **Download + import the cert** into your Mac's Keychain.
-3. **Add `osxSign` to `forge.config.ts`**:
-   ```ts
-   packagerConfig: {
-     // …
-     osxSign: { identity: 'Developer ID Application: Jian Chen (TEAMID)' },
-     osxNotarize: { keychainProfile: 'bytequay-notary' },
-   }
-   ```
-4. **Set up `xcrun notarytool store-credentials bytequay-notary`** with
-   your Apple ID + an app-specific password + your team ID.
-5. **For CI signing**, base64-encode the `.p12` certificate and store
-   it as a GitHub secret (`MACOS_CERTIFICATE`); add an import step at
-   the top of `release.yml` that loads it into a temporary keychain.
-   Notary credentials become three more secrets (`APPLE_ID`,
-   `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`).
-
-A full half-day of plumbing, then permanently solved.
-
----
-
-## Path forward: auto-update for installed users — TODO
-
-`update-electron-app` reads GitHub Releases as its update server out
-of the box. Once builds are signed (auto-update on macOS requires
-signed binaries — Gatekeeper rejects unsigned background updates):
-
-```bash
-npm i update-electron-app
-```
-
-```ts
-// frontend/src/main.ts, after app.whenReady()
-import { updateElectronApp } from 'update-electron-app';
-updateElectronApp({ repo: 'bytequay/bytequay', updateInterval: '1 hour' });
-```
-
-It polls every interval, downloads new DMGs/ZIPs in the background,
-and prompts the user to restart when ready. Free, zero infra beyond
-the GitHub Releases we're already using.
-
-**Blocker**: signing must land first. **Effort once unblocked**: under
-an hour to wire + verify.
+The first signed build with the updater is 0.5.6, so 0.5.5 and older
+cannot update themselves. Pre-releases are never offered, because
+GitHub does not count them as the latest release. Keep the bundle
+identifier and signing team the same across releases. Don't delete a
+published ZIP or its manifest while that release is the latest.
 
 ---
 
