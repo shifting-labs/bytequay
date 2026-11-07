@@ -353,7 +353,8 @@ final class GitLabHttpClient
             throw new HostingFailure(UNAVAILABLE, "GitLab " + operation + " request was interrupted.");
         }
         catch (IOException e) {
-            throw new HostingFailure(UNAVAILABLE, "Could not complete GitLab " + operation + ". Check connectivity and certificate trust.");
+            // Only the type: a message can quote what the server sent, and a failure never carries server text.
+            throw new HostingFailure(UNAVAILABLE, "Could not complete GitLab " + operation + " (" + e.getClass().getSimpleName() + "). Check connectivity and certificate trust.");
         }
     }
 

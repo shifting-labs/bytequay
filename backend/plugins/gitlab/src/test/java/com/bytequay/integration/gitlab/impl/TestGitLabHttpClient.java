@@ -27,7 +27,9 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
@@ -43,6 +45,7 @@ import static com.bytequay.core.hosting.HostingFailure.Kind.FORBIDDEN;
 import static com.bytequay.core.hosting.HostingFailure.Kind.INVALID_RESPONSE;
 import static com.bytequay.core.hosting.HostingFailure.Kind.MISSING_OR_INACCESSIBLE;
 import static com.bytequay.core.hosting.HostingFailure.Kind.RATE_LIMITED;
+import static com.bytequay.core.hosting.HostingFailure.Kind.UNAVAILABLE;
 import static com.bytequay.core.hosting.HostingProvider.GITLAB;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -117,6 +120,25 @@ class TestGitLabHttpClient
                 });
         assertThat(requestCount.get()).isEqualTo(1);
         assertThat(requestedPath.get()).isEqualTo("/gitlab/oauth/token/info");
+    }
+
+    @Test
+    void namesTheConnectionFailureTypeWithoutItsMessage()
+            throws IOException
+    {
+        int closedPort;
+        try (ServerSocket socket = new ServerSocket(0, 0, InetAddress.getLoopbackAddress())) {
+            closedPort = socket.getLocalPort();
+        }
+        String base = "http://127.0.0.1:" + closedPort + "/gitlab";
+        HostingAccess unreachable = new HostingAccess(new HostingInstance(1, GITLAB, URI.create(base), URI.create(base + "/api/v4")), TOKEN);
+
+        assertThatThrownBy(() -> client.getOAuthTokenInfo(unreachable, TokenInfo.class))
+                .isInstanceOfSatisfying(HostingFailure.class, failure -> {
+                    assertThat(failure.kind()).isEqualTo(UNAVAILABLE);
+                    assertThat(failure.getMessage()).contains("token permission inspection (ConnectException)").doesNotContain(TOKEN, "Bearer", "Authorization");
+                    assertThat(failure.getCause()).isNull();
+                });
     }
 
     @Test
