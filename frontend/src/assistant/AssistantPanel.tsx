@@ -15,8 +15,8 @@ import { createContext, useCallback, useContext, useEffect, useLayoutEffect, use
 import {
   AlarmClock, ArrowUpRight, Ban, CalendarCheck, CheckCheck, CircleCheck, CircleDot, Clock, Flag, GitBranch, GitCompareArrows, GitMerge, GitPullRequest,
   GitPullRequestArrow, GitPullRequestClosed, GitPullRequestDraft, History,
-  ListEnd, ListPlus, ListTodo, MessageSquare, MessageSquareReply, Pencil, Play, RefreshCw, RotateCw, ScrollText, Send, ShieldCheck, SquarePen, SquarePlus,
-  SlidersHorizontal, Tag, TriangleAlert, UserPlus, X, type LucideIcon,
+  EyeOff, ListEnd, ListPlus, ListTodo, MessageSquare, MessageSquarePlus, MessageSquareReply, Pencil, Play, RefreshCw, RotateCw, ScrollText, Send, ShieldCheck,
+  SquarePen, SquarePlus, SlidersHorizontal, Tag, TriangleAlert, UserPlus, Wrench, X, type LucideIcon,
 } from 'lucide-react';
 import { relativeTime } from '@bytequay/ui/relativeTime';
 import Composer from '../Composer';
@@ -745,12 +745,13 @@ const ACTED: Record<AssistantReceiptDto['operation'], LucideIcon> = {
   MAKE_AGENDA: CalendarCheck, SAVE_RULE: ScrollText, CLOSE_PULL_REQUEST: GitPullRequestClosed, MARK_READY: GitPullRequestArrow, RERUN_CHECKS: RefreshCw,
   REQUEST_REVIEW: UserPlus, SET_LABELS: Tag, COMMENT: MessageSquare, APPROVE: CircleCheck, EDIT_PULL_REQUEST: Pencil, MERGE: GitMerge,
   REOPEN_PULL_REQUEST: GitPullRequest, MARK_DRAFT: GitPullRequestDraft, UPDATE_BRANCH: GitCompareArrows, RENAME_BRANCH: GitBranch,
+  POST_FINDINGS: MessageSquarePlus, FIX_FINDINGS: Wrench, DISMISS_FINDINGS: EyeOff,
 };
 
 /**
  * What an action did, or why it did not, on one line, with the user's own words in its tooltip; then Stop for the turn it started in a
- * task until that turn ends, Settings to the switch that is off, and Open to where it acted. A refusal points down at the card's buttons
- * when they are the way to do it.
+ * task until that turn ends, Settings to the switch that is off, and Open to where it acted, or to where to settle what refused it. A
+ * refusal points down at the card's buttons when they are the way to do it.
  */
 function Receipt({ item, ended, onOpen, onSettings }: {
   item: AssistantItemDto;
@@ -775,7 +776,7 @@ function Receipt({ item, ended, onOpen, onSettings }: {
       </div>
       {turnId !== null && !ended && <StopButton turnId={turnId} />}
       {fix === 'SETTINGS' && <button type="button" className="assistant-button" onClick={() => onSettings('features')}>Settings</button>}
-      {outcome === 'DONE' && (target !== null || page !== null) && <button type="button" className="assistant-button" onClick={() => onOpen(receipt)}>Open</button>}
+      {(outcome === 'DONE' || fix === 'OPEN') && (target !== null || page !== null) && <button type="button" className="assistant-button" onClick={() => onOpen(receipt)}>Open</button>}
     </div>
   );
 }

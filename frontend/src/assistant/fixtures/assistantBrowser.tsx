@@ -632,7 +632,7 @@ const FAILED: AppNotice = { ...notice('failure:task-6', 'FAILURE', 'task-6', 'Up
 
 const REVIEWED: DigestReview = {
   reviewedHead: 'abc1234', currentHead: 'abc1234', filesRead: 6, filesChanged: 6, complete: true, omissions: [], warnings: [],
-  commands: [{ command: 'pnpm test --filter stats', exitCode: 0 }], fixTask: null,
+  commands: [{ command: 'pnpm test --filter stats', exitCode: 0 }], handled: 0, fixTask: null,
   findings: [
     { id: 'f1', label: 'F-1', title: 'Statistics go stale after a write',
       body: 'A write does not drop the cached statistics, so the next query plans with old row counts. Call `cache.invalidate(table)` after `commit()`. '
@@ -1166,6 +1166,59 @@ async function readsTheMarksTheAssistantMade(): Promise<void> {
   finally { view.dispose(); }
 }
 
+/** Words that acted on a review's findings: the card says they were handled, each action left its receipt, and a refusal opens where to settle it. */
+async function actsOnAReviewsFindingsByWords(): Promise<void> {
+  // Its own notice: a card an earlier scenario settled stays its receipt for the day.
+  const handled = mount(VIEW, 0, [{ ...FINISHED_REVIEW, id: 'finished:handled' }], [], undefined, undefined, {
+    readNoticeDigests: digests({ 'finished:handled': digestOf('finished:handled', { review: { ...REVIEWED, findings: [], handled: 5 },
+      pull: facts({ number: 42, title: 'Cache table statistics between queries', draft: false, mine: false, author: 'maria', head: 'abc1234' }) }) }),
+    getReviewDraft: async (): Promise<ReviewDraftDto> => ({ repo: 'acme/warehouse', number: 42, body: '', event: 'COMMENT', reviewPublication: null, items: [],
+      postedSummaryFindingIds: [], version: 1, updatedAt: '2026-10-16T07:09:00Z' }),
+  });
+  try {
+    await settle();
+    pill(handled.host, 'finished')?.click();
+    await settle();
+    const card = cards(handled.host)[0];
+    assert(card?.querySelector('.assistant-card__verdict')?.textContent === '5 findings handled, none left open.',
+      `Once its findings were posted, sent or dismissed, a review does not claim it found none: ${card?.textContent}`);
+  }
+  finally { handled.dispose(); }
+
+  const receipt = (id: string, text: string, fields: Partial<AssistantReceiptDto> & Pick<AssistantReceiptDto, 'operation'>): AssistantItemDto => ({
+    id, conversationId: 'c0', at: '2026-10-16T07:07:00Z', kind: 'RECEIPT', text, targets: {}, notReady: false, list: null, draft: null, report: null,
+    receipt: { outcome: 'DONE', detail: null, target: PULL, page: null, turnId: null, fix: null, words: null, ...fields },
+  });
+  const view = mount({ ...VIEW, items: [VIEW.items[0],
+    receipt('p1', 'Posted F-1 on “Add Iceberg metadata cache”', { operation: 'POST_FINDINGS', detail: 'owner/repository#31377 · 1 comment', words: 'post F-1' }),
+    receipt('p2', 'Requested a fix of F-2 from “Expose snapshot id in metadata”', { operation: 'FIX_FINDINGS', target: target('TASK', { id: 't9' }),
+      words: 'send F-2 to the task' }),
+    receipt('p3', 'Resolved F-3 privately on “Add Iceberg metadata cache”', { operation: 'DISMISS_FINDINGS', target: target('REVIEW', { id: 'r9' }), words: 'drop the nit' }),
+    receipt('p4', 'Your review draft has other comments; send it from the pull request', { operation: 'POST_FINDINGS', outcome: 'REFUSED', fix: 'OPEN',
+      words: 'post F-4' })] }, 0, []);
+  try {
+    await settle();
+    enter(type(view.host, 'post F-1, send F-2 to the task, drop the nit, post F-4'));
+    await settle();
+    const talk = element<HTMLElement>('.assistant-talk', view.host, 'Sending shows the conversation');
+    const lines = [...talk.querySelectorAll<HTMLElement>('.assistant-receipt')];
+    assert(JSON.stringify(lines.map(line => [line.querySelector('.assistant-receipt__lead')?.textContent, buttonIn(line, 'Open') !== undefined])) === JSON.stringify([
+      ['Posted F-1 on “Add Iceberg metadata cache”', true], ['Requested a fix of F-2 from “Expose snapshot id in metadata”', true],
+      ['Resolved F-3 privately on “Add Iceberg metadata cache”', true], ['Your review draft has other comments; send it from the pull request', true]]),
+      `One receipt for each action, each with where it went: ${lines.map(line => line.textContent).join(' | ')}`);
+    const refused = lines[3];
+    assert(refused.classList.contains('is-refused') && buttonIn(refused, 'Settings') === undefined, 'A refusal with a page to settle it offers that page, not Settings');
+    const opened: unknown[] = [];
+    const listener = (event: Event) => { opened.push((event as CustomEvent).detail); };
+    window.addEventListener('bytequay:zoom-reference', listener);
+    try { buttonIn(refused, 'Open')?.click(); }
+    finally { window.removeEventListener('bytequay:zoom-reference', listener); }
+    assert(JSON.stringify(opened) === JSON.stringify([{ kind: 'pull', repo: 'owner/repository', number: 31377, workspaceId: 'ws1' }]),
+      `Open goes to the pull request whose draft stood in the way: ${JSON.stringify(opened)}`);
+  }
+  finally { view.dispose(); }
+}
+
 async function actsOnAPullRequestFromItsCard(): Promise<void> {
   const steps: unknown[][] = [];
   // What each click left in the conversation: the pull request and what was done to it.
@@ -1577,7 +1630,8 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
     ['stops a running reply', stopsARunningReply], ['shows a list as rows, cards or a timeline', showsAListAsRowsCardsOrATimeline],
     ['follows an open once when it arrives', followsAnOpenOnceWhenItArrives], ['completes a task from its card', completesATaskFromItsCard],
     ['creates a drafted issue as an Epic', createsADraftedIssueAsAnEpic], ['reads the marks the assistant made', readsTheMarksTheAssistantMade],
-    ['acts on a pull request from its card', actsOnAPullRequestFromItsCard], ['asks to sign in when the model is not ready', asksToSignInWhenTheModelIsNotReady],
+    ['acts on a pull request from its card', actsOnAPullRequestFromItsCard], ['acts on a review’s findings by words', actsOnAReviewsFindingsByWords],
+    ['asks to sign in when the model is not ready', asksToSignInWhenTheModelIsNotReady],
     ['keeps the set-up box whole with chat off', keepsTheSetUpBoxWholeWithChatOff], ['keeps a conversation for each topic', keepsAConversationForEachTopic],
     ['reports what its tasks raised', reportsWhatItsTasksRaised], ['shows what a task reports while open', showsWhatATaskReportsWhileOpen],
     ['stops a turn that looks stuck', stopsATurnThatLooksStuck], ['keeps rule receipts separate from completion', keepsRuleReceiptsSeparateFromCompletion], ['sends @rules to the Assistant', sendsRulesToTheAssistant]]);

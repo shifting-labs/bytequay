@@ -32,7 +32,7 @@ const pull = (fields: Partial<DigestPull> = {}): DigestPull => ({
 });
 
 const review = (fields: Partial<DigestReview> = {}): DigestReview => ({
-  reviewedHead: 'head', currentHead: 'head', filesRead: 14, filesChanged: 14, complete: true, omissions: [], warnings: [], commands: [], findings: [], fixTask: null,
+  reviewedHead: 'head', currentHead: 'head', filesRead: 14, filesChanged: 14, complete: true, omissions: [], warnings: [], commands: [], findings: [], handled: 0, fixTask: null,
   ...fields,
 });
 

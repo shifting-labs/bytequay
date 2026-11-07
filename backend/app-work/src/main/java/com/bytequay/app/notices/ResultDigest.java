@@ -83,10 +83,11 @@ public record ResultDigest(String noticeId, String host, Optional<Pull> pull, Op
      * @param filesRead the changed files the reviewer read
      * @param commands the commands the reviewer ran that no finding cites
      * @param findings the open findings at the reviewed revision, the most severe first
+     * @param handled the findings at the reviewed revision resolved since, posted, dismissed or fixed
      * @param fixTask the development task that wrote the pull request, which takes the findings to fix
      */
     public record Review(String reviewedHead, Optional<String> currentHead, int filesRead, int filesChanged, boolean complete, List<String> omissions, List<String> warnings,
-            List<Command> commands, List<Finding> findings, Optional<String> fixTask)
+            List<Command> commands, List<Finding> findings, int handled, Optional<String> fixTask)
     {
         public Review
         {

@@ -14,6 +14,7 @@
 package com.bytequay.app.assistant;
 
 import com.bytequay.app.agenda.AgendaRefs;
+import com.bytequay.app.notices.ResultDigest;
 import com.bytequay.app.review.ReviewPublicationService;
 import com.bytequay.app.service.hosting.HostingIntegrations;
 import com.bytequay.app.service.pr.PullRequestRead;
@@ -192,6 +193,40 @@ class AssistantPullRequests
         ReviewDraft saved = reviews.saveReview(found.route(), draft.version(), draft.body(), "APPROVE");
         reviews.submit(found.route(), saved.version(), saved.body().strip(), "APPROVE", head);
         return pr.done("Approved", Optional.empty());
+    }
+
+    /**
+     * Posts a private review's findings as one review of comments, as its result card's Post does: at the commit the review read, which must
+     * still be the pull request's head, and only while the user's own review draft holds nothing else and no review they sent waits for its
+     * answer.
+     *
+     * @param review where the review opens, to re-review it when the pull request moved on
+     */
+    AssistantWork.Done postFindings(String ref, String reviewId, List<ResultDigest.Finding> findings, String reviewedHead, AgendaTarget review)
+    {
+        Found found = resolve(ref);
+        Read pr = open(found);
+        if (!reviewedHead.equals(pr.detail().headSha())) {
+            throw new AssistantWork.Refused("The pull request is not at the commit this review read; re-review it first", Optional.of(review));
+        }
+        ReviewDraft draft = reviews.draft(found.route());
+        if (draft.reviewPublication().isPresent()) {
+            throw new AssistantWork.Refused("A review you sent has no answer yet; settle it on the pull request first", Optional.of(found.target()));
+        }
+        Set<String> ids = findings.stream().map(ResultDigest.Finding::id).collect(toImmutableSet());
+        // Comments already sent are history, not the user's draft.
+        if (!draft.body().isBlank() || draft.items().stream().anyMatch(item -> !item.published() && item.findingId().filter(ids::contains).isEmpty())) {
+            throw new AssistantWork.Refused("Your review draft has other comments; send it from the pull request", Optional.of(found.target()));
+        }
+        for (ResultDigest.Finding finding : findings) {
+            if (draft.items().stream().noneMatch(item -> item.findingId().equals(Optional.of(finding.id())))) {
+                draft = reviews.addFinding(found.route(), draft.version(), reviewId, finding.id());
+            }
+        }
+        ReviewDraft saved = reviews.saveReview(found.route(), draft.version(), draft.body(), "COMMENT");
+        ReviewPublicationService.Publication sent = reviews.submit(found.route(), saved.version(), saved.body().strip(), "COMMENT", reviewedHead);
+        String labels = findings.stream().map(ResultDigest.Finding::label).collect(joining(", "));
+        return pr.done("Posted " + labels + " on", Optional.of(sent.uncertainReason().orElse(findings.size() == 1 ? "1 comment" : findings.size() + " comments")));
     }
 
     /**

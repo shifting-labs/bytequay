@@ -166,6 +166,7 @@ class TestAssistantActions
     private final AssistantRows rows = mock(AssistantRows.class);
     private final AttentionMarkService attentionMarks = mock(AttentionMarkService.class);
     private final AssistantPullRequests pulls = mock(AssistantPullRequests.class);
+    private final AssistantFindings findings = mock(AssistantFindings.class);
     private final ObjectMapper mapper = AgendaFixtures.mapper();
     private final AtomicReference<AssistantPermissions> allowed = new AtomicReference<>(new AssistantPermissions(true, true, true, true, true));
     private final List<AssistantItem> receipts = new ArrayList<>();
@@ -210,7 +211,7 @@ class TestAssistantActions
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
         work = new AssistantWork(issueDevelopment, jira, epics, workItemService, workItems, workspaces, rows, attentionMarks);
         actions = new AssistantActions(store, permissions, approvals, approvalService, tasks, turns, new ItemTaskStarter(starter, models, settings, workspaces, workItems,
-                issues, jira), pullRequestTasks, pullRequests, workspaces, notices, reviews, work, pulls, mapper, clock);
+                issues, jira), pullRequestTasks, pullRequests, workspaces, notices, reviews, work, pulls, findings, mapper, clock);
     }
 
     @Test
@@ -497,6 +498,81 @@ class TestAssistantActions
         verify(pulls, never()).close(any());
         verify(pulls, never()).setLabels(any(), any(), any());
         verify(pulls, never()).comment(any(), any());
+    }
+
+    @Test
+    void actsOnAReviewsFindingsWithOneReceiptForEachAction()
+    {
+        String review = "review:r1";
+        AgendaTarget pull = AgendaTarget.pull(5, "example/harbor", 12, Optional.of("ws1"));
+        when(findings.post(review, ImmutableList.of("F-1"))).thenReturn(new AssistantWork.Done("Posted F-1 on “Fix cache eviction”",
+                Optional.of("example/harbor#12 · 1 comment"), Optional.of(pull), "example/harbor#12"));
+        when(findings.fix(eq(review), eq(ImmutableList.of("F-2")), any())).thenReturn(new AssistantWork.Done("Requested a fix of F-2 from “Fix cache eviction”",
+                Optional.empty(), Optional.of(AgendaTarget.of(AgendaTarget.Kind.TASK, "ws1", task.id().toString())), task.id().toString()));
+        when(findings.dismiss(review, ImmutableList.of("F-3"))).thenReturn(new AssistantWork.Done("Resolved F-3 privately on “Fix cache eviction”",
+                Optional.of("example/harbor#12"), Optional.of(AgendaTarget.of(AgendaTarget.Kind.REVIEW, "ws1", "r1")), review));
+        AssistantItem message = message("post F-1, send F-2 to the task, drop the nit", ImmutableList.of(), Optional.of(review));
+
+        act(message, "{\"op\":\"post_findings\",\"review\":\"review:r1\",\"findings\":[\"F-1\"],\"words\":\"post F-1\"}");
+        act(message, "{\"op\":\"fix_findings\",\"review\":\"review:r1\",\"findings\":[\"F-2\"],\"words\":\"send F-2 to the task\"}");
+        act(message, "{\"op\":\"dismiss_findings\",\"review\":\"review:r1\",\"findings\":[\"F-3\"],\"words\":\"drop the nit\"}");
+
+        assertThat(receipts).extracting(AssistantItem::text).containsExactly("Posted F-1 on “Fix cache eviction”", "Requested a fix of F-2 from “Fix cache eviction”",
+                "Resolved F-3 privately on “Fix cache eviction”");
+        assertThat(receipts.getFirst().receipt().orElseThrow()).isEqualTo(new AssistantReceipt(AssistantReceipt.Operation.POST_FINDINGS, DONE,
+                Optional.of("example/harbor#12 · 1 comment"), Optional.of(pull), Optional.empty(), Optional.empty(), Optional.empty(), Optional.of("post F-1")));
+        // The log names each call by its findings too, so asking for another finding of the same review is not "Already done".
+        assertThat(store.actions(message.id())).extracting(AssistantAction::target).containsExactly("review:r1 F-1", "review:r1 F-2", "review:r1 F-3");
+        // The fix requests' keys come from the call, so a retried reply sends each once.
+        ArgumentCaptor<String> identity = ArgumentCaptor.forClass(String.class);
+        verify(findings).fix(eq(review), eq(ImmutableList.of("F-2")), identity.capture());
+        assertThat(identity.getValue()).contains(message.id()).contains("review:r1 F-2").contains("send F-2 to the task");
+    }
+
+    @Test
+    void refusesFindingsTheUsersWordsDoNotPick()
+    {
+        String review = "review:r1";
+        act(message("post F-1 now", ImmutableList.of(), Optional.of(review)), "{\"op\":\"post_findings\",\"review\":\"review:r1\",\"findings\":[\"F-1\",\"F-2\"],"
+                + "\"words\":\"post F-1\"}");
+        assertRefused("Your words name F-1, not F-2", Optional.empty());
+        act(message("post all except F-3", ImmutableList.of(), Optional.of(review)), "{\"op\":\"post_findings\",\"review\":\"review:r1\",\"findings\":[\"F-3\"],"
+                + "\"words\":\"post all\"}");
+        assertRefused("Your message says not to touch F-3", Optional.empty());
+        act(message("post F-1", ImmutableList.of()), "{\"op\":\"post_findings\",\"review\":\"review:r1\",\"findings\":[\"F-1\"],\"words\":\"post F-1\"}");
+        assertRefused("That isn't on screen", Optional.empty());
+        allowed.set(new AssistantPermissions(true, true, true, true, false));
+        act(message("drop the nit", ImmutableList.of(), Optional.of(review)), "{\"op\":\"dismiss_findings\",\"review\":\"review:r1\",\"findings\":[\"F-3\"],"
+                + "\"words\":\"drop the nit\"}");
+        assertRefused("Changing pull requests is off", Optional.of(SETTINGS));
+        verifyNoInteractions(findings);
+
+        assertThat(act(message("post F-1", ImmutableList.of()), "{\"op\":\"post_findings\",\"review\":\"pr:example/harbor#12\",\"findings\":[\"F-1\"],"
+                + "\"words\":\"post F-1\"}")).contains("post_findings needs a review: ref");
+        assertThat(act(message("post F-1", ImmutableList.of()), "{\"op\":\"fix_findings\",\"review\":\"review:r1\",\"findings\":[],\"words\":\"post F-1\"}"))
+                .contains("fix_findings needs the labels of the findings");
+    }
+
+    @Test
+    void aRefusedFindingActionOpensWhereToSettleIt()
+    {
+        AgendaTarget pull = AgendaTarget.pull(5, "example/harbor", 12, Optional.of("ws1"));
+        when(findings.post("review:r1", ImmutableList.of("F-1"))).thenThrow(new AssistantWork.Refused("Your review draft has other comments; send it from the pull request",
+                Optional.of(pull)));
+        AssistantItem message = message("post F-1", ImmutableList.of(), Optional.of("review:r1"));
+
+        assertThat(act(message, "{\"op\":\"post_findings\",\"review\":\"review:r1\",\"findings\":[\"F-1\"],\"words\":\"post F-1\"}"))
+                .isEqualTo("{\"outcome\":\"refused\",\"message\":\"Your review draft has other comments; send it from the pull request\"}");
+        assertThat(receipts.getLast().receipt().orElseThrow()).isEqualTo(new AssistantReceipt(AssistantReceipt.Operation.POST_FINDINGS, REFUSED, Optional.empty(),
+                Optional.of(pull), Optional.empty(), Optional.empty(), Optional.of(AssistantReceipt.Fix.OPEN), Optional.of("post F-1")));
+        assertThat(store.actions(message.id())).singleElement().satisfies(action -> assertThat(action.outcome()).isEqualTo(REFUSED));
+
+        // With nowhere to settle it, a refusal only says why.
+        when(findings.dismiss("review:r1", ImmutableList.of("F-9"))).thenThrow(new AssistantWork.Refused("F-9 isn't an open finding of this review; open ones: F-1"));
+        act(message("dismiss F-9", ImmutableList.of(), Optional.of("review:r1")), "{\"op\":\"dismiss_findings\",\"review\":\"review:r1\",\"findings\":[\"F-9\"],"
+                + "\"words\":\"dismiss F-9\"}");
+        assertRefused("F-9 isn't an open finding of this review; open ones: F-1", Optional.empty());
+        assertThat(receipts.getLast().receipt().orElseThrow().target()).isEmpty();
     }
 
     @Test

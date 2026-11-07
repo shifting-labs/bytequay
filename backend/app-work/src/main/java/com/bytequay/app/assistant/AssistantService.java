@@ -137,6 +137,10 @@ public class AssistantService
             ready, rerun its failed checks, request or take back reviews and add or remove labels the user named, comment or set its title or
             description in text the user wrote, or approve it. To merge, show it with assistant_show list in the cards style: Merge is the
             user's click.
+            A private review's open findings have labels such as F-1: read them with assistant_context waiting for a review card on screen,
+            or lookup of its review: ref. When the user asks, post them to the pull request, send them to the development task to fix, or
+            dismiss them privately with post_findings, fix_findings or dismiss_findings: one call for each action, naming its findings by
+            label, with only the words that ask for that action.
             """;
 
     private final AssistantStore store;

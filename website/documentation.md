@@ -338,6 +338,15 @@ title, description and draft state, then closes the old one and keeps its
 branch. Reviews, comments and labels stay on the old one. A pull request a
 task follows moves through that task instead.
 
+The same switch lets it act on a private review's findings by their labels,
+such as "post F-1, send F-2 to the task, drop the nit". Posting sends one review
+of comments, only while the pull request is still at the commit the review read
+and your own review draft holds nothing else. A fix request goes to the
+review's development task, or to your own pull request's task, and waits behind
+its current turn. Dropping a finding resolves it privately; the review can
+reopen it. Each action leaves its own receipt, and a refusal that a page can
+settle opens that page.
+
 Ask it to work on one of your own pull requests and it uses that PR's
 development task, as the PR's **Development** button does, and sends your
 words there. A task started some other way can't be linked to a PR later.

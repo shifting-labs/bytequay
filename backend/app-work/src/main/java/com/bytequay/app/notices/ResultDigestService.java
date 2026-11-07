@@ -109,6 +109,13 @@ public class ResultDigestService
         return new ResultDigest(request.noticeId(), host, request.pullRequest().flatMap(this::pull), review.flatMap(this::review), report);
     }
 
+    /** A review's digest as its result card reads it, with its pull request when it has one; empty when the review is gone. */
+    public Optional<ResultDigest> review(String reviewId)
+    {
+        return reviews.findReview(reviewId).map(review -> digest(new Request("review:" + reviewId, review.workspaceId(), Optional.of(reviewId),
+                review.number().stream().mapToObj(number -> review.repo() + "#" + number).findFirst(), Optional.empty())));
+    }
+
     private Optional<ResultDigest.Pull> pull(String ref)
     {
         int at = ref.lastIndexOf('#');
@@ -154,6 +161,7 @@ public class ResultDigestService
                 .limit(FINDINGS)
                 .map(ResultDigestService::finding)
                 .collect(toImmutableList());
+        int handled = (int) all.stream().filter(finding -> finding.state() == ReviewFinding.State.RESOLVED && finding.validatedHeadSha().equals(run.sourceRevision())).count();
         Set<String> changed = run.diff().stream().map(DiffFile::filename).collect(toImmutableSet());
         // The working investigation holds the latest reading; a run that sealed its only one keeps it in that step.
         List<String> read = run.investigation().or(() -> run.latestSealedInvestigation().flatMap(ReviewStep::investigation))
@@ -164,7 +172,7 @@ public class ResultDigestService
                 run.coverage().map(ReviewCoverage::complete).orElse(true),
                 run.coverage().map(ReviewCoverage::omissions).orElse(ImmutableList.of()),
                 run.coverage().map(ReviewCoverage::warnings).orElse(ImmutableList.of()),
-                commands(run, cited), open, review.sourceTaskId()));
+                commands(run, cited), open, handled, review.sourceTaskId()));
     }
 
     /** The commands the reviewer ran in this run that no finding cites, each once, with the exit code of its latest run. */

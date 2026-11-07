@@ -83,8 +83,9 @@ final class AssistantContext
                         "description", "overview first; changes since the last agenda, mine (your open pull requests), tasks (agent tasks waiting or idle), "
                                 + "asks (what people want from you), epics (work in flight and ready to start), history (earlier agendas), today (today's agenda, "
                                 + "whether it is made and which items are done), running (tasks at work now), waiting (the cards on screen and what answers "
-                                + "them), screen (the page the user is on), lookup (one pull "
-                                + "request, task, review or work item by its ref), result (what a task or review said last and how its latest turn ended), "
+                                + "them, such as a review result's open findings), screen (the page the user is on), lookup (one pull "
+                                + "request, task, review or work item by its ref, with a review's open findings), result (what a task or review said last and "
+                                + "how its latest turn ended), "
                                 + "search (stored pull requests, issues, Jira tickets, tasks, work items and Epics by query), "
                                 + "start_options (repositories, agents and automation for a new task)"),
                 "page", ImmutableMap.of("type", "integer", "minimum", 0, "description", "From nextPage; 0 when absent"),

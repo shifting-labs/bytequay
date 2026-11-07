@@ -1742,7 +1742,7 @@ export type AssistantReceiptDto = {
   operation: 'START_TASK' | 'ANSWER_APPROVAL' | 'ANSWER_QUESTION' | 'REPLY_TO_TASK' | 'OPEN' | 'MARK_EPIC' | 'ADD_TO_EPIC' | 'CREATE_WORK_ITEM' | 'CREATE_EPIC' | 'ACKNOWLEDGE'
     | 'SNOOZE' | 'MAKE_AGENDA' | 'SAVE_RULE' | 'CLOSE_PULL_REQUEST' | 'MARK_READY' | 'RERUN_CHECKS' | 'REQUEST_REVIEW' | 'SET_LABELS' | 'COMMENT' | 'APPROVE'
     | 'EDIT_PULL_REQUEST' | 'MERGE' | 'REOPEN_PULL_REQUEST' | 'MARK_DRAFT' | 'UPDATE_BRANCH'
-    | 'RENAME_BRANCH';
+    | 'RENAME_BRANCH' | 'POST_FINDINGS' | 'FIX_FINDINGS' | 'DISMISS_FINDINGS';
   outcome: 'DONE' | 'REFUSED' | 'FAILED';
   /** A second line, such as where a started task runs. */
   detail: string | null;
@@ -1751,8 +1751,8 @@ export type AssistantReceiptDto = {
   page: string | null;
   /** A started task's first turn, which Stop cancels. */
   turnId: string | null;
-  /** Settings holds the switch that is off; the card's buttons answer what words may not. */
-  fix: 'SETTINGS' | 'BUTTONS' | null;
+  /** Settings holds the switch that is off; the card's buttons answer what words may not; Open goes where to settle what stood in the way. */
+  fix: 'SETTINGS' | 'BUTTONS' | 'OPEN' | null;
   /** The user's words the assistant acted on, exactly as it passed them; none for a card's own button. */
   words: string | null;
 };

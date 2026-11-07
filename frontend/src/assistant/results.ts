@@ -39,6 +39,8 @@ export type DigestReview = {
   commands: DigestCommand[];
   /** Open at the reviewed revision, the most severe first. */
   findings: DigestFinding[];
+  /** The findings at the reviewed revision resolved since: posted, dismissed or fixed. */
+  handled: number;
   /** The development task that wrote the pull request, which takes findings to fix. */
   fixTask: string | null;
 };
@@ -81,6 +83,7 @@ function parseReview(value: unknown): DigestReview | null {
         revision: integer(finding.revision) ?? 0, ran: optionalText(finding.ran),
       };
     }),
+    handled: integer(review.handled) ?? 0,
     fixTask: optionalText(review.fixTask),
   };
 }

@@ -13,6 +13,7 @@
  */
 package com.bytequay.app.assistant;
 
+import com.bytequay.app.notices.ResultDigest;
 import com.bytequay.app.review.ReviewPublicationService;
 import com.bytequay.app.service.hosting.HostingIntegrationFixtures;
 import com.bytequay.app.service.hosting.HostingIntegrations;
@@ -41,6 +42,7 @@ import com.bytequay.core.hosting.PullRequestContentReader;
 import com.bytequay.core.hosting.PullRequestWriter;
 import com.bytequay.core.review.ReviewDraft;
 import com.bytequay.core.review.ReviewDraftItem;
+import com.bytequay.core.review.ReviewPublication;
 import com.bytequay.core.store.PrDetailStore;
 import com.bytequay.core.store.PullRequestStore;
 import com.bytequay.core.store.PullRequestTaskStore;
@@ -54,6 +56,7 @@ import java.net.URI;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -283,6 +286,46 @@ class TestAssistantPullRequests
     }
 
     @Test
+    void postsFindingsAsOneReviewOfCommentsAtTheCommitTheReviewRead()
+    {
+        AgendaTarget review = AgendaTarget.of(AgendaTarget.Kind.REVIEW, "ws1", "r1");
+        List<ResultDigest.Finding> findings = ImmutableList.of(new ResultDigest.Finding("f1", "F-1", "Cache keeps evicted entries", "Why it matters.", Optional.of("high"),
+                Optional.of("src/cache.ts"), Optional.of(40), false, 3, 1, Optional.empty()));
+        fresh("open", false, "sam-r", HEAD, ImmutableList.of());
+        ReviewDraft draft = ReviewDraft.empty("d1", REPO, 58, NOW).withVersion(3);
+        // A comment already sent is history, not the user's draft.
+        ReviewDraftItem sent = item(Optional.of("f0"), true);
+        when(reviews.draft(route)).thenReturn(draft.withItems(ImmutableList.of(sent), NOW));
+        ReviewDraft added = draft.withItems(ImmutableList.of(sent, item(Optional.of("f1"), false)), NOW).withVersion(4);
+        when(reviews.addFinding(route, 3, "r1", "f1")).thenReturn(added);
+        when(reviews.saveReview(route, 4, "", "COMMENT")).thenReturn(added.withVersion(5));
+        when(reviews.submit(route, 5, "", "COMMENT", HEAD)).thenReturn(new ReviewPublicationService.Publication(added, ImmutableList.of("i1"), Optional.empty()));
+
+        assertThat(pulls.postFindings(REF, "r1", findings, HEAD, review)).isEqualTo(new AssistantWork.Done("Posted F-1 on “Fix the cache”",
+                Optional.of("owner/repository#58 · 1 comment"), Optional.of(TARGET), "owner/repository#58"));
+        verify(reviews).submit(route, 5, "", "COMMENT", HEAD);
+
+        fresh("open", false, "sam-r", "d".repeat(40), ImmutableList.of());
+        assertThatThrownBy(() -> pulls.postFindings(REF, "r1", findings, HEAD, review))
+                .isInstanceOfSatisfying(AssistantWork.Refused.class, refused -> assertThat(refused.opens()).contains(review))
+                .hasMessage("The pull request is not at the commit this review read; re-review it first");
+        fresh("open", false, "sam-r", HEAD, ImmutableList.of());
+        when(reviews.draft(route)).thenReturn(draft.withReviewPublication(Optional.of(new ReviewPublication("a1", ReviewPublication.State.UNCERTAIN, OptionalLong.empty(),
+                OptionalLong.empty(), Optional.empty(), NOW)), NOW));
+        assertThatThrownBy(() -> pulls.postFindings(REF, "r1", findings, HEAD, review))
+                .isInstanceOfSatisfying(AssistantWork.Refused.class, refused -> assertThat(refused.opens()).contains(TARGET))
+                .hasMessage("A review you sent has no answer yet; settle it on the pull request first");
+        when(reviews.draft(route)).thenReturn(draft.withReview("Thanks, a few notes", "COMMENT", NOW));
+        assertThatThrownBy(() -> pulls.postFindings(REF, "r1", findings, HEAD, review)).hasMessage("Your review draft has other comments; send it from the pull request");
+        ReviewDraftItem unsent = item(Optional.empty(), false);
+        when(reviews.draft(route)).thenReturn(draft.withItems(ImmutableList.of(unsent), NOW));
+        assertThatThrownBy(() -> pulls.postFindings(REF, "r1", findings, HEAD, review)).hasMessage("Your review draft has other comments; send it from the pull request");
+        fresh("closed", false, "sam-r", HEAD, ImmutableList.of());
+        assertThatThrownBy(() -> pulls.postFindings(REF, "r1", findings, HEAD, review)).hasMessage("That pull request is not open");
+        verify(reviews, times(1)).submit(any(), anyLong(), anyString(), anyString(), anyString());
+    }
+
+    @Test
     void approvesOnlyTheHeadTheUserSawWithAnEmptyDraft()
     {
         stored(HEAD);
@@ -353,6 +396,14 @@ class TestAssistantPullRequests
     private void hosted(HostingServer server)
     {
         when(route.session()).thenReturn(new HostingReadSession(2, "selected", new HostingAccess(server, "token")));
+    }
+
+    private static ReviewDraftItem item(Optional<String> findingId, boolean published)
+    {
+        ReviewDraftItem item = mock(ReviewDraftItem.class, withSettings().mockMaker(MockMakers.INLINE));
+        when(item.findingId()).thenReturn(findingId);
+        when(item.published()).thenReturn(published);
+        return item;
     }
 
     private void stored(String head)

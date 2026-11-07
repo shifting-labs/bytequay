@@ -23,7 +23,7 @@ import static java.util.Objects.requireNonNull;
  * user clicked a card's own button in the panel.
  *
  * @param detail a second line, such as where a started task runs
- * @param target where the receipt opens
+ * @param target where the receipt opens: what it acted on, or for a refusal whose fix is {@link Fix#OPEN}, where to settle what stood in the way
  * @param page the app page or Settings section the receipt opens instead, such as {@code settings/models}
  * @param turnId a started task's first turn, which Stop cancels
  * @param fix where a refused action can be done instead
@@ -36,7 +36,7 @@ public record AssistantReceipt(Operation operation, Outcome outcome, Optional<St
     {
         START_TASK, ANSWER_APPROVAL, ANSWER_QUESTION, REPLY_TO_TASK, OPEN, MARK_EPIC, ADD_TO_EPIC, CREATE_WORK_ITEM, CREATE_EPIC, ACKNOWLEDGE, SNOOZE, MAKE_AGENDA,
         SAVE_RULE, CLOSE_PULL_REQUEST, MARK_READY, RERUN_CHECKS, REQUEST_REVIEW, SET_LABELS, COMMENT, APPROVE, EDIT_PULL_REQUEST, MERGE, REOPEN_PULL_REQUEST,
-        MARK_DRAFT, UPDATE_BRANCH, RENAME_BRANCH
+        MARK_DRAFT, UPDATE_BRANCH, RENAME_BRANCH, POST_FINDINGS, FIX_FINDINGS, DISMISS_FINDINGS
     }
 
     public enum Outcome
@@ -44,10 +44,10 @@ public record AssistantReceipt(Operation operation, Outcome outcome, Optional<St
         DONE, REFUSED, FAILED
     }
 
-    /** Settings holds the switch that is off; the card's buttons answer what words may not. */
+    /** Settings holds the switch that is off; the card's buttons answer what words may not; the receipt's target opens where to settle what stood in the way. */
     public enum Fix
     {
-        SETTINGS, BUTTONS
+        SETTINGS, BUTTONS, OPEN
     }
 
     public AssistantReceipt

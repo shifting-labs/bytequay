@@ -191,6 +191,8 @@ function reviewVerdict(review: DigestReview, yours: boolean, merge: boolean): st
   if (headMoved(review)) return 'This review is out of date. The pull request changed after it ran.';
   const open = openFindings(review);
   if (open.length > 0) return `${plural(open.length, 'finding')}${yours ? ' on your PR' : ''}. ${sentence(open[0].title)}`;
+  // Findings posted, dismissed or fixed since are no longer open, which is not the same as none found.
+  if (review.handled > 0) return `${plural(review.handled, 'finding')} handled, none left open.${merge ? ' Your PR is ready to merge.' : ''}`;
   const read = review.complete ? review.filesChanged : review.filesRead;
   const found = read === 0 ? 'No problems found.' : review.complete ? `No problems found in ${plural(read, 'file')}.` : `No problems found in the ${plural(read, 'file')} it read.`;
   return merge ? `${found} Your PR is ready to merge.` : found;

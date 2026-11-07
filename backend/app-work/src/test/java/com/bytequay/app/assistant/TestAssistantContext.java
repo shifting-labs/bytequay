@@ -49,6 +49,8 @@ import com.bytequay.app.agent.TaskMessage;
 import com.bytequay.app.jira.JiraService;
 import com.bytequay.app.notices.AppNotice;
 import com.bytequay.app.notices.AppNoticeService;
+import com.bytequay.app.notices.ResultDigest;
+import com.bytequay.app.notices.ResultDigestService;
 import com.bytequay.app.service.credentials.CredentialService;
 import com.bytequay.app.service.settings.AgentModelSetting;
 import com.bytequay.app.service.settings.AgentModelType;
@@ -102,6 +104,7 @@ import java.util.UUID;
 import java.util.stream.IntStream;
 
 import static com.bytequay.agent.core.AgentTaskFixtures.created;
+import static com.bytequay.app.review.ReviewTestData.openReview;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -149,8 +152,9 @@ class TestAssistantContext
     private final CredentialService credentials = mock(CredentialService.class);
     private final AssistantRows rows = new AssistantRows(pullRequests, mock(PrDetailStore.class), issues, jira, mock(JiraActivityReader.class), tasks, reviews, running, activities,
             workItems, epics, workspaces, agenda, models, credentials);
-    private final AssistantReader reader = new AssistantReader(agenda, agendas, agendaService, running, notices, approvals, tasks, activities, reviews, pullRequests, workItems, workspaces,
-            rows, credentials, models, settings, mapper, Clock.fixed(NOW, ZoneOffset.UTC));
+    private final ResultDigestService digests = mock(ResultDigestService.class);
+    private final AssistantReader reader = new AssistantReader(agenda, agendas, agendaService, running, notices, approvals, tasks, activities, reviews, digests, pullRequests,
+            workItems, workspaces, rows, credentials, models, settings, mapper, Clock.fixed(NOW, ZoneOffset.UTC));
 
     @BeforeEach
     void storesHoldOneDay()
@@ -381,6 +385,40 @@ class TestAssistantContext
     }
 
     @Test
+    void readsAReviewResultsOpenFindingsFromItsCardOrItsRef()
+            throws Exception
+    {
+        AgentTask reviewer = task("Review example/harbor#12", "claude");
+        when(tasks.find(reviewer.id())).thenReturn(Optional.of(reviewer));
+        when(reviews.findReview("r1")).thenReturn(Optional.of(openReview("r1", "ws1", "example/harbor", OptionalInt.of(12), reviewer.id().toString(), Optional.empty(), NOW)));
+        AppNotice card = new AppNotice("review-result:run-1:1:abc", AppNotice.Kind.TURN_FINISHED, reviewer.id().toString(), "ws1", Optional.of("turn-9"), Optional.of("r1"),
+                reviewer.title(), Optional.of("example/harbor#12"), Optional.of("Fix cache eviction"), Optional.empty(), Optional.empty(), "2 findings: 1 high",
+                "example/harbor", "claude", Optional.empty(), NOW, Optional.empty());
+        when(notices.current()).thenReturn(ImmutableList.of(card));
+        when(digests.review("r1")).thenReturn(Optional.of(new ResultDigest("review:r1", "GitHub", Optional.empty(), Optional.of(new ResultDigest.Review("head",
+                Optional.of("head"), 2, 2, true, ImmutableList.of(), ImmutableList.of(), ImmutableList.of(), ImmutableList.of(
+                        digestFinding("F-1", "Cache keeps evicted entries", Optional.of("high"), Optional.of("src/cache.ts"), Optional.of(40), false),
+                        digestFinding("F-3", "Nit: rename evict to drop", Optional.empty(), Optional.empty(), Optional.empty(), false),
+                        digestFinding("F-4", "Cache size is unbounded", Optional.of("low"), Optional.of("src/cache.ts"), Optional.of(9), true)), 0, Optional.empty())),
+                Optional.empty())));
+        AssistantContext context = new AssistantContext(reader, TODAY, ImmutableList.of(card.id()), Optional.empty(), ImmutableMap.of(), mapper, _ -> {});
+
+        // The open findings the card shows, by label: an outdated one is not among them.
+        assertThat(read(context.tool(), "waiting").path("entries").toString()).isEqualTo("[{\"ref\":\"review-result:run-1:1:abc\",\"review\":\"review:r1\","
+                + "\"title\":\"Fix cache eviction\",\"findings\":[{\"label\":\"F-1\",\"severity\":\"high\",\"title\":\"Cache keeps evicted entries\","
+                + "\"where\":\"src/cache.ts:40\"},{\"label\":\"F-3\",\"title\":\"Nit: rename evict to drop\",\"where\":\"whole change\"}]}]");
+        // The review joins the conversation's refs, so a message may act on its findings.
+        assertThat(context.served()).containsEntry("review:r1", new ServedRef("waiting", Optional.of(AgendaTarget.of(AgendaTarget.Kind.REVIEW, "ws1", "r1"))));
+        JsonNode looked = named(context.tool(), "lookup", "review:r1").path("entries").path(0);
+        assertThat(keys(looked)).isEqualTo(ImmutableSet.of("ref", "title", "state", "findings"));
+        assertThat(looked.path("findings").findValuesAsText("label")).containsExactly("F-1", "F-3");
+
+        // A result with nothing open to decide waits for nothing.
+        when(digests.review("r1")).thenReturn(Optional.empty());
+        assertThat(read(context.tool(), "waiting").path("entries")).isEmpty();
+    }
+
+    @Test
     void searchesTheStoredItemsByTitleNumberOrKey()
             throws Exception
     {
@@ -530,6 +568,11 @@ class TestAssistantContext
     {
         return new AppNotice(id, kind, task.id().toString(), "ws1", Optional.of("turn-9"), Optional.empty(), task.title(), Optional.empty(), Optional.empty(), Optional.empty(),
                 Optional.empty(), message, "owner/repository", task.laneId().value(), Optional.empty(), NOW, Optional.empty());
+    }
+
+    private static ResultDigest.Finding digestFinding(String label, String title, Optional<String> severity, Optional<String> path, Optional<Integer> line, boolean outdated)
+    {
+        return new ResultDigest.Finding("id-" + label, label, title, "Why it matters.", severity, path, line, outdated, 1, 1, Optional.empty());
     }
 
     private static AgentApproval pending(ApprovalId id, AgentTask task, ProviderApprovalRequest request)

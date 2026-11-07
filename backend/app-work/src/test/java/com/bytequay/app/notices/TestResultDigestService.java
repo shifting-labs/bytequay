@@ -105,6 +105,11 @@ class TestResultDigestService
         });
         assertThat(digest.findings().getLast().ran()).isEmpty();
         assertThat(digest.fixTask()).contains("dev-task");
+        // A finding resolved since at the reviewed revision was handled, which is not the same as never found.
+        assertThat(digest.handled()).isEqualTo(1);
+        // A review's own digest is the one its card reads.
+        assertThat(service.review("review").flatMap(ResultDigest::review)).contains(digest);
+        assertThat(service.review("gone")).isEmpty();
     }
 
     @Test

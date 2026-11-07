@@ -84,6 +84,30 @@ class AssistantWork
      */
     record Done(String line, Optional<String> detail, Optional<AgendaTarget> target, String result) {}
 
+    /** Why an operation's own rules said no once its checks passed, such as a review draft in the way, with where the user can settle that. */
+    static final class Refused
+            extends RuntimeException
+    {
+        private final transient Optional<AgendaTarget> opens;
+
+        Refused(String reason)
+        {
+            this(reason, Optional.empty());
+        }
+
+        Refused(String reason, Optional<AgendaTarget> opens)
+        {
+            super(reason);
+            this.opens = requireNonNull(opens, "opens is null");
+        }
+
+        /** Where to settle what stood in the way, which the receipt opens. */
+        Optional<AgendaTarget> opens()
+        {
+            return opens;
+        }
+    }
+
     /** Marks an issue, a ticket or a work item as an Epic, as its page's Mark as Epic does. */
     Done markEpic(String item)
     {

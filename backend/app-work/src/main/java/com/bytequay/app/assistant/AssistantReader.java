@@ -36,6 +36,8 @@ import com.bytequay.app.agent.TaskActivityReader;
 import com.bytequay.app.agent.TaskMessage;
 import com.bytequay.app.notices.AppNotice;
 import com.bytequay.app.notices.AppNoticeService;
+import com.bytequay.app.notices.ResultDigest;
+import com.bytequay.app.notices.ResultDigestService;
 import com.bytequay.app.service.credentials.CredentialService;
 import com.bytequay.app.service.settings.AgentModelSetting;
 import com.bytequay.app.service.settings.AgentModelType;
@@ -101,6 +103,7 @@ class AssistantReader
     private final AgentTaskStore tasks;
     private final TaskActivityReader activities;
     private final AgentReviewStore reviews;
+    private final ResultDigestService digests;
     private final PullRequestStore pullRequests;
     private final WorkItemStore workItems;
     private final WorkspaceStore workspaces;
@@ -121,6 +124,7 @@ class AssistantReader
             AgentTaskStore tasks,
             TaskActivityReader activities,
             AgentReviewStore reviews,
+            ResultDigestService digests,
             PullRequestStore pullRequests,
             WorkItemStore workItems,
             WorkspaceStore workspaces,
@@ -140,6 +144,7 @@ class AssistantReader
         this.tasks = requireNonNull(tasks, "tasks is null");
         this.activities = requireNonNull(activities, "activities is null");
         this.reviews = requireNonNull(reviews, "reviews is null");
+        this.digests = requireNonNull(digests, "digests is null");
         this.pullRequests = requireNonNull(pullRequests, "pullRequests is null");
         this.workItems = requireNonNull(workItems, "workItems is null");
         this.workspaces = requireNonNull(workspaces, "workspaces is null");
@@ -207,7 +212,10 @@ class AssistantReader
         return new Page(new Entries("running", entries.build()), refs);
     }
 
-    /** The cards a message lists as visible that still wait: approvals with what may answer them, and the questions turns left. */
+    /**
+     * The cards a message lists as visible that still wait: approvals with what may answer them, the questions turns left, and review results
+     * with their open findings.
+     */
     Page waiting(List<String> visible)
     {
         Map<String, AppNotice> shown = notices.current().stream().filter(notice -> visible.contains(notice.id())).collect(toImmutableMap(AppNotice::id, notice -> notice));
@@ -217,8 +225,19 @@ class AssistantReader
         Map<String, Optional<AgendaTarget>> refs = new LinkedHashMap<>();
         for (String ref : visible.stream().distinct().toList()) {
             AppNotice notice = shown.get(ref);
-            if (notice == null || !(pending.containsKey(ref) || ref.startsWith("question:"))) {
-                // Answered or gone since the message was sent, or a card with nothing to answer.
+            if (notice == null) {
+                // Answered or gone since the message was sent.
+                continue;
+            }
+            if (!(pending.containsKey(ref) || ref.startsWith("question:"))) {
+                // A review's result waits on what the user decides about its open findings; any other card has nothing to answer.
+                Optional<String> review = notice.reviewId();
+                List<Finding> findings = review.map(this::findings).orElse(ImmutableList.of());
+                if (!findings.isEmpty()) {
+                    String reviewRef = AgendaRefs.review(review.orElseThrow());
+                    refs.put(reviewRef, Optional.of(AgendaTarget.of(AgendaTarget.Kind.REVIEW, notice.workspaceId(), review.orElseThrow())));
+                    entries.add(new ReviewResult(ref, reviewRef, AgendaReader.clip(notice.pullRequestTitle().orElse(notice.title()), TITLE), findings));
+                }
                 continue;
             }
             AgendaTarget target = notice.reviewId().map(review -> AgendaTarget.of(AgendaTarget.Kind.REVIEW, notice.workspaceId(), review))
@@ -344,8 +363,19 @@ class AssistantReader
     {
         String id = named.task().id().toString();
         Optional<String> waitingFor = notices.current().stream().filter(notice -> notice.taskId().equals(id)).findFirst().flatMap(AgendaReader::waitingFor);
-        TaskFacts facts = new TaskFacts(named.ref(), AgendaReader.clip(named.task().title(), TITLE), lower(named.task().state()), waitingFor);
+        List<Finding> findings = AgendaRefs.kind(named.ref()).equals("review") ? findings(AgendaRefs.id(named.ref())) : ImmutableList.of();
+        TaskFacts facts = new TaskFacts(named.ref(), AgendaReader.clip(named.task().title(), TITLE), lower(named.task().state()), waitingFor, findings);
         return new Page(new Entries(kind, ImmutableList.of(facts)), ImmutableMap.of(named.ref(), named.target()));
+    }
+
+    /** A review's open findings as its result card lists them, by label; none before it has an accepted result. */
+    private List<Finding> findings(String reviewId)
+    {
+        return digests.review(reviewId).flatMap(ResultDigest::review).stream().flatMap(review -> review.findings().stream())
+                .filter(finding -> !finding.outdated())
+                .map(finding -> new Finding(finding.label(), finding.severity(), AgendaReader.clip(finding.title(), TITLE),
+                        finding.path().map(path -> path + finding.line().map(line -> ":" + line).orElse("")).orElse("whole change")))
+                .collect(toImmutableList());
     }
 
     private static Page work(String kind, WorkItem item)
@@ -411,6 +441,17 @@ class AssistantReader
 
     record Asked(String ref, String task, String question) {}
 
+    /** A review result card: the review it reports, by its ref, and the open findings the user can post, send to fix, or dismiss. */
+    record ReviewResult(String ref, String review, String title, List<Finding> findings) {}
+
+    /**
+     * One open finding, as its card shows it.
+     *
+     * @param where the file and line it is about, or the whole change
+     */
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
+    record Finding(String label, Optional<String> severity, String title, String where) {}
+
     private record Named(String ref, AgentTask task, Optional<AgendaTarget> target) {}
 
     /**
@@ -421,8 +462,11 @@ class AssistantReader
     record PullRequestFacts(String ref, String title, String author, boolean mine, String state, Optional<String> ci, Optional<String> review, boolean mergeBlocked,
             List<String> pendingReviewers, Optional<Instant> lastActivity) {}
 
+    /**
+     * @param findings a review's open findings, which its result card lists
+     */
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
-    record TaskFacts(String ref, String title, String state, Optional<String> waitingFor) {}
+    record TaskFacts(String ref, String title, String state, Optional<String> waitingFor, List<Finding> findings) {}
 
     record WorkFacts(String ref, String title, String state, String priority, boolean blocked) {}
 
