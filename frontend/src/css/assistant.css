@@ -73,6 +73,8 @@
   flex: 1 1 auto;
   flex-direction: column;
   gap: 10px;
+  /* One scroll, down: cards wrap or shorten what is long, and nothing may push the view sideways. */
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 14px 16px 18px;
 }
@@ -477,6 +479,7 @@
 .assistant-sev-dot:is(.is-critical, .is-high) { background: var(--fg-danger); }
 .assistant-sev-dot.is-medium { background: var(--fg-warning); }
 .assistant-sev-dot.is-low { background: var(--fg-dim); }
+.assistant-sev-dot.is-none { border: 1px solid var(--fg-dim); background: none; }
 
 .assistant-severity {
   display: inline-flex;
@@ -668,19 +671,24 @@
 }
 
 .assistant-finding__title {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
+  overflow-wrap: anywhere;
   text-wrap: pretty;
 }
 
+/* The file's name and line; a long one gives way to the title rather than squeezing it. */
 .assistant-path {
-  flex: none;
+  max-width: 45%;
+  flex: 0 1 auto;
+  overflow: hidden;
   padding: 0;
   border: 0;
   background: none;
   color: var(--fg-link);
   font-family: var(--font-mono);
   font-size: 11.5px;
+  text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -689,7 +697,18 @@
   color: var(--fg-muted);
   font-size: 12.5px;
   line-height: 18px;
+  overflow-wrap: anywhere;
   text-wrap: pretty;
+}
+
+.assistant-finding__body p { margin: 0; }
+
+.assistant-finding__body code {
+  padding: 0 4px;
+  border: 1px solid var(--assistant-line-subtle);
+  border-radius: 4px;
+  background: var(--surface-canvas);
+  font-size: 11.5px;
 }
 
 .assistant-finding__actions {
@@ -703,6 +722,7 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
+  overflow-wrap: anywhere;
   gap: 8px;
   padding: 2px 0;
   font-size: 12.5px;
@@ -763,7 +783,14 @@
 
 .assistant-finding-row > svg { flex: none; color: var(--fg-dim); }
 .assistant-finding-row:hover { background: var(--assistant-hover); }
-.assistant-finding-row > .assistant-mono:last-child { flex: none; color: var(--fg-muted); }
+.assistant-finding-row__place {
+  max-width: 40%;
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--fg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .assistant-finding-row__title {
   flex: 1;
@@ -823,7 +850,7 @@
   gap: 12px;
 }
 
-.assistant-needs > span { display: inline-flex; align-items: center; gap: 4px; }
+.assistant-needs > span { display: inline-flex; min-width: 0; align-items: center; gap: 4px; overflow-wrap: anywhere; }
 .assistant-needs svg { flex: none; color: var(--fg-warning); }
 
 /* The agent's own options, or questions to ask, each one click. */
@@ -837,22 +864,25 @@
 
 .assistant-option {
   display: inline-flex;
-  height: 26px;
+  max-width: 100%;
+  min-height: 26px;
   box-sizing: border-box;
   align-items: center;
-  padding: 0 11px;
+  padding: 4px 11px;
   border: 1px solid var(--assistant-line);
   border-radius: 13px;
   background: var(--surface-elevated);
   color: var(--fg-default);
   font: inherit;
   font-size: 12.5px;
-  white-space: nowrap;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+  text-align: left;
   cursor: pointer;
 }
 
 .assistant-option:hover:not(:disabled) { background: var(--assistant-selected); }
-.assistant-ask .assistant-option { height: 24px; padding: 0 10px; border-color: transparent; border-radius: 12px; background: var(--assistant-pill); }
+.assistant-ask .assistant-option { min-height: 24px; padding: 3px 10px; border-color: transparent; border-radius: 12px; background: var(--assistant-pill); }
 
 /* A question that one click cannot answer keeps the task's own form inside the row. */
 .assistant-question-form .agt-appr { margin: 0; }

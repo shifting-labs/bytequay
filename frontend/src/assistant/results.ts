@@ -206,6 +206,20 @@ export function firstSentence(report: string, limit = 160): string {
   return sentence.length <= limit ? sentence : `${sentence.slice(0, limit - 1).trimEnd()}…`;
 }
 
+/** At most this many sentences of a text, as a finding's box shows its explanation; the whole text stays in the review. */
+export function sentences(text: string, count: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  const ends = [...flat.matchAll(/[.!?](?=\s|$)/g)];
+  return ends.length <= count ? flat : flat.slice(0, (ends[count - 1].index ?? flat.length - 1) + 1);
+}
+
+/** Where a finding is, short: the file's name and line, since a card has no room for the whole path; the tooltip has it. */
+export function findingPlace(finding: Pick<DigestFinding, 'path' | 'line'>): { short: string; full: string } | null {
+  if (finding.path === null) return null;
+  const line = finding.line === null ? '' : `:${finding.line}`;
+  return { short: `${finding.path.slice(finding.path.lastIndexOf('/') + 1)}${line}`, full: `${finding.path}${line}` };
+}
+
 /** What a card's Ask opens with: two or three questions drawn from the card itself. */
 export function askSuggestions(digest: ResultDigest | undefined): string[] {
   const review = digest?.review ?? null;

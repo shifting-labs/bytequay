@@ -36,7 +36,7 @@ import { localDay, type WaitingCard } from './model';
 import { approvePull, mergePull } from './pullActions';
 import { ResultDiscussion } from './ResultDiscussion';
 import {
-  askSuggestions, checkCounts, firstSentence, headMoved, openFindings, recommend, severityCounts, shortCommand, taskEnded, type ActionId, type DigestCommand,
+  askSuggestions, checkCounts, findingPlace, firstSentence, headMoved, openFindings, recommend, sentences, severityCounts, shortCommand, taskEnded, type ActionId, type DigestCommand,
   type DigestFinding, type DigestPull, type DigestReview, type Lane, type ResultDigest,
 } from './results';
 import { settledToday, useSettled } from './settled';
@@ -170,9 +170,16 @@ function LinesChip({ pull }: { pull: DigestPull }) {
 
 /** What the review read, ran and found, as chips; on the user's own pull request also its checks and approvals. */
 function ReviewChips({ review, pull }: { review: DigestReview; pull: DigestPull | null }) {
+  const open = openFindings(review);
+  const rated = severityCounts(open);
+  // Nits and findings about the whole pull request carry no severity; they still count, so the chips add up to the headline.
+  const other = open.length - rated.reduce((sum, entry) => sum + entry.count, 0);
   return <>
-    {severityCounts(openFindings(review)).map(({ severity, count }) => <Chip key={severity} icon={<span className={`assistant-sev-dot is-${severity}`} />}
+    {rated.map(({ severity, count }) => <Chip key={severity} icon={<span className={`assistant-sev-dot is-${severity}`} />}
       title={`${count} open ${severity}-severity ${count === 1 ? 'finding' : 'findings'}`}>{count} {severity}</Chip>)}
+    {other > 0 && <Chip icon={<span className="assistant-sev-dot is-none" />} title={`${other} open ${other === 1 ? 'finding' : 'findings'} with no severity, such as nits`}>
+      {rated.length === 0 ? plural(other, 'finding') : `${other} other`}
+    </Chip>}
     <FilesChip review={review} />
     <CommandChips commands={review.commands} />
     {pull?.mine === true && <><ChecksChip pull={pull} label /><ApprovalsChip pull={pull} /></>}
@@ -398,8 +405,8 @@ function FindingList({ notice, findings, own, host, onAsk, review, actions }: Fi
         ? <FindingBox key={finding.id} finding={finding} full={full(finding.id)} acts={act(finding)} onOpenAt={() => host.openNotice(notice.id)} repository={notice.repository} />
         : <button key={finding.id} type="button" className="assistant-finding-row" onClick={() => setOpened(finding.id)}>
           <ChevronRight size={12} aria-hidden="true" /><SeverityPill severity={finding.severity} /><span className="assistant-mono is-dim">{finding.label}</span>
-          <span className="assistant-finding-row__title">{finding.title}</span>
-          {finding.path !== null && <span className="assistant-mono">{finding.path}{finding.line === null ? '' : `:${finding.line}`}</span>}
+          <span className="assistant-finding-row__title" title={finding.title}>{finding.title}</span>
+          {findingPlace(finding) !== null && <span className="assistant-mono assistant-finding-row__place" title={findingPlace(finding)?.full}>{findingPlace(finding)?.short}</span>}
         </button>;
     })}
   </div>;
@@ -419,15 +426,17 @@ function FindingBox({ finding, full, acts, onOpenAt, repository }: {
     setError(null);
     act.run().catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause))).finally(() => setBusy(false));
   };
-  const where = finding.path === null ? null : `${finding.path}${finding.line === null ? '' : `:${finding.line}`}`;
+  const where = findingPlace(finding);
+  // Two sentences at most; the whole explanation stays in the review, and in the tooltip.
+  const said = sentences(finding.body, 2);
   return <div className="assistant-finding">
     <div className="assistant-finding__head">
       <SeverityPill severity={finding.severity} />
       <span className="assistant-mono is-dim">{finding.label}</span>
       <span className="assistant-finding__title">{finding.title}</span>
-      {where !== null && <button type="button" className="assistant-path" title="Open at this line" onClick={onOpenAt}>{where}</button>}
+      {where !== null && <button type="button" className="assistant-path" title={`Open ${where.full}`} onClick={onOpenAt}>{where.short}</button>}
     </div>
-    <div className="assistant-finding__body">{finding.body}</div>
+    <div className="assistant-finding__body" title={said === finding.body.replace(/\s+/g, ' ').trim() ? undefined : finding.body}>{renderMarkdown(said, repository)}</div>
     {full?.walkthrough != null && full.walkthrough !== '' && <>
       <button type="button" className="assistant-fold-toggle" aria-expanded={walkthrough} onClick={() => setWalkthrough(value => !value)}>
         {walkthrough ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}Walkthrough
