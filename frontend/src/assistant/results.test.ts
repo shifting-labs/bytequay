@@ -15,7 +15,8 @@ import { describe, expect, it } from 'vitest';
 import type { AppNotice } from '../notices/contracts';
 import { waitingCards } from './model';
 import {
-  askSuggestions, digestRequest, firstSentence, inDecision, laneOf, parseDigests, recommend, severityCounts, shortCommand, type DigestPull, type DigestReview,
+  askSuggestions, digestRequest, findingPlace, firstSentence, inDecision, laneOf, parseDigests, recommend, sentences, severityCounts, shortCommand, walkthroughSections,
+  type DigestPull, type DigestReview,
   type ResultDigest,
 } from './results';
 
@@ -137,5 +138,46 @@ describe('what a card says', () => {
     expect(read.host).toBe('GitLab');
     expect(read.pull?.checks).toEqual([{ name: 'test', state: 'failing', url: null }]);
     expect(() => parseDigests([{ noticeId: 'n', host: 'GitHub', pull: { ...pull(), state: 'opened' } }])).toThrow();
+  });
+});
+
+describe('a finding as a card shows it', () => {
+  it('names where it is by the file and line, and says at most two sentences', () => {
+    expect(findingPlace({ path: 'core/engine/src/main/java/io/example/Analyzer.java', line: 2403 })).toEqual({ short: 'Analyzer.java:2403',
+      full: 'core/engine/src/main/java/io/example/Analyzer.java:2403' });
+    expect(findingPlace({ path: null, line: null })).toBeNull();
+    expect(sentences('Update `view.md` first. Then the docs. Then the guide.', 2)).toBe('Update `view.md` first. Then the docs.');
+    expect(sentences('One sentence about `iceberg.refresh-period`.', 2)).toBe('One sentence about `iceberg.refresh-period`.');
+  });
+
+  it('splits a walkthrough into its labelled parts and numbered steps, keeping each step’s code as code', () => {
+    const walkthrough = [
+      '**Input:** a view created with `GRACE PERIOD 0`. Query: `SELECT x FROM mv`.',
+      '',
+      '1. `core/src/Analyzer.java:2403-2405`',
+      '   ```java',
+      '   boolean versioned = period.isPresent();',
+      '   **not a label** inside code',
+      '   2. not a step either',
+      '   ```',
+      '   The query has a period, so `versioned` is true.',
+      '2. The second step says its words first.',
+      '',
+      '**Expected, per `docs/view.md:61`:** queries on a stale view fail.',
+      '**Actual (executed at head):** the versioned query returns stale rows.',
+      '',
+      '**Fix:** say so in the docs.',
+    ].join('\n');
+    const sections = walkthroughSections(walkthrough);
+    expect(sections.map(section => [section.title, section.detail])).toEqual([['Input', null], ['Step 1', 'core/src/Analyzer.java:2403-2405'], ['Step 2', null],
+      ['Expected, per docs/view.md:61', null], ['Actual (executed at head)', null], ['Fix', null]]);
+    expect(sections[1].body).toBe('```java\nboolean versioned = period.isPresent();\n**not a label** inside code\n2. not a step either\n```\nThe query has a period, so `versioned` is true.');
+    expect(sections[2].body).toBe('The second step says its words first.');
+    expect(sections[0].body).toBe('a view created with `GRACE PERIOD 0`. Query: `SELECT x FROM mv`.');
+  });
+
+  it('leaves a walkthrough with no marked parts whole, and gathers what comes before the first part as context', () => {
+    expect(walkthroughSections('Just one paragraph.\n\n```ts\ncode()\n```')).toEqual([]);
+    expect(walkthroughSections('Some setup first.\n\n**Fix:** do it.').map(section => section.title)).toEqual(['Context', 'Fix']);
   });
 });

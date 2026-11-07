@@ -13,7 +13,7 @@
  */
 import { useEffect, useState, type ReactNode } from 'react';
 import {
-  Check, ChevronDown, ChevronRight, CircleCheck, CircleX, Eye, EyeOff, FlaskConical, GitCommitHorizontal, GitMerge, GitPullRequest, GitPullRequestArrow, GitPullRequestClosed,
+  Check, ChevronDown, ChevronRight, ChevronUp, CircleCheck, CircleX, Eye, EyeOff, FlaskConical, GitCommitHorizontal, GitMerge, GitPullRequest, GitPullRequestArrow, GitPullRequestClosed,
   GitPullRequestDraft, History, ListTodo, LoaderCircle, MessageCircleQuestion, MessageSquare, MessageSquareReply, RotateCw, ShieldCheck, ShieldX, Terminal,
   TriangleAlert, Wrench, X, type LucideIcon,
 } from 'lucide-react';
@@ -36,7 +36,7 @@ import { localDay, type WaitingCard } from './model';
 import { approvePull, mergePull } from './pullActions';
 import { ResultDiscussion } from './ResultDiscussion';
 import {
-  askSuggestions, checkCounts, findingPlace, firstSentence, headMoved, openFindings, recommend, sentences, severityCounts, shortCommand, taskEnded, type ActionId, type DigestCommand,
+  askSuggestions, checkCounts, findingPlace, firstSentence, headMoved, openFindings, recommend, sentences, severityCounts, shortCommand, taskEnded, walkthroughSections, type ActionId, type DigestCommand,
   type DigestFinding, type DigestPull, type DigestReview, type Lane, type ResultDigest,
 } from './results';
 import { settledToday, useSettled } from './settled';
@@ -365,6 +365,7 @@ function FindingList({ notice, findings, own, host, onAsk, review, actions }: Fi
   review: AgentReviewDto | null; actions: ReturnType<typeof useFindingActions>['actions'] | null;
 }) {
   const [opened, setOpened] = useState<string | null>(findings[0]?.id ?? null);
+  const [all, setAll] = useState(false);
   const [handled, setHandled] = useState<ReadonlyMap<string, Handled>>(new Map());
   const full = (id: string): ReviewFindingDto | undefined => review?.findings.find(finding => finding.id === id);
   const handle = (id: string, value: Handled | null) => setHandled(current => {
@@ -392,8 +393,11 @@ function FindingList({ notice, findings, own, host, onAsk, review, actions }: Fi
       : { id: 'post', label: 'Post as comment', icon: MessageSquare, run: async () => { await actions.onPostNow(dto, findingReviewText(dto)); handle(finding.id, { lead: `Posted ${finding.label}` }); } };
     return [main, ask, dismiss];
   };
+  // Three at most until asked, the most severe first; the one the user opened stays in view.
+  const shown = all ? findings : findings.filter((finding, index) => index < SHOWN_FINDINGS || finding.id === opened);
+  const hidden = findings.length - shown.length;
   return <div className="assistant-findings">
-    {findings.map(finding => {
+    {shown.map(finding => {
       const done = handled.get(finding.id);
       if (done !== undefined) {
         return <div key={finding.id} className="assistant-finding-done">
@@ -409,8 +413,15 @@ function FindingList({ notice, findings, own, host, onAsk, review, actions }: Fi
           {findingPlace(finding) !== null && <span className="assistant-mono assistant-finding-row__place" title={findingPlace(finding)?.full}>{findingPlace(finding)?.short}</span>}
         </button>;
     })}
+    {(hidden > 0 || all && findings.length > SHOWN_FINDINGS) && <button type="button" className="assistant-more" aria-expanded={all} onClick={() => setAll(value => !value)}>
+      {all ? <ChevronUp size={13} aria-hidden="true" /> : <ChevronDown size={13} aria-hidden="true" />}
+      {all ? 'Show fewer findings' : `Show ${plural(hidden, 'more finding')}`}
+    </button>}
   </div>;
 }
+
+/** As many findings as a card shows before the user asks for the rest. */
+const SHOWN_FINDINGS = 3;
 
 type FindingAct = { id: string; label: string; icon: LucideIcon; run: () => Promise<void> };
 
@@ -442,14 +453,14 @@ function FindingBox({ finding, full, acts, onOpenAt, repository }: {
         {walkthrough ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}Walkthrough
       </button>
       {walkthrough && <>
-        <div className="assistant-walkthrough">{renderMarkdown(full.walkthrough, repository)}</div>
+        <Walkthrough markdown={full.walkthrough} repository={repository} />
         <div className="assistant-ran" title={finding.ran === null ? 'The finding cites no command the reviewer ran' : `The finding cites a command the reviewer ran: ${finding.ran}`}>
           <FlaskConical size={12} aria-hidden="true" />{finding.ran === null ? 'Traced from source' : 'Ran it'}
         </div>
       </>}
     </>}
     {acts.length > 0 && <div className="assistant-finding__actions">
-      {acts.map(act => <button key={act.id} type="button" className="assistant-text-button" disabled={busy} onClick={() => run(act)}><act.icon size={12} aria-hidden="true" />{act.label}</button>)}
+      {acts.map(act => <button key={act.id} type="button" className="assistant-button is-small" disabled={busy} onClick={() => run(act)}><act.icon size={12} aria-hidden="true" />{act.label}</button>)}
     </div>}
     {error !== null && <div className="assistant-card__fail" role="alert">{error}</div>}
   </div>;
@@ -618,6 +629,31 @@ function NextWorkCard({ notice, lane, host }: CardProps) {
       {notice.message !== '' && <EvidenceLine icon={GitMerge}>{notice.message}</EvidenceLine>}
     </CardRow>
   );
+}
+
+/** The reviewer's walkthrough: each part it marked, such as Input, a step or the Fix, in a card of its own that folds away. */
+function Walkthrough({ markdown, repository }: { markdown: string; repository: string }) {
+  const [folded, setFolded] = useState<ReadonlySet<number>>(new Set());
+  const sections = walkthroughSections(markdown);
+  if (sections.length === 0) return <div className="assistant-walkthrough">{renderMarkdown(markdown, repository)}</div>;
+  const toggle = (index: number) => setFolded(current => {
+    const next = new Set(current);
+    if (!next.delete(index)) next.add(index);
+    return next;
+  });
+  return <div className="assistant-walk">
+    {sections.map((section, index) => {
+      const open = !folded.has(index);
+      return <section key={index} className={`assistant-walk__card${open ? '' : ' is-folded'}`}>
+        <button type="button" className="assistant-walk__head" aria-expanded={open} onClick={() => toggle(index)}>
+          {open ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}
+          <span className="assistant-walk__title">{section.title}</span>
+          {section.detail !== null && <span className="assistant-walk__detail" title={section.detail}>{section.detail}</span>}
+        </button>
+        {open && section.body !== '' && <div className="assistant-walkthrough assistant-walk__body">{renderMarkdown(section.body, repository)}</div>}
+      </section>;
+    })}
+  </div>;
 }
 
 type DoneRow = { key: string; icon: LucideIcon; tone: 'success' | 'purple' | 'danger' | 'muted'; title: string; what: string; at: number; open: () => void };

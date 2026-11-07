@@ -251,7 +251,9 @@ async function floatsOverThePage(): Promise<void> {
     const float = view.host.querySelector<HTMLElement>('.assistant-float');
     assert(float !== null && document.activeElement === float.querySelector('textarea'), 'Opening focuses the composer');
     const box = float.getBoundingClientRect();
-    assert(box.width === 640 && box.top === 64 && Math.round(box.left + box.width / 2) === window.innerWidth / 2, `It floats 640px wide, 64px down, centred: ${JSON.stringify(box)}`);
+    assert(box.width === 800 && box.top === 64 && Math.round(box.left + box.width / 2) === window.innerWidth / 2, `It floats 800px wide, 64px down, centred: ${JSON.stringify(box)}`);
+    const composer = element<HTMLTextAreaElement>('.assistant-float .agt-compose__input', view.host, 'The composer shows');
+    assert(composer.getBoundingClientRect().height >= 76, `The composer leaves room for a few lines: ${composer.getBoundingClientRect().height}`);
     const page = view.host.querySelector<HTMLElement>('.app-surfaces')?.getBoundingClientRect();
     assert(page !== undefined && page.width === window.innerWidth, `The page keeps its width: ${JSON.stringify(page)}`);
     assert(float.getAttribute('role') === 'dialog', 'It is a dialog, so the editor’s native view hides under it');
@@ -587,6 +589,10 @@ const REVIEWED: DigestReview = {
       path: 'engine/core/src/main/java/io/example/sql/analyzer/statistics/cache/TableStatisticsCacheInvalidation.java', line: 88, outdated: false, version: 1, revision: 1, ran: null },
     { id: 'f3', label: 'F-3', title: 'Nit: The release note still links the issue placeholder', body: 'Link the issue itself.', severity: null, path: null, line: null,
       outdated: false, version: 1, revision: 1, ran: null },
+    { id: 'f4', label: 'F-4', title: 'Suggestion: Test a refresh during a write', body: 'Nothing covers a refresh racing a write.', severity: 'low', path: 'src/stats/cache.spec.ts',
+      line: 12, outdated: false, version: 1, revision: 1, ran: null },
+    { id: 'f5', label: 'F-5', title: 'Nit: Name the statistics key once', body: 'The key is built in two places.', severity: null, path: 'src/stats/key.ts', line: 4,
+      outdated: false, version: 1, revision: 1, ran: null },
   ],
 };
 const RESULT_DIGESTS: Record<string, ResultDigest> = {
@@ -599,7 +605,25 @@ const FULL_REVIEW = {
   id: 'r9', workspaceId: 'ws1', repo: 'acme/warehouse', number: 42, sourceTaskId: null, draft: null, task: { laneLabel: 'Claude' },
   findings: REVIEWED.findings.map(finding => ({ ...finding, runId: 'run', origin: 'AUTOMATIC', side: 'RIGHT', startLine: finding.line, endLine: finding.line, range: null,
     excerpt: [], evidence: [], state: 'OPEN', stateReason: null, validatedHeadSha: 'abc1234', updatedAt: '2026-10-16T07:09:00Z', memories: [],
-    walkthrough: finding.id === 'f1' ? 'A write at `src/stats/cache.ts:142` keeps the entry:\n\n```ts\ncache.set(table, stats)\n```\n\nThe next query reads 10 rows instead of 11.' : null })),
+    walkthrough: finding.id === 'f1' ? [
+      '**Input:** a table with 10 rows whose statistics are cached, then one row written.',
+      '',
+      '1. `src/stats/cache.ts:142`',
+      '   ```ts',
+      '   cache.set(table, stats)',
+      '   ```',
+      '   The write keeps the cached entry.',
+      '2. `src/stats/planner.ts:30`',
+      '   ```ts',
+      '   const rows = cache.get(table).rows',
+      '   ```',
+      '   The planner reads 10 rows.',
+      '',
+      '**Expected:** 11 rows.',
+      '**Actual (executed at head):** 10 rows.',
+      '',
+      '**Fix:** drop the entry after the commit.',
+    ].join('\n') : null })),
 } as unknown as AgentReviewDto;
 
 async function drawsResultsWithTheirEvidence(): Promise<void> {
@@ -631,12 +655,13 @@ async function drawsResultsWithTheirEvidence(): Promise<void> {
     const [review, failed, drafted] = cards(view.host);
     const bold = [...view.host.querySelectorAll('.assistant-card *')].filter(node => Number(getComputedStyle(node).fontWeight) > 400).map(node => node.className);
     assert(bold.length === 0, `Nothing in a card is bold: ${bold.join(', ')}`);
-    assert(review.dataset.strip === 'decide' && review.querySelector('.assistant-card__verdict')?.textContent === '3 findings. Statistics go stale after a write.'
+    assert(review.dataset.strip === 'decide' && review.querySelector('.assistant-card__verdict')?.textContent === '5 findings. Statistics go stale after a write.'
       && review.querySelector('.assistant-card__source')?.textContent === 'PR #42 Cache table statistics between queries · acme/warehouse · @maria · Claude review',
       `A review leads with its verdict and where it comes from: ${review.textContent}`);
     const chips = [...review.querySelectorAll('.assistant-evidence .assistant-chip-e')].map(chip => [chip.textContent, chip.getAttribute('title')]);
     assert(JSON.stringify(chips) === JSON.stringify([['1 high', '1 open high-severity finding'], ['1 medium', '1 open medium-severity finding'],
-      ['1 other', '1 open finding with no severity, such as nits'], ['6/6 files', 'Read 6 of the 6 changed files'], ['pnpm test', 'pnpm test --filter stats · exit 0']]),
+      ['1 low', '1 open low-severity finding'], ['2 other', '2 open findings with no severity, such as nits'], ['6/6 files', 'Read 6 of the 6 changed files'],
+      ['pnpm test', 'pnpm test --filter stats · exit 0']]),
       `Evidence is counts and names that add up to the headline, the sentence in each tooltip: ${JSON.stringify(chips)}`);
     const box = element<HTMLElement>('.assistant-finding', review, 'The most severe finding shows in full');
     const place = element<HTMLButtonElement>('.assistant-path', box, 'The finding says where it is');
@@ -651,22 +676,41 @@ async function drawsResultsWithTheirEvidence(): Promise<void> {
     const body = element<HTMLElement>('.assistant-body', view.host, 'Results scroll');
     const wide = [body, ...cards(view.host), ...view.host.querySelectorAll<HTMLElement>('.assistant-finding, .assistant-finding-row')].filter(node => node.scrollWidth > node.clientWidth + 1);
     assert(wide.length === 0, `Nothing is wider than its card, so the view never scrolls sideways: ${wide.map(node => node.className).join(', ')}`);
+    const shownRows = () => [...review.querySelectorAll('.assistant-finding-row .assistant-mono.is-dim')].map(label => label.textContent);
+    const more = element<HTMLButtonElement>('.assistant-more', review, 'More findings wait behind a button');
+    // Read through a function: an assertion on the text itself would narrow it to the words it checked.
+    const moreText = () => more.textContent;
+    assert(JSON.stringify(shownRows()) === '["F-2","F-3"]' && moreText() === 'Show 2 more findings', `Three findings at most until asked: ${JSON.stringify(shownRows())}`);
+    more.click();
+    await settle();
+    assert(JSON.stringify(shownRows()) === '["F-2","F-3","F-4","F-5"]' && moreText() === 'Show fewer findings', `The rest show on request: ${JSON.stringify(shownRows())}`);
+    more.click();
+    await settle();
+    const acts = [...box.querySelectorAll<HTMLButtonElement>('.assistant-finding__actions button')];
+    assert(acts.length === 3 && acts.every(act => act.classList.contains('assistant-button') && getComputedStyle(act).borderTopStyle === 'solid'),
+      `A finding's own actions read as buttons: ${acts.map(act => act.className).join(', ')}`);
     buttonIn(box, 'Walkthrough')?.click();
     await settle();
-    assert(box.querySelector('.assistant-walkthrough pre')?.textContent?.includes('cache.set(table, stats)') && box.querySelector('.assistant-ran')?.textContent === 'Ran it',
-      `The walkthrough is the reviewer's own Markdown, then whether it ran: ${box.textContent}`);
+    const parts = () => [...box.querySelectorAll<HTMLElement>('.assistant-walk__card')];
+    assert(JSON.stringify(parts().map(part => part.querySelector('.assistant-walk__head')?.textContent)) === JSON.stringify(['Input', 'Step 1src/stats/cache.ts:142',
+      'Step 2src/stats/planner.ts:30', 'Expected', 'Actual (executed at head)', 'Fix']) && parts()[1].querySelector('pre')?.textContent?.includes('cache.set(table, stats)')
+      && box.querySelector('.assistant-ran')?.textContent === 'Ran it', `The walkthrough shows each part in a card of its own, then whether it ran: ${box.textContent}`);
+    parts()[1].querySelector<HTMLButtonElement>('.assistant-walk__head')?.click();
+    await settle();
+    assert(parts()[1].querySelector('pre') === null && parts()[1].classList.contains('is-folded') && parts()[2].querySelector('pre') !== null, 'A part folds away on its own');
     assert(buttonIn(box, 'Request fix') === undefined && buttonIn(box, 'Post as comment') !== undefined, 'Someone else’s pull request has no task to send a fix to');
     assert(failed.dataset.strip === 'failed' && failed.querySelector('.assistant-card__verdict')?.textContent === 'The last turn failed. The task is still open.'
       && failed.querySelector('.assistant-line-e')?.textContent === '2 checks failing' && buttonIn(failed, 'Retry') !== undefined, `A failure says what failed in its own words: ${failed.textContent}`);
     assert(drafted.dataset.strip === 'fyi' && drafted.querySelector('.assistant-card__verdict')?.textContent === 'Updated the install guide for the new flags.'
       && drafted.querySelector('.assistant-evidence')?.textContent === 'Draft2/3 running+42−7' && drafted.querySelector('.assistant-button.is-primary') === null,
       `A draft with checks running waits with no primary: ${drafted.textContent}`);
-    buttonIn(review, 'Post 3 comments')?.click();
+    buttonIn(review, 'Post 5 comments')?.click();
     await settle();
-    assert(JSON.stringify(posted) === JSON.stringify([['acme/warehouse', 42, 4, '', 'COMMENT', 'abc1234', 'ws1']]) && JSON.stringify(draft.items.map(item => item.findingId)) === '["f1","f2","f3"]',
+    assert(JSON.stringify(posted) === JSON.stringify([['acme/warehouse', 42, 6, '', 'COMMENT', 'abc1234', 'ws1']])
+      && JSON.stringify(draft.items.map(item => item.findingId)) === '["f1","f2","f3","f4","f5"]',
       `Every open finding goes out as one review of comments, at the head the review saw: ${JSON.stringify(posted)}`);
     const receipt = element<HTMLElement>('.assistant-receipt', view.host, 'The card collapses to its receipt');
-    assert(receipt.textContent === 'Posted 3 comments · PR #42 Cache table statistics between queriesView review' && view.calls.removed.includes(FINISHED_REVIEW.id),
+    assert(receipt.textContent === 'Posted 5 comments · PR #42 Cache table statistics between queriesView review' && view.calls.removed.includes(FINISHED_REVIEW.id),
       `The receipt says what happened and where, and the notice goes: ${receipt.textContent}`);
     buttonIn(failed, 'Retry')?.click();
     await settle();
@@ -1598,6 +1642,11 @@ export async function showViewPreview(name: 'decision' | 'all' | 'finished' | 'm
   }
   else mounted.render(true, { view: name });
   await new Promise(resolve => setTimeout(resolve, 300));
+  // Results shows its first walkthrough open, so the picture has its cards.
+  if (name === 'finished') {
+    document.querySelector<HTMLButtonElement>('.assistant-finding .assistant-fold-toggle')?.click();
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
 }
 
 /** Draws the Assistant over a page for a screenshot: the day's conversation once the user talks. */

@@ -220,6 +220,56 @@ export function findingPlace(finding: Pick<DigestFinding, 'path' | 'line'>): { s
   return { short: `${finding.path.slice(finding.path.lastIndexOf('/') + 1)}${line}`, full: `${finding.path}${line}` };
 }
 
+/** One part of a reviewer's walkthrough, shown as a card of its own: a labelled section such as "Input" or "Fix", or a numbered step. */
+export type WalkSection = { title: string; detail: string | null; body: string };
+
+/**
+ * Splits a walkthrough's Markdown where the reviewer marked its parts: a line opening with a bold label ("**Fix:** …") or a numbered
+ * step ("1. `path:line`"). A step's lines lose the list's indent, so its code renders as code; nothing inside a code fence splits.
+ * A walkthrough with fewer than two parts stays whole.
+ */
+export function walkthroughSections(markdown: string): WalkSection[] {
+  const sections: WalkSection[] = [];
+  let current: WalkSection | null = null;
+  let fence: string | null = null;
+  let indent = 0;
+  const add = (line: string) => {
+    if (current === null) {
+      current = { title: 'Context', detail: null, body: '' };
+      sections.push(current);
+    }
+    current.body = current.body === '' ? line : `${current.body}\n${line}`;
+  };
+  for (const raw of markdown.split('\n')) {
+    const marker = raw.trimStart().slice(0, 3);
+    if (fence === null && (marker === '```' || marker === '~~~')) fence = marker;
+    else if (fence !== null && marker === fence) fence = null;
+    else if (fence === null) {
+      const label = /^\*\*([^*]+?):?\*\*:?\s*(.*)$/.exec(raw);
+      const step = /^(\d+)[.)]\s+(.*)$/.exec(raw);
+      if (label !== null) {
+        current = { title: label[1].replace(/:\s*$/, '').replaceAll('`', ''), detail: null, body: '' };
+        sections.push(current);
+        indent = 0;
+        if (label[2] !== '') add(label[2]);
+        continue;
+      }
+      if (step !== null) {
+        // A step that opens with where it is, such as `path:line`, names it in its header; any other words stay in its body.
+        const place = /^`([^`]+)`$/.exec(step[2].trim());
+        current = { title: `Step ${step[1]}`, detail: place?.[1] ?? null, body: '' };
+        sections.push(current);
+        indent = raw.length - step[2].length;
+        if (place === null) add(step[2]);
+        continue;
+      }
+    }
+    const lead = raw.length - raw.trimStart().length;
+    add(raw.slice(Math.min(lead, indent)));
+  }
+  return sections.length < 2 ? [] : sections.map(section => ({ ...section, body: section.body.trim() }));
+}
+
 /** What a card's Ask opens with: two or three questions drawn from the card itself. */
 export function askSuggestions(digest: ResultDigest | undefined): string[] {
   const review = digest?.review ?? null;
