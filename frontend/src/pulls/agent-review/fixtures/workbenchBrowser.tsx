@@ -95,7 +95,9 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
       install({ askAgentReview: async (reviewId) => { questions.push(reviewId); return discussionReview; },
         getAgentTask: async () => task,
         startAgentTurn: async request => { fixes.push(request); if (fail) { fail = false; throw new Error('Try again'); }
-          return { id: 'fix-turn' } as Awaited<ReturnType<Bridge['startAgentTurn']>>; } });
+          return { id: 'fix-turn' } as Awaited<ReturnType<Bridge['startAgentTurn']>>; },
+        // A refused start falls back to the queue, which refuses an idle task the way the backend does.
+        queueAgentInput: async request => { throw new Error(`Task has no active turn to queue behind: ${request.taskId}`); } });
       function Surface() {
         const [value, setValue] = useState<AgentReviewDto>(discussionReview);
         const { actions, busy } = useFindingActions({ review: value, onReviewChange: setValue, onNavigate: () => {} });

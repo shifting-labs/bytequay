@@ -66,7 +66,9 @@ async function showsTheAppsAssistant(): Promise<void> {
     await settle();
     const float = element('.quick-ask .assistant-float', view.host, 'The app’s Assistant panel shows');
     assert(float.querySelector('button[aria-label^="Dictate"]') !== null, 'Its composer has the mic');
-    assert(float.querySelector('.assistant-pill[data-pill="finished"]')?.textContent === 'Finished1', 'Its pills count what waits, read from the app’s notices');
+    // A finished turn with nothing left to do is FYI, so Results opens on it without a count.
+    const results = float.querySelector<HTMLElement>('.assistant-pill[data-pill="finished"]');
+    assert(results?.textContent === 'Results' && !results.classList.contains('is-empty'), `Its pills read the app’s notices: ${results?.textContent}`);
     assert(view.host.querySelector('.assistant-backdrop')?.getBoundingClientRect().width === 0, 'No backdrop dims a page that is not there');
     const height = Math.ceil(view.host.querySelector('.assistant-panel')?.getBoundingClientRect().height ?? 0);
     assert(Math.abs((view.calls.heights.at(-1) ?? 0) - height) <= 1, `The window is the panel's height: ${view.calls.heights.at(-1)} vs ${height}`);

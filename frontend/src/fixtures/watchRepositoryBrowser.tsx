@@ -137,6 +137,8 @@ export async function run(): Promise<string[]> {
         watched++;
         return workspace;
       },
+      // Start review offers the PR's commits.
+      fetchPrDiffCommits: async () => [],
     } satisfies Partial<Window['bridge']> });
     const detail: PullRequestDetailDto = {
       id: 1, repo: result.fullName, number: 2, title: 'Update project', htmlUrl: null, state: 'open', draft: false,

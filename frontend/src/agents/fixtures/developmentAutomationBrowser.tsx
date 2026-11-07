@@ -18,6 +18,7 @@ import type { AgentStreamMessage, AgentTaskDto, AgentTurnDto, CreateAgentTaskReq
 import { parseAgentEventSequence, type AgentEventEnvelope } from '../events';
 import { TaskComposer, useAgentTaskCreation } from '../AgentTasksView';
 import { createPreviewBridge } from './previewBridge';
+import { reviewDraftFixture } from '../../pulls/agent-review/fixtures/review';
 import AgentTaskScreen from '../AgentTaskScreen';
 import { runCiAutofixScenarios } from './ciAutofixBrowser';
 import { CI_PROJECTION, CI_RUN } from './ciAutofix';
@@ -42,6 +43,8 @@ function installPullRequestBridge(bridge: ReturnType<typeof createPreviewBridge>
     fetchWorkspaceHostingAttention: async () => ({ login: (await window.bridge.getUserProfile?.().catch(() => null))?.login ?? null, pullRequests: await window.bridge.fetchAttentionPrs?.().catch(() => []) ?? [] }),
     getUserProfile: async (): Promise<null> => null,
     findAgentReview: async (): Promise<null> => null,
+    // The pull request panel loads the review comments staged for it.
+    getReviewDraft: async (repo: string, number: number) => reviewDraftFixture({ repo, number }),
   } });
   return () => {
     if (originalBridge === undefined) delete (window as { bridge?: unknown }).bridge;

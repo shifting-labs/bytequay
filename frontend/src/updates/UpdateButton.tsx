@@ -18,10 +18,12 @@ import type { AppUpdateState } from './contracts';
 export default function UpdateButton() {
   const [state, setState] = useState<AppUpdateState>({ status: 'idle' });
   useEffect(() => {
+    // Test pages may lack the update bridge or answer it with nothing; like the mic without the voice bridge, they get no button.
+    if (typeof window.bridge?.onAppUpdate !== 'function' || typeof window.bridge.readAppUpdate !== 'function') return;
     let live = true;
     let changed = false;
     const unsubscribe = window.bridge.onAppUpdate(next => { changed = true; if (live) setState(next); });
-    void window.bridge.readAppUpdate().then(next => { if (live && !changed) setState(next); }).catch(() => {});
+    void window.bridge.readAppUpdate().then(next => { if (live && !changed && next) setState(next); }).catch(() => {});
     return () => { live = false; unsubscribe(); };
   }, []);
   return <UpdateAction state={state} onClick={() => {
