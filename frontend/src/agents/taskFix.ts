@@ -18,7 +18,7 @@ import type { ReviewRequest } from './InstructionCard';
 type FixBridge = Pick<Bridge, 'getAgentTask' | 'startAgentTurn' | 'queueAgentInput'>;
 
 /**
- * Sends a fix request to a development task as a normal turn, queued behind a running one. Its key is kept per request until the task
+ * Sends a fix request to a development task as a normal turn, queued behind a running one or a review holding its working copy. Its key is kept per request until the task
  * has it, so a retry whose first answer was lost is refused as already sent rather than run twice. The review-fix: prefix tells the
  * backend the message carries reviewers' words, which authorize no other work.
  */
@@ -32,13 +32,19 @@ export async function requestTaskFix(bridge: FixBridge, keys: Map<string, string
     idempotencyKey = `review-fix:${crypto.randomUUID()}`;
     keys.set(identity, idempotencyKey);
   }
+  const queue = () => bridge.queueAgentInput({ taskId, workspaceId, expectedVersion: task.version, message, idempotencyKey });
   try {
     if (task.mutationClaim?.kind === 'TURN') {
-      await bridge.queueAgentInput({ taskId, workspaceId, expectedVersion: task.version, message, idempotencyKey });
+      await queue();
     }
     else {
-      const turn = await bridge.startAgentTurn({ taskId, expectedTaskVersion: task.version, message, idempotencyKey });
-      if (turn.state === 'FAILED' && turn.knownUnsent) {
+      const turn = await bridge.startAgentTurn({ taskId, expectedTaskVersion: task.version, message, idempotencyKey }).catch(async (refused: unknown) => {
+        // A review on the shared working copy refuses the start but queues the request until it lets go; the queue refuses anything else.
+        if (alreadySent(refused)) throw refused;
+        await queue().catch((queueRefused: unknown) => { throw alreadySent(queueRefused) ? queueRefused : refused; });
+        return null;
+      });
+      if (turn !== null && turn.state === 'FAILED' && turn.knownUnsent) {
         // A retried key answered with an earlier attempt that never reached the developer; the next try is a new one.
         keys.delete(identity);
         throw new Error(`Not sent: ${turn.terminalReason ?? 'the developer did not start'}`);

@@ -102,6 +102,12 @@ public final class AgentRuntimeRegistry
         branchAdmission.accept(task);
     }
 
+    /** A review on the task's shared working copy holds it for its whole run; the review starts what waited once it lets go. */
+    boolean sharedCopyHeld(AgentTask task)
+    {
+        return sharedTasks(task).stream().anyMatch(heldBetweenTurns);
+    }
+
     void requireNoWorktreeBorrowers(AgentTask task)
     {
         if (task.ownsWorktree() && sharedTasks(task).stream().anyMatch(other -> !other.state().terminal())) {

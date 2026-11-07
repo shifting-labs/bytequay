@@ -1217,15 +1217,16 @@ public final class DefaultAgentTurnService
             if (task.version() != command.expectedVersion()) {
                 throw new AgentConflictException("Task version changed: " + task.id());
             }
-            // A queue is later work behind the task's own active turn. Accepting one after that
-            // turn released its claim would leave an idle QUEUED row with nothing to start it.
+            // A queue is later work behind the task's own active turn, or behind a review holding the shared working copy, which
+            // starts it when its run ends. Accepting one behind anything else would leave an idle QUEUED row with nothing to start it.
             Optional<WorktreeMutationClaim> claim = task.worktreeMutationClaim();
             Optional<AgentTurn> activeTurn = turnStore.findActive(task.id());
             boolean ownTurnRunning = claim
                     .filter(held -> held.kind() == WorktreeMutationClaim.Kind.TURN)
                     .filter(held -> activeTurn.stream().anyMatch(turn -> held.ownerId().equals(turn.id().toString())))
                     .isPresent();
-            if (!ownTurnRunning) {
+            boolean behindReview = !ownTurnRunning && claim.isEmpty() && activeTurn.isEmpty() && runtimeRegistry.sharedCopyHeld(task);
+            if (!ownTurnRunning && !behindReview) {
                 throw new AgentConflictException(claim.isPresent() ? claim.orElseThrow().conflictMessage() : "Task has no active turn to queue behind: " + task.id());
             }
             Instant queuedAt = Instant.now(clock);
@@ -1241,7 +1242,7 @@ public final class DefaultAgentTurnService
                     turnSettings(task, references(command.attachments()), command.developmentAutomation())
                             .withRepositoryContext(command.useRepositoryContext().orElse(true)),
                     queuedAt);
-            return eventCommitter.commit(
+            QueuedAgentInput queued = eventCommitter.commit(
                     pendingLifecycle(EventId.random(), task.id(), Optional.empty(), AgentEventPayload.LifecyclePhase.QUEUE_CHANGED, "Queued input added", queuedAt),
                     () -> {
                         // The version write is what serializes this against Complete.
@@ -1249,7 +1250,22 @@ public final class DefaultAgentTurnService
                         queueStore.insert(input);
                         return input;
                     });
+            if (behindReview) {
+                // The review may have let go after the check above, when its own start found no row yet.
+                startQueuedAfterReview(task.id());
+            }
+            return queued;
         }
+    }
+
+    @Override
+    public void startQueuedAfterReview(TaskId taskId)
+    {
+        requireNonNull(taskId, "taskId is null");
+        // Checked first so a review between its steps keeps its idle provider session, which a start would retire.
+        queueStarter.execute(() -> taskStore.find(taskId)
+                .filter(task -> !runtimeRegistry.sharedCopyHeld(task))
+                .ifPresent(ignored -> startQueuedHead(taskId)));
     }
 
     @Override
@@ -1414,11 +1430,12 @@ public final class DefaultAgentTurnService
                 task = requireStartableTaskWithoutReadiness(taskId);
             }
             catch (AgentConflictException busy) {
-                // A turn or development follow-up that got there first starts the queue again when it ends. Anything else,
-                // such as a local run or a review on the shared working copy, would leave the input waiting with nothing
+                // A turn, a development follow-up, or a review on the shared working copy that got there first starts the
+                // queue again when it ends. Anything else, such as a local run, would leave the input waiting with nothing
                 // to start it, so it waits for the user instead.
                 AgentTask current = taskStore.require(taskId);
-                if (turnStore.findActive(taskId).isEmpty() && !current.developmentContinuationUnfinished() && !runtimeRegistry.hasDevelopmentOwner(taskId)) {
+                if (turnStore.findActive(taskId).isEmpty() && !current.developmentContinuationUnfinished() && !runtimeRegistry.hasDevelopmentOwner(taskId)
+                        && !runtimeRegistry.sharedCopyHeld(current)) {
                     pauseQueuedHead(head.orElseThrow(), "Not started: " + message(busy));
                 }
                 return;

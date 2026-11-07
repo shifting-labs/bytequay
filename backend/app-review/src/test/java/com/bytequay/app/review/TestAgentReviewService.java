@@ -391,6 +391,22 @@ class TestAgentReviewService
     }
 
     @Test
+    void developmentReviewStartsTheDevelopersWaitingInputOnceItLetsGo()
+    {
+        AgentTask source = developmentSource();
+        localSource(fixture, source, HEAD);
+        String reviewId = fixture.service.startForTask(WORKSPACE, source.id().toString()).review().id();
+        when(fixture.tasks.get(TASK_ID)).thenReturn(busyTask());
+        when(fixture.turns.get(TURN_ONE)).thenReturn(AgentTurn.accepted(TURN_ONE, TASK_ID, "review-run", SETTINGS, NOW));
+
+        // The cancelled turn still holds the working copy; its settling reconciles the review, which starts the developer then.
+        fixture.service.stop(reviewId);
+        verify(fixture.turns, never()).startQueuedAfterReview(source.id());
+        fixture.service.reconcile(reviewId);
+        verify(fixture.turns).startQueuedAfterReview(source.id());
+    }
+
+    @Test
     void localReviewIncludesUncommittedFilesWithoutAnyCommits()
     {
         AgentTask source = developmentSource();
@@ -3274,7 +3290,7 @@ class TestAgentReviewService
         Fixture fixture = rewrittenHistory();
         AutoCheckout checkout = new AutoCheckout(fixture);
         AgentReview review = fixture.store.listOpenReviews().getFirst();
-        fixture.store.updateReview(withSource(review, review.number(), review.pullRequestId(), Optional.of("development-task"), Optional.empty()));
+        fixture.store.updateReview(withSource(review, review.number(), review.pullRequestId(), Optional.of(TaskId.random().toString()), Optional.empty()));
 
         fixture.service.observeHead(12L, NEW_HEAD);
         fixture.service.reconcile(review.id());

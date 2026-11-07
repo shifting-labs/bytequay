@@ -453,8 +453,13 @@ public class AgentReviewService
         return withLock(locks.lock(reviewId), () -> {
             AgentReview review = requireOpen(reviewId);
             store.updateReview(review.withFollowUpPaused(true, Instant.now(clock)));
-            activeTurn(tasks.get(TaskId.valueOf(review.taskId()))).ifPresent(turn -> turns.cancel(turn.id()));
+            Optional<AgentTurn> active = activeTurn(tasks.get(TaskId.valueOf(review.taskId())));
+            active.ifPresent(turn -> turns.cancel(turn.id()));
             sweeps.cancel(reviewId);
+            if (active.isEmpty()) {
+                // A cancelled turn still holds the working copy; its settling reconciles this review, which starts the developer then.
+                startDeveloperQueue(reviewId);
+            }
             return projection(reviewId);
         });
     }
@@ -739,6 +744,7 @@ public class AgentReviewService
             catch (IOException | RuntimeException failure) {
                 log.warn("Review {} ended but its private Maven repository was kept: {}", reviewId, failure.toString());
             }
+            startDeveloperQueue(reviewId);
             return projection(reviewId);
         });
     }
@@ -1013,6 +1019,13 @@ public class AgentReviewService
         catchUpWorkingCopy(reviewId);
         endFinishedReplay(reviewId);
         startAfterDeveloper(reviewId);
+        startDeveloperQueue(reviewId);
+    }
+
+    /** A developer's message waits while this review holds their shared working copy, and starts once it lets go. */
+    private void startDeveloperQueue(String reviewId)
+    {
+        store.findReview(reviewId).flatMap(AgentReview::sourceTaskId).ifPresent(source -> turns.startQueuedAfterReview(TaskId.valueOf(source)));
     }
 
     /** Starts a development review's first run once its developer has left the shared working copy; a no-op otherwise. */

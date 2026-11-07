@@ -143,7 +143,7 @@ public interface AgentTurnService
     Optional<AgentInputDelivery> findSteerByIdempotencyKey(TurnId turnId, String idempotencyKey);
 
     /**
-     * Adds a request to the task's FIFO queue, to run after the current turn.
+     * Adds a request to the task's FIFO queue, to run after the current turn or after a review holding the shared working copy.
      *
      * <p>Snapshots the text, attachments, and the settings in force. Bumps the task version it was
      * given, so an enqueue racing Complete either lands before completion checks the queue or
@@ -173,6 +173,12 @@ public interface AgentTurnService
 
     /** Removes an unclaimed input and returns its full draft; retries return the same removed input. */
     AgentQueuedInputDraft editQueued(TaskId taskId, QueuedInputId queuedInputId);
+
+    /**
+     * Starts the task's waiting queue head in the background once no review holds its shared working copy; a no-op while
+     * one still does. A review calls this when it lets go, as a successful turn starts its own queue.
+     */
+    void startQueuedAfterReview(TaskId taskId);
 
     /**
      * Starts the queue head on an idle task after a non-success terminal turn or a restart.

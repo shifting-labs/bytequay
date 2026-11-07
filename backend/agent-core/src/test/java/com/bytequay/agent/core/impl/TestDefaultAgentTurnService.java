@@ -266,6 +266,33 @@ class TestDefaultAgentTurnService
         assertThat(service.start(command("Fix the finding", "fix-1")).state()).isEqualTo(TurnState.RUNNING);
     }
 
+    @Test
+    void inputQueuedBehindAReviewStartsWhenTheReviewLetsGo()
+    {
+        TaskId reviewerId = TaskId.random();
+        stores.insert(created(reviewerId, false, "Reviewer", TitleSource.USER, task.laneId(), task.taskWorktree().orElseThrow(), task.defaults(), NOW));
+        resources.allocate(reviewerId);
+        AtomicBoolean reviewing = new AtomicBoolean(true);
+        runtimeRegistry = new AgentRuntimeRegistry(stores, ignored -> {}, other -> other.id().equals(reviewerId) && reviewing.get(), true);
+        service = service(driver, runtimeRegistry);
+
+        service.enqueue(new QueueAgentInputCommand(task.id(), taskService.get(task.id()).version(), "Fix the finding", ImmutableList.of(), "fix-1", Optional.empty()));
+        service.startQueuedAfterReview(task.id());
+        assertThat(driver.commands()).isEmpty();
+        reviewing.set(false);
+        service.startQueuedAfterReview(task.id());
+        assertThat(driver.commands()).extracting(AgentTurnCommand::message).containsExactly("Fix the finding");
+
+        // Input behind the developer's own turn keeps waiting, rather than pausing, for a review that took the copy in between.
+        service.enqueue(new QueueAgentInputCommand(task.id(), taskService.get(task.id()).version(), "Then this", ImmutableList.of(), "fix-2", Optional.empty()));
+        reviewing.set(true);
+        driver.complete("fixed");
+        assertThat(service.queued(task.id())).extracting(QueuedAgentInput::state).containsExactly(QueuedAgentInput.State.QUEUED);
+        reviewing.set(false);
+        service.startQueuedAfterReview(task.id());
+        assertThat(driver.commands()).extracting(AgentTurnCommand::message).containsExactly("Fix the finding", "Then this");
+    }
+
     @AfterEach
     void tearDown()
     {

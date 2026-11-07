@@ -95,11 +95,20 @@ describe('requestTaskFix', () => {
 
   it('retries a lost answer under the same key and counts an already sent one as sent', async () => {
     const keys = new Map<string, string>();
-    const { bridge, calls } = fakeBridge(idle, [new Error('Network lost'), new Error('This message was already sent')]);
+    const { bridge, calls } = fakeBridge(idle, [new Error('Network lost'), new Error('Task has no active turn to queue behind'),
+      new Error('This message was already sent')]);
     await expect(requestTaskFix(bridge, keys, 'c', 't', 'w', 'Fix it')).rejects.toThrow('Network lost');
     await requestTaskFix(bridge, keys, 'c', 't', 'w', 'Fix it');
-    expect(calls[1].key).toBe(calls[0].key);
+    expect(calls.map(call => call.kind)).toEqual(['start', 'queue', 'start']);
+    expect(new Set(calls.map(call => call.key)).size).toBe(1);
     expect(keys.size).toBe(0);
+  });
+
+  it('queues behind a review that holds the working copy', async () => {
+    const { bridge, calls } = fakeBridge(idle, [new Error('The shared working copy is in use by Review: X; wait for it to finish or stop it first')]);
+    await requestTaskFix(bridge, new Map(), 'c', 't', 'w', 'Fix it');
+    expect(calls.map(call => call.kind)).toEqual(['start', 'queue']);
+    expect(calls[1].key).toBe(calls[0].key);
   });
 
   it('refuses a task that can no longer change code', async () => {
