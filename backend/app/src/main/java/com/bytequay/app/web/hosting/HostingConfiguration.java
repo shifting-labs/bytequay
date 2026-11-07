@@ -56,6 +56,7 @@ public class HostingConfiguration
     @Bean(destroyMethod = "close")
     HttpClient hostingHttpClient()
     {
-        return HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NEVER).build();
+        // HTTP/1.1 for the same reason as WebConfig: a timed-out request's connection is closed instead of reused.
+        return HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NEVER).build();
     }
 }

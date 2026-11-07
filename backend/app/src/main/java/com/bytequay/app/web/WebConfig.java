@@ -99,6 +99,9 @@ public class WebConfig
         // breaking GitHub PR edits (PATCH /repos/{o}/{r}/pulls/{n}).
         //
         HttpClient client = HttpClient.newBuilder()
+                // HTTP/2 puts every request on one connection and keeps it after a timeout, so a connection
+                // the network silently dropped stalled all GitHub calls for minutes. HTTP/1.1 closes it on timeout.
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(connect)
                 .followRedirects(redirects)
                 .build();
