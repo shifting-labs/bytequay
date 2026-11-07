@@ -259,14 +259,17 @@
   animation: bq-spin 1s linear infinite;
 }
 
-/* A card: an icon, the title over where it lives, its state or actions on the right, and a decision's command or question under it. */
+/*
+ * A card: its state in the left strip, an icon, the verdict over where it comes from, its age or deadline on the right; under them its
+ * evidence as chips, anything the card adds, and its actions. Nothing inside a card is bold.
+ */
 .assistant-card {
   position: relative;
   display: grid;
   align-items: start;
   grid-template-columns: 18px minmax(0, 1fr) auto;
   column-gap: 12px;
-  padding: 10px 12px;
+  padding: 11px 12px 11px 16px;
   border: 1px solid var(--assistant-line);
   border-radius: 10px;
   background: var(--surface-elevated);
@@ -274,7 +277,6 @@
   line-height: 18px;
 }
 
-.assistant-card:hover { background: var(--assistant-hover); }
 .assistant-card.is-urgent { border-color: var(--assistant-gold); }
 
 /* Only an alert's Answer focuses a card, and its fading outline below is the cue. */
@@ -289,6 +291,20 @@
 
 @keyframes assistant-opened { to { outline-color: transparent; } }
 
+.assistant-card__strip {
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 5px;
+  width: 3px;
+  border-radius: 2px;
+}
+
+.assistant-card[data-strip="decide"] .assistant-card__strip { background: var(--assistant-gold); }
+.assistant-card[data-strip="next"] .assistant-card__strip { background: var(--fg-link); }
+.assistant-card[data-strip="fyi"] .assistant-card__strip { background: light-dark(#d0d7de, var(--dark-border-strong)); }
+.assistant-card[data-strip="failed"] .assistant-card__strip { background: var(--fg-danger); }
+
 .assistant-card__icon {
   display: flex;
   padding-top: 1px;
@@ -296,50 +312,38 @@
 }
 
 .assistant-card__icon.is-accent { color: var(--fg-link); }
-.assistant-card__icon.is-spinning svg { animation: bq-spin 1.6s linear infinite; }
 .assistant-card__icon.is-warn { color: var(--fg-warning); }
 .assistant-card__icon.is-danger { color: var(--fg-danger); }
+.assistant-card__icon.is-success { color: var(--fg-success); }
+.assistant-card__icon.is-spinning svg { animation: bq-spin 1.6s linear infinite; }
 
 @media (prefers-reduced-motion: reduce) {
   .assistant-card__icon.is-spinning svg { animation: none; }
 }
 
-.assistant-card__main { min-width: 0; }
+.assistant-card__main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
 
-.assistant-card__title,
-.assistant-card__meta,
-.assistant-card__line {
+.assistant-card__verdict {
+  font-size: 13.5px;
+  line-height: 19px;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.assistant-card.is-nowrap .assistant-card__verdict,
+.assistant-card__source {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.assistant-card__meta {
+.assistant-card__source {
   color: var(--fg-muted);
-  font-size: 12px;
-}
-
-.assistant-card__evidence {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  margin-top: 5px;
-  color: var(--fg-muted);
-  font-size: 12px;
-}
-
-.assistant-card__evidence > span:not(.assistant-lines) {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 4px;
-}
-
-.assistant-card__fail {
-  margin-top: 4px;
-  color: var(--fg-danger);
   font-size: 12px;
 }
 
@@ -347,7 +351,7 @@
 .assistant-card__right,
 .assistant-card__hover {
   display: flex;
-  min-height: 18px;
+  min-height: 19px;
   align-items: center;
   gap: 6px;
 }
@@ -358,23 +362,29 @@
   white-space: nowrap;
 }
 
+.assistant-age {
+  color: var(--fg-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Under the pointer, a running task's actions take its step's place. */
 .assistant-card__hover { display: none; }
 .assistant-card.has-hover:is(:hover, :focus-within) .assistant-card__hover { display: flex; }
 .assistant-card.has-hover:is(:hover, :focus-within) .assistant-card__right { display: none; }
-.assistant-card:not(:hover, :focus-within) .assistant-reveal { visibility: hidden; }
 
 .assistant-card__body {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 8px;
+  gap: 10px;
+  margin-top: 9px;
   grid-column: 2 / 4;
 }
 
-.assistant-card__why {
-  color: var(--fg-muted);
+.assistant-card__fail {
+  flex-basis: 100%;
+  color: var(--fg-danger);
   font-size: 12px;
 }
 
@@ -416,16 +426,104 @@
   color: var(--fg-muted);
 }
 
-.assistant-card__buttons {
+.assistant-card .assistant-error { margin: 0; }
+
+/* Evidence: icons and counts, the sentence in each chip's tooltip. */
+.assistant-evidence {
   display: flex;
+  min-width: 0;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
 }
 
-.assistant-card .assistant-error { margin: 0; }
+.assistant-chip-e {
+  display: inline-flex;
+  height: 20px;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 4px;
+  padding: 0 7px;
+  border: 1px solid var(--assistant-line);
+  border-radius: 10px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 
-/* Whom the card waits for and what it needs, in a gold outline; the warning colour near its end. */
+.assistant-chip-e > svg { flex: none; }
+.assistant-chip-e.is-success > svg { color: var(--fg-success); }
+.assistant-chip-e.is-danger > svg,
+.assistant-bad { color: var(--fg-danger); }
+.assistant-chip-e.is-warn > svg { color: var(--fg-warning); }
+.assistant-chip-e.is-accent > svg { color: var(--fg-link); }
+
+.assistant-mono {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.assistant-mono.is-dim { flex: none; color: var(--fg-dim); }
+
+.assistant-sev-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 3px;
+  background: currentColor;
+}
+
+.assistant-sev-dot:is(.is-critical, .is-high) { background: var(--fg-danger); }
+.assistant-sev-dot.is-medium { background: var(--fg-warning); }
+.assistant-sev-dot.is-low { background: var(--fg-dim); }
+
+.assistant-severity {
+  display: inline-flex;
+  height: 18px;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 0 7px;
+  border-radius: 9px;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.assistant-severity:is(.is-critical, .is-high) { background: var(--bg-danger); color: var(--fg-danger); }
+.assistant-severity.is-medium { background: var(--bg-warning); color: var(--fg-warning); }
+.assistant-severity.is-low { background: var(--surface-inset); color: var(--fg-muted); }
+
+/* A failure's own error line or the watchdog's, verbatim. */
+.assistant-line-e {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: var(--assistant-pill);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 17px;
+}
+
+.assistant-line-e > svg { flex: none; color: var(--fg-dim); }
+.assistant-line-e > span { min-width: 0; overflow-wrap: anywhere; }
+
+/* One recommended primary, at most two secondary actions, then Ask and Clear on the right. */
+.assistant-actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.assistant-actions.is-confirm { gap: 8px; }
+.assistant-actions__warn { flex: none; color: var(--fg-warning); }
+.assistant-actions__ask { flex: 1; min-width: 180px; font-size: 12.5px; }
+
 .assistant-state {
   display: inline-flex;
   height: 20px;
@@ -448,13 +546,303 @@
 
 .assistant-button {
   display: inline-flex;
-  height: 24px;
+  height: 26px;
   box-sizing: border-box;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   padding: 0 10px;
   border: 1px solid var(--assistant-line);
   border-radius: 6px;
+  background: var(--surface-elevated);
+  color: var(--fg-default);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.assistant-button > svg { flex: none; }
+.assistant-button:not(.is-primary) > svg { color: var(--fg-muted); }
+.assistant-button:hover:not(:disabled) { background: var(--assistant-selected); }
+.assistant-button:disabled { cursor: default; opacity: 0.6; }
+
+.assistant-button:focus-visible,
+.assistant-text-button:focus-visible,
+.assistant-option:focus-visible,
+.assistant-path:focus-visible,
+.assistant-check:focus-visible,
+.assistant-fold-toggle:focus-visible,
+.assistant-finding-row:focus-visible,
+.assistant-done__head:focus-visible,
+.assistant-done__row:focus-visible {
+  outline: 2px solid var(--control-strong);
+  outline-offset: 2px;
+}
+
+.assistant-button.is-primary {
+  padding: 0 11px;
+  border-color: light-dark(rgba(31, 35, 40, 0.15), rgb(210 220 235 / 15%));
+  background: light-dark(#1f883d, #287a43);
+  color: var(--on-solid);
+}
+
+.assistant-button.is-primary:hover:not(:disabled) { background: light-dark(#1a7f37, #32894f); }
+
+/* A secondary text action, such as Ask or a finding's own: no border, a tint under the pointer. */
+.assistant-text-button {
+  display: inline-flex;
+  height: 22px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.assistant-text-button:hover:not(:disabled) { background: var(--assistant-selected); color: var(--fg-default); }
+
+.assistant-dim {
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
+/* A fold inside a card: a walkthrough, a full report or question. */
+.assistant-fold-toggle {
+  display: inline-flex;
+  height: 20px;
+  align-self: flex-start;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px 0 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.assistant-full {
+  color: var(--fg-muted);
+  font-size: 12.5px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.assistant-full :is(p, ul, ol) { margin: 0 0 6px; }
+
+/* A finding: severity, id, title and where it is, its explanation, the walkthrough folded away, then its own actions. */
+.assistant-findings {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.assistant-finding {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 10px 5px;
+  border: 1px solid var(--assistant-line);
+  border-radius: 8px;
+  background: var(--assistant-pill);
+}
+
+.assistant-finding__head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.assistant-finding__title {
+  flex: 1;
+  min-width: 0;
+  text-wrap: pretty;
+}
+
+.assistant-path {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg-link);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.assistant-finding__body {
+  color: var(--fg-muted);
+  font-size: 12.5px;
+  line-height: 18px;
+  text-wrap: pretty;
+}
+
+.assistant-finding__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+
+.assistant-walkthrough {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 12.5px;
+  line-height: 19px;
+}
+
+.assistant-walkthrough :is(p, ul, ol, pre) { margin: 0; }
+.assistant-walkthrough :is(ul, ol) { padding-left: 18px; }
+
+.assistant-walkthrough pre {
+  padding: 6px 10px;
+  border: 1px solid var(--assistant-line-subtle);
+  border-radius: 6px;
+  background: var(--surface-canvas);
+  font-size: 11.5px;
+  line-height: 18px;
+  overflow-x: auto;
+}
+
+.assistant-walkthrough :not(pre) > code {
+  padding: 0 4px;
+  border: 1px solid var(--assistant-line-subtle);
+  border-radius: 4px;
+  background: var(--surface-canvas);
+  font-size: 11.5px;
+}
+
+.assistant-ran {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.assistant-ran > svg { flex: none; color: var(--fg-dim); }
+
+.assistant-finding-row {
+  display: flex;
+  width: 100%;
+  height: 32px;
+  box-sizing: border-box;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--assistant-line-subtle);
+  border-radius: 8px;
+  background: none;
+  color: var(--fg-default);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.assistant-finding-row > svg { flex: none; color: var(--fg-dim); }
+.assistant-finding-row:hover { background: var(--assistant-hover); }
+.assistant-finding-row > .assistant-mono:last-child { flex: none; color: var(--fg-muted); }
+
+.assistant-finding-row__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-finding-done {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-muted);
+  font-size: 12.5px;
+}
+
+.assistant-finding-done > svg { color: var(--fg-success); }
+
+/* An approval: what runs, the agent's own words for why, and what it needs, one line each. */
+.assistant-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.assistant-fact-line {
+  display: grid;
+  align-items: baseline;
+  grid-template-columns: 50px minmax(0, 1fr);
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+.assistant-fact-line > span { color: var(--fg-dim); }
+.assistant-fact-line > div { min-width: 0; }
+
+.assistant-command {
+  display: block;
+  margin: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--assistant-pill);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.assistant-command.is-block { white-space: pre-wrap; }
+
+.assistant-needs {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.assistant-needs > span { display: inline-flex; align-items: center; gap: 4px; }
+.assistant-needs svg { flex: none; color: var(--fg-warning); }
+
+/* The agent's own options, or questions to ask, each one click. */
+.assistant-options {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.assistant-option {
+  display: inline-flex;
+  height: 26px;
+  box-sizing: border-box;
+  align-items: center;
+  padding: 0 11px;
+  border: 1px solid var(--assistant-line);
+  border-radius: 13px;
   background: var(--surface-elevated);
   color: var(--fg-default);
   font: inherit;
@@ -463,37 +851,17 @@
   cursor: pointer;
 }
 
-.assistant-button:hover:not(:disabled) { background: var(--assistant-selected); }
+.assistant-option:hover:not(:disabled) { background: var(--assistant-selected); }
+.assistant-ask .assistant-option { height: 24px; padding: 0 10px; border-color: transparent; border-radius: 12px; background: var(--assistant-pill); }
 
-.assistant-button:focus-visible {
-  outline: 2px solid var(--control-strong);
-  outline-offset: 2px;
-}
+/* A question that one click cannot answer keeps the task's own form inside the row. */
+.assistant-question-form .agt-appr { margin: 0; }
+.assistant-question-form .agt-appr__head { display: none; }
+.assistant-question-form :is(.agt-ask__text, .agt-ask__label, .agt-ask__tag) { font-weight: 400; }
+.assistant-question-form .agt-ask__text { font-size: 13px; line-height: 1.5; }
+.assistant-question-form .agt-decisions { margin-top: 8px; }
 
-.assistant-dim {
-  color: var(--fg-dim);
-  font-size: 12px;
-}
-
-/* The task's own approval card, in this one's body: the row above already names it, so only its command or question and buttons show. */
-.assistant-card .agt-appr { margin: 0; }
-.assistant-card .agt-appr__head { display: none; }
-.assistant-card :is(.agt-ask__text, .agt-ask__label, .agt-ask__tag) { font-weight: 400; }
-.assistant-card .agt-ask__text { font-size: 13.5px; line-height: 1.5; }
-
-.assistant-card .agt-code {
-  margin: 0;
-  padding: 6px 9px;
-  border: 0;
-  border-radius: 6px;
-  font-size: 12px;
-  line-height: 18px;
-  word-break: break-all;
-}
-
-.assistant-card .agt-decisions { margin-top: 8px; }
-
-.assistant-card .agt-decisions .agt-decision {
+.assistant-question-form .agt-decisions .agt-decision {
   height: 26px;
   padding: 0 11px;
   border-color: var(--assistant-line);
@@ -503,8 +871,142 @@
   font-weight: 400;
 }
 
-.assistant-card .agt-decisions .agt-decision:hover:not(:disabled) { background: var(--assistant-selected); }
-.assistant-card .agt-decisions .agt-decision:disabled { opacity: 0.5; }
+.assistant-question-form .agt-decisions .agt-decision.is-allow {
+  border-color: light-dark(rgba(31, 35, 40, 0.15), rgb(210 220 235 / 15%));
+  background: light-dark(#1f883d, #287a43);
+  color: var(--on-solid);
+}
+
+.assistant-question-form .agt-decisions .agt-decision:disabled { opacity: 0.5; }
+
+/* An offer that applies to the task, kept apart from the answer. */
+.assistant-offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--assistant-line-subtle);
+}
+
+.assistant-offer > svg { flex: none; color: var(--fg-warning); }
+.assistant-offer > span { flex: 1; min-width: 180px; color: var(--fg-muted); font-size: 12.5px; }
+
+/* Failing checks of the current head, each opening its check page. */
+.assistant-checks {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.assistant-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg-default);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.assistant-check > svg { color: var(--fg-danger); }
+.assistant-check:hover { text-decoration: underline; }
+
+/* Ask about this: questions drawn from the card, and what the discussion can see. */
+.assistant-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--assistant-line-subtle);
+}
+
+.assistant-ask__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.assistant-ask__scope { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Done work, one row that opens to a line each, no buttons. */
+.assistant-done {
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+  border: 1px solid var(--assistant-line);
+  border-radius: 10px;
+}
+
+.assistant-done__head {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--fg-default);
+  font: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.assistant-done__head > svg:last-child { color: var(--fg-dim); }
+.assistant-done__icon { color: var(--fg-success); }
+
+.assistant-done__rows {
+  display: flex;
+  flex-direction: column;
+  padding: 0 4px 4px 30px;
+}
+
+.assistant-done__row {
+  display: flex;
+  height: 32px;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--fg-default);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.assistant-done__row:hover { background: var(--assistant-hover); }
+.assistant-done__row > svg { flex: none; }
+.assistant-done__row > .is-purple,
+.assistant-receipt.is-purple .assistant-receipt__icon { color: var(--fg-purple); }
+.assistant-done__row > .is-danger { color: var(--fg-danger); }
+.assistant-done__row > .is-success,
+.assistant-receipt.is-success .assistant-receipt__icon { color: var(--fg-success); }
+.assistant-done__row > .is-muted { color: var(--fg-muted); }
+
+.assistant-done__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-done__what { flex: none; color: var(--fg-muted); font-size: 12px; }
+.assistant-done__at { width: 30px; flex: none; color: var(--fg-dim); font-size: 12px; text-align: right; }
 
 /* All, with every task fine: the running ones folded to one line. */
 .assistant-fold {
@@ -1181,40 +1683,18 @@
 .assistant-card__state[data-state="RESULT_READY"],
 .assistant-card__state[data-state="PROPOSAL"] { color: var(--fg-link); }
 .assistant-card__state[data-state="COMPLETED"] { color: var(--fg-success); }
-.assistant-card[data-state="APPROVAL_REQUIRED"],
-.assistant-card[data-state="ANSWER_REQUIRED"] { border-color: var(--assistant-gold); }
-.assistant-card[data-state="COMPLETED"] .assistant-card__icon { color: var(--fg-success); }
-.assistant-card[data-state="ATTENTION"] .assistant-card__icon { color: var(--fg-warning); }
-.assistant-card[data-state="RESULT_READY"] .assistant-card__icon { color: var(--fg-link); }
-.assistant-card.has-wrapped-title .assistant-card__title { white-space: normal; overflow-wrap: anywhere; }
 .assistant-card__assessment { font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .assistant-report-details { display: flex; flex-direction: column; gap: 7px; padding: 7px 12px 2px 42px; }
 .assistant-report-details:empty { display: none; }
 .assistant-report-resolved { display: flex; flex-direction: column; gap: 6px; }
-.assistant-rule-receipt,
-.assistant-report-evidence { color: var(--fg-muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
-.assistant-rule-receipt summary,
-.assistant-report-evidence summary { cursor: pointer; }
+.assistant-rule-receipt { color: var(--fg-muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.assistant-rule-receipt summary { cursor: pointer; }
 .assistant-rule-receipt summary svg { display: inline; vertical-align: -2px; margin-right: 5px; }
-.assistant-rule-receipt summary:focus-visible,
-.assistant-report-evidence summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
-.assistant-rule-receipt ul,
-.assistant-report-evidence ul { margin: 6px 0 0; padding-left: 20px; }
-.assistant-rule-receipt strong { font-weight: 500; color: var(--fg-default); }
+.assistant-rule-receipt summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+.assistant-rule-receipt ul { margin: 6px 0 0; padding-left: 20px; }
 .assistant-draft > .assistant-card__state { padding: 10px 12px 0; margin-bottom: -3px; }
 
-.assistant-report-activity { color: var(--fg-muted); font-size: 12px; line-height: 1.5; margin: 7px 0; overflow-wrap: anywhere; }
-.assistant-report-activity > summary { cursor: pointer; }
-.assistant-report-activity > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
-.assistant-report-activity > ol { padding-left: 18px; margin: 8px 0; }
-.assistant-report-activity > ol > li { margin-bottom: 10px; }
-.assistant-report-activity time { display: block; font-size: 11px; }
-.assistant-report-activity p { margin: 5px 0; }
-
-.assistant-result-discussion { margin-top: 8px; }
-.assistant-result-discussion > .assistant-link { margin-bottom: 6px; }
-.assistant-result-question { margin-top: 8px; }
-.assistant-result-discussion .agt-disc { margin-top: 8px; }
+.assistant-ask .agt-disc { margin-top: 2px; }
 
 /* A rule the assistant offered: the data behind it, then its file in code type, to change before saving. */
 .assistant-rule__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

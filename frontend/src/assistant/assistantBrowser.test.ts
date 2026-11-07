@@ -32,13 +32,15 @@ it('floats the Assistant over the page, opens one view per pill, answers decisio
         const { mkdir, writeFile } = require('node:fs/promises');
         const { join } = require('node:path');
         await mkdir(screenshots, { recursive: true });
+        // Tall enough for a whole Results view; the scenarios above ran at the usual size.
+        window.setContentSize(1000, 1900);
         window.webContents.debugger.attach('1.3');
         for (const theme of ['light', 'dark']) {
           // A hidden window does not follow the system theme; the page's media query is emulated instead.
           await window.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
           await window.webContents.executeJavaScript('AssistantTests.showPreview()');
           await writeFile(join(screenshots, 'assistant-' + theme + '.png'), (await window.webContents.capturePage()).toPNG());
-          for (const name of ['decision', 'all', 'mywork', 'home']) {
+          for (const name of ['decision', 'all', 'finished', 'mywork', 'home']) {
             await window.webContents.executeJavaScript('AssistantTests.showViewPreview(' + JSON.stringify(name) + ')');
             await writeFile(join(screenshots, 'assistant-view-' + name + '-' + theme + '.png'), (await window.webContents.capturePage()).toPNG());
           }

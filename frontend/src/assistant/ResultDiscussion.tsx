@@ -12,7 +12,9 @@
  * limitations under the License.
  */
 import { useMemo, useState } from 'react';
+import { LockKeyhole, MessageCircleQuestion, X } from 'lucide-react';
 import Composer from '../Composer';
+import { IconButton } from '../cards/Card';
 import { DiscussionsPanel } from '../agents/discussions/DiscussionsPanel';
 import type { TaskDiscussionDto } from '../agents/discussions/contracts';
 import { useTaskDiscussions } from '../agents/discussions/useTaskDiscussions';
@@ -20,10 +22,22 @@ import { errorMessage } from '../errorMessage';
 import { reviewThreadBridge } from '../pulls/PrivateThread';
 import type { AssistantReportDto } from '../types';
 
-/** Questions use the work's private, read-only discussion, anchored by the server to this exact result. */
-export function ResultDiscussion({ report }: { report: AssistantReportDto }) {
+/**
+ * Questions use the work's private, read-only discussion, anchored by the server to this exact result. It opens with questions drawn
+ * from the card, each sent with one click, and says what it can see.
+ */
+export function ResultDiscussion({ report, suggestions, scope, placeholder, onClose, collapsed = false }: {
+  report: AssistantReportDto;
+  suggestions: string[];
+  /** The panel's heading, such as "Ask about this review". */
+  scope: string;
+  placeholder: string;
+  onClose?: () => void;
+  /** Starts as a link, for a result kept in the conversation. */
+  collapsed?: boolean;
+}) {
   const { target, sourceTurnId } = report;
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!collapsed);
   const [question, setQuestion] = useState('');
   const [sending, setSending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -35,27 +49,33 @@ export function ResultDiscussion({ report }: { report: AssistantReportDto }) {
   if (sourceTurnId === null || query === null || target.kind !== 'TASK' && target.kind !== 'REVIEW' || report.state === 'PROGRESS') return null;
   const saved = discussions.discussions.filter(discussion => discussion.turnId === sourceTurnId || discussion.id === created?.id);
   const rows = created === null || saved.some(discussion => discussion.id === created.id) ? saved : [...saved, created];
-  const ask = async () => {
-    if (question.trim() === '' || sending) return;
+  const ask = async (text: string) => {
+    if (text.trim() === '' || sending) return;
     setSending(true); setFailure(null);
     try {
-      const discussion = await window.bridge.askAssistantResult(target, sourceTurnId, question.trim());
+      const discussion = await window.bridge.askAssistantResult(target, sourceTurnId, text.trim());
       setCreated(discussion); setQuestion('');
       await discussions.refresh();
     }
     catch (cause) { setFailure(errorMessage(cause)); }
     finally { setSending(false); }
   };
-  return <div className="assistant-result-discussion">
-    <button type="button" className="assistant-link" aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? 'Close discussion' : 'Ask about this'}</button>
-    {open && <>
-      {rows.length > 0 ? <DiscussionsPanel discussions={{ ...discussions, discussions: rows }} repository={target.repo} focus={focus} />
-        : <Composer className="assistant-result-question" autoFocus rows={2} aria-label="Ask about this result" placeholder="What would you like to understand?"
-          value={question} onChange={event => setQuestion(event.target.value)} disabled={sending} busy={sending}
-          onSubmit={() => { void ask(); }} submitShortcut="mod-enter" submitEnabled={!sending && !discussions.busy && question.trim() !== ''} submitLabel="Ask" submitContent="Ask">
-          <span className="assistant-dim">Private discussion · reads the result and code</span>
-        </Composer>}
-      {(failure ?? discussions.error) !== null && <p className="assistant-error" role="alert">{failure ?? discussions.error}</p>}
+  if (!open) return <button type="button" className="assistant-link" onClick={() => setOpen(true)}>Ask about this</button>;
+  return <div className="assistant-ask" role="group" aria-label={scope}>
+    <div className="assistant-ask__head">
+      <MessageCircleQuestion size={13} aria-hidden="true" /><span>{scope}</span><span className="assistant-spacer" />
+      <IconButton label="Close" title="Close" onClick={() => { setOpen(false); onClose?.(); }}><X size={13} aria-hidden="true" /></IconButton>
+    </div>
+    {rows.length > 0 ? <DiscussionsPanel discussions={{ ...discussions, discussions: rows }} repository={target.repo} focus={focus} /> : <>
+      {suggestions.length > 0 && <div className="assistant-options">
+        {suggestions.map(suggestion => <button key={suggestion} type="button" className="assistant-option" disabled={sending} onClick={() => void ask(suggestion)}>{suggestion}</button>)}
+      </div>}
+      <Composer className="assistant-result-question" autoFocus={suggestions.length === 0} rows={2} aria-label={scope} placeholder={placeholder}
+        value={question} onChange={event => setQuestion(event.target.value)} disabled={sending} busy={sending}
+        onSubmit={() => { void ask(question); }} submitShortcut="mod-enter" submitEnabled={!sending && !discussions.busy && question.trim() !== ''} submitLabel="Ask" submitContent="Ask">
+        <span className="assistant-dim assistant-ask__scope"><LockKeyhole size={11} aria-hidden="true" />Reads the result and the code · private</span>
+      </Composer>
     </>}
+    {(failure ?? discussions.error) !== null && <p className="assistant-error" role="alert">{failure ?? discussions.error}</p>}
   </div>;
 }

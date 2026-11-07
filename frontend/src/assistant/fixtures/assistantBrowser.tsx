@@ -16,7 +16,7 @@ import { createFixtureRoot } from '../../fixtures/reactFixture';
 import '../../index.css';
 import { changeInput, controlTimers, element, runScenarios } from '../../fixtures/harness';
 import type { WorkItemDto } from '../../workitems/contracts';
-import type { ReviewDraftDto } from '../../pulls/agent-review/contracts';
+import type { AgentReviewDto, ReviewDraftDto } from '../../pulls/agent-review/contracts';
 import { pr, prDetail } from '../../pulls/fixtures/pullRequest';
 import AssistantPanel from '../AssistantPanel';
 import type { AgentEventEnvelope } from '../../agents/events';
@@ -34,6 +34,7 @@ import { publishShownWork } from '../../home/useMyWork';
 import { WORK_LANES, type WorkItem } from '../../home/work';
 import HomeComposer from '../HomeComposer';
 import { dayLabel, localDay, type AssistantRequest } from '../model';
+import type { DigestPull, DigestRequest, DigestReview, ResultDigest } from '../results';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -100,7 +101,21 @@ const notice = (id: string, kind: AppNotice['kind'], taskId: string, title: stri
   id, kind, taskId, workspaceId: 'ws1', turnId: `turn-${taskId}`, reviewId: null, title, pullRequest: null, pullRequestTitle: null, changes: null,
   message: 'Permission needed', repository: 'owner/repository', laneId: 'claude', occurredAt: '2026-10-16T07:10:00Z',
 });
-const NOTICES = [notice('approval:a1', 'APPROVAL', 'task-1', 'Metadata cache'), notice('finished:turn-2', 'TURN_FINISHED', 'task-2', 'Retry commit on conflict')];
+const NOTICES = [notice('approval:a1', 'APPROVAL', 'task-1', 'Metadata cache'),
+  { ...notice('finished:turn-2', 'TURN_FINISHED', 'task-2', 'Retry commit on conflict'), pullRequest: 'owner/repository#58' }];
+
+const facts = (fields: Partial<DigestPull> = {}): DigestPull => ({
+  number: 58, title: 'Retry commit on conflict', url: 'https://example.com/owner/repository/pull/58', state: 'open', draft: true, mine: true, author: 'you',
+  head: 'abc1234', base: 'main', additions: 42, deletions: 7, files: 2, checks: [], approvers: [], youApproved: false, mergeBlocked: false, mergeable: true, ...fields,
+});
+const passing = (name: string) => ({ name, state: 'successful' as const, url: null });
+const digestOf = (noticeId: string, fields: Partial<ResultDigest> = {}): ResultDigest => ({ noticeId, host: 'GitHub', pull: null, review: null, report: null, ...fields });
+/** What the backend tells of each result, by notice: the draft is ready to mark ready once its checks passed. */
+const DIGESTS: Record<string, ResultDigest> = {
+  'finished:turn-2': digestOf('finished:turn-2', { pull: facts({ checks: [passing('test'), passing('lint')] }),
+    report: 'Retried the commit on a conflict with backoff. Tests cover a second conflict.' }),
+};
+const digests = (table: Record<string, ResultDigest>) => async (requests: DigestRequest[]) => requests.map(request => table[request.noticeId] ?? digestOf(request.noticeId));
 
 const APPROVAL: AgentPendingApprovalDto = {
   approvalId: 'a1', taskId: 'task-1', turnId: 'turn-task-1', occurredAt: '2026-10-16T07:10:00Z', expiresAt: '2026-10-16T07:15:00Z',
@@ -186,6 +201,7 @@ function mount(view: AssistantViewDto = VIEW, failSends = 0, notices = NOTICES, 
     openAppNotice: async (id: string) => { calls.opened.push(id); },
     removeAppNotice: async (id: string) => { calls.removed.push(id); },
     findStoredPullRequest: async (): Promise<null> => null,
+    readNoticeDigests: digests(DIGESTS),
     // My work reads the viewer's work; this fixture has none.
     getUserProfile: async () => null,
     listWorkspaces: async () => [],
@@ -351,8 +367,11 @@ async function answersWithTheTasksButtons(): Promise<void> {
     pill(view.host, 'decision')?.click();
     await settle();
     const card = element<HTMLElement>('.assistant-card[data-card="approval:a1"]', view.host, 'The approval shows');
-    assert(card.querySelector('.assistant-card__title')?.textContent === 'Metadata cache' && card.querySelector('.assistant-state')?.textContent === 'Permission requested',
-      `It names its task and what it waits for: ${card.textContent}`);
+    assert(card.querySelector('.assistant-card__verdict')?.textContent === 'Claude asks to run a command.'
+      && card.querySelector('.assistant-card__source')?.textContent === 'Metadata cache · owner/repository · Claude'
+      && card.querySelector('.assistant-command')?.textContent === './mvnw -pl :catalog test -Dtest=TestIcebergSnapshotId'
+      && card.querySelector('.assistant-state')?.textContent === 'Permission requested' && card.dataset.strip === 'decide',
+      `It says who asks to run what, for which task, and what it waits for: ${card.textContent}`);
     const allow = element<HTMLButtonElement>('.assistant-card button[aria-label="Allow once: Run the focused Maven test"]', view.host, 'The approval shows the task’s own buttons');
     allow.click();
     await settle();
@@ -363,11 +382,17 @@ async function answersWithTheTasksButtons(): Promise<void> {
     pill(view.host, 'finished')?.click();
     await settle();
     const result = top(view.host);
-    assert(result?.textContent?.includes('Retry commit on conflict') === true, 'Results shows the result');
-    result?.querySelector<HTMLButtonElement>('button[aria-label="Clear “Retry commit on conflict”"]')?.click();
-    buttonIn(result, 'Open')?.click();
+    assert(result?.textContent?.includes('Retry commit on conflict') === true && result.querySelector('.assistant-card__verdict')?.textContent === 'Retried the commit on a conflict with backoff.'
+      && buttonIn(result, 'Mark PR #58 ready') !== undefined, `Results leads with the agent's own outcome and the next step: ${result?.textContent}`);
+    result?.querySelector<HTMLButtonElement>('button[aria-label="Clear"]')?.click();
     await settle();
-    assert(JSON.stringify(view.calls.opened) === '["finished:turn-2"]' && JSON.stringify(view.calls.removed) === '["finished:turn-2"]', 'Results open and clear their notice');
+    assert(top(view.host) === null && view.host.textContent?.includes('Cleared · Retry commit on conflict') && view.calls.removed.length === 0,
+      'Clear folds the card to a line and waits before its notice goes');
+    buttonIn(view.host.querySelector('.assistant-receipt'), 'Undo')?.click();
+    await settle();
+    buttonIn(top(view.host), 'Open task')?.click();
+    await settle();
+    assert(JSON.stringify(view.calls.opened) === '["finished:turn-2"]' && view.calls.removed.length === 0, 'Undo brings the card back, and it opens its task');
     assert(Number(view.calls.closed) === 1, 'Opening a notice closes the Assistant');
   }
   finally { view.dispose(); }
@@ -497,11 +522,12 @@ async function showsRunningTasksAndAll(): Promise<void> {
   const view = mount(VIEW, 0, [...NOTICES, ...rows], [RUNNING]);
   try {
     await settle();
-    assert(JSON.stringify(pills(view.host)) === JSON.stringify(['All', 'Decision1', 'Running1', 'Results4', 'Today0/2', 'My work']), `Running tasks count: ${JSON.stringify(pills(view.host))}`);
+    // Results counts what is left to decide or one click from done; the three with nothing to do yet wait quietly.
+    assert(JSON.stringify(pills(view.host)) === JSON.stringify(['All', 'Decision1', 'Running1', 'Results1', 'Today0/2', 'My work']), `Running tasks count: ${JSON.stringify(pills(view.host))}`);
     view.render(false);
     view.render(true, { view: 'running' });
     await settle();
-    assert(selected(view.host) === 'Running1' && top(view.host)?.querySelector('.assistant-card__title')?.textContent === 'Expose snapshot id in metadata',
+    assert(selected(view.host) === 'Running1' && top(view.host)?.querySelector('.assistant-card__verdict')?.textContent === 'Expose snapshot id in metadata',
       'Opened on Running from Home, it waits for the first read rather than closing the view');
     view.render(false);
     view.render(true);
@@ -516,15 +542,15 @@ async function showsRunningTasksAndAll(): Promise<void> {
     pill(view.host, 'all')?.click();
     await settle();
     const sections = [...view.host.querySelectorAll('.assistant-section')].map(section => section.textContent);
-    assert(JSON.stringify(sections) === '["Decision","Running","Results"]', `All answers the three questions in order: ${JSON.stringify(sections)}`);
+    assert(JSON.stringify(sections) === '["Decision · 1","Next step · 1","Running · 1","FYI · 3"]', `All is one scroll in groups, decisions first: ${JSON.stringify(sections)}`);
     const fold = element<HTMLButtonElement>('.assistant-fold', view.host, 'Running folds to one line');
     assert(fold.textContent === '1 running · all fine' && cards(view.host).length === 5, `All shows one decision, the fold and four results: ${cards(view.host).length}`);
     fold.click();
     await settle();
     assert(selected(view.host) === 'Running1', 'The fold opens Running');
     const card = top(view.host);
-    assert(card?.querySelector('.assistant-card__title')?.textContent === 'Expose snapshot id in metadata'
-      && card.querySelector('.assistant-card__meta')?.textContent === 'owner/repository · #31377', `A running task names where it runs: ${card?.textContent}`);
+    assert(card?.querySelector('.assistant-card__verdict')?.textContent === 'Expose snapshot id in metadata'
+      && card.querySelector('.assistant-card__source')?.textContent === 'owner/repository · #31377', `A running task names where it runs: ${card?.textContent}`);
     assert(/^IcebergMetadata\.java · 1\ds$/.test(card?.querySelector('.assistant-card__right')?.textContent ?? ''),
       `It shows its current step and how long it has run: ${card?.querySelector('.assistant-card__right')?.textContent}`);
     history = [...history, step(2, '/bin/zsh -lc "./mvnw -pl :catalog test"', 'OTHER', null)];
@@ -548,35 +574,87 @@ const DRAFTED: AppNotice = { ...notice('finished:draft', 'TURN_FINISHED', 'task-
   message: 'Draft PR #58 · checks running', changes: { update: false, commits: 1, files: 2, additions: 42, deletions: 7 }, occurredAt: '2026-10-16T07:11:00Z' };
 const FAILED: AppNotice = { ...notice('failure:task-6', 'FAILURE', 'task-6', 'Update API docs'), message: '2 checks failing', occurredAt: '2026-10-16T07:08:00Z' };
 
+const REVIEWED: DigestReview = {
+  reviewedHead: 'abc1234', currentHead: 'abc1234', filesRead: 6, filesChanged: 6, complete: true, omissions: [], warnings: [],
+  commands: [{ command: 'pnpm test --filter stats', exitCode: 0 }], fixTask: null,
+  findings: [
+    { id: 'f1', label: 'F-1', title: 'Statistics go stale after a write', body: 'A write does not drop the cached statistics, so the next query plans with old row counts.',
+      severity: 'high', path: 'src/stats/cache.ts', line: 142, outdated: false, version: 2, revision: 1, ran: 'pnpm vitest run stats.spec.ts · exit 1' },
+    { id: 'f2', label: 'F-2', title: 'The cache has no size limit', body: 'Every table adds an entry that is never evicted.', severity: 'medium', path: 'src/stats/cache.ts', line: 88,
+      outdated: false, version: 1, revision: 1, ran: null },
+  ],
+};
+const RESULT_DIGESTS: Record<string, ResultDigest> = {
+  'finished:review': digestOf('finished:review', { review: REVIEWED, pull: facts({ number: 42, title: 'Cache table statistics between queries', draft: false, mine: false,
+    author: 'maria', head: 'abc1234', url: 'https://example.com/acme/warehouse/pull/42' }) }),
+  'finished:draft': digestOf('finished:draft', { pull: facts({ checks: [passing('test'), passing('lint'), { name: 'e2e', state: 'pending', url: null }] }),
+    report: 'Updated the install guide for the new flags. Screenshots are next.' }),
+};
+const FULL_REVIEW = {
+  id: 'r9', workspaceId: 'ws1', repo: 'acme/warehouse', number: 42, sourceTaskId: null, draft: null, task: { laneLabel: 'Claude' },
+  findings: REVIEWED.findings.map(finding => ({ ...finding, runId: 'run', origin: 'AUTOMATIC', side: 'RIGHT', startLine: finding.line, endLine: finding.line, range: null,
+    excerpt: [], evidence: [], state: 'OPEN', stateReason: null, validatedHeadSha: 'abc1234', updatedAt: '2026-10-16T07:09:00Z', memories: [],
+    walkthrough: finding.id === 'f1' ? 'A write at `src/stats/cache.ts:142` keeps the entry:\n\n```ts\ncache.set(table, stats)\n```\n\nThe next query reads 10 rows instead of 11.' : null })),
+} as unknown as AgentReviewDto;
+
 async function drawsResultsWithTheirEvidence(): Promise<void> {
-  const view = mount(VIEW, 0, [FINISHED_REVIEW, DRAFTED, FAILED]);
+  const posted: unknown[][] = [];
+  const sentWords: unknown[][] = [];
+  let draft: ReviewDraftDto = { repo: 'acme/warehouse', number: 42, body: '', event: 'COMMENT', reviewPublication: null, items: [], postedSummaryFindingIds: [], version: 1,
+    updatedAt: '2026-10-16T07:09:00Z' };
+  const view = mount(VIEW, 0, [FINISHED_REVIEW, DRAFTED, FAILED], [], undefined, undefined, {
+    readNoticeDigests: digests(RESULT_DIGESTS),
+    getAgentReview: async () => FULL_REVIEW,
+    getReviewDraft: async () => draft,
+    addReviewDraftFinding: async (...args: unknown[]) => {
+      draft = { ...draft, version: draft.version + 1, items: [...draft.items, { id: `item-${String(args[4])}`, source: 'AGENT_FINDING', findingId: String(args[4]), findingRevision: 1,
+        commitId: null, path: 'src/stats/cache.ts', side: 'RIGHT', line: 1, startLine: null, body: '', included: true, published: false, publication: null }] };
+      return draft;
+    },
+    saveReviewDraft: async () => draft,
+    submitReviewDraft: async (...args: unknown[]) => { posted.push(args); },
+    sendWordsToTask: async (...args: unknown[]) => { sentWords.push(args); return { queued: false }; },
+  });
   try {
     await settle();
-    assert(pill(view.host, 'decision')?.classList.contains('is-empty') === true && pill(view.host, 'finished')?.textContent === 'Results3',
-      'A failure is a result, not a decision');
+    assert(pill(view.host, 'decision')?.classList.contains('is-empty') === true && pill(view.host, 'finished')?.textContent === 'Results2',
+      `A failure is a result, not a decision, and checks still running never count: ${JSON.stringify(pills(view.host))}`);
     pill(view.host, 'finished')?.click();
     await settle();
-    const [drafted, review, failed] = cards(view.host);
-    const bold = [...view.host.querySelectorAll('.assistant-card *')].filter(node => !node.classList.contains('assistant-card__state') && Number(getComputedStyle(node).fontWeight) > 400).map(node => node.className);
+    const sections = [...view.host.querySelectorAll('.assistant-section')].map(section => section.textContent);
+    assert(JSON.stringify(sections) === '["Decide · 1","Next step · 1","FYI · 1"]', `Results groups what to decide, then one click left, then nothing to do yet: ${JSON.stringify(sections)}`);
+    const [review, failed, drafted] = cards(view.host);
+    const bold = [...view.host.querySelectorAll('.assistant-card *')].filter(node => Number(getComputedStyle(node).fontWeight) > 400).map(node => node.className);
     assert(bold.length === 0, `Nothing in a card is bold: ${bold.join(', ')}`);
-    assert(drafted.querySelector('.assistant-card__evidence')?.textContent === 'Draft PR #58 · checks running+42−7' && buttonIn(drafted, 'Review') !== undefined,
-      `A development result shows where its pull request stands and its lines, and offers Review: ${drafted.textContent}`);
-    assert(review.querySelector('.assistant-card__title')?.textContent === 'Review · Cache table statistics between queries'
-      && review.querySelector('.assistant-lines .is-deleted')?.textContent === '−176' && buttonIn(review, 'Read') !== undefined,
-    `A review result leads with its pull request's title and offers Read: ${review.textContent}`);
-    assert(failed.querySelector('.assistant-card__fail')?.textContent === 'Failed · 2 checks failing' && buttonIn(failed, 'Open') !== undefined,
-      `A failure says why in one line: ${failed.textContent}`);
-    const opened: unknown[] = [];
-    const listener = (event: Event) => { opened.push((event as CustomEvent).detail); };
-    window.addEventListener('bytequay:zoom-reference', listener);
-    assert(!drafted.classList.contains('has-hover') && drafted.querySelector('.assistant-reveal button[aria-label="Clear “Update the install guide”"]') !== null,
-      'Clear shows beside Review under the pointer, never in its place');
-    try { buttonIn(drafted, 'Review')?.click(); }
-    finally { window.removeEventListener('bytequay:zoom-reference', listener); }
-    assert(JSON.stringify(opened) === JSON.stringify([{ kind: 'pull', repo: 'owner/repository', number: 58, workspaceId: 'ws1' }]) && Number(view.calls.closed) === 1,
-      `Review closes the Assistant and opens the pull request: ${JSON.stringify(opened)}`);
+    assert(review.dataset.strip === 'decide' && review.querySelector('.assistant-card__verdict')?.textContent === '2 findings. Statistics go stale after a write.'
+      && review.querySelector('.assistant-card__source')?.textContent === 'PR #42 Cache table statistics between queries · acme/warehouse · @maria · Claude review',
+      `A review leads with its verdict and where it comes from: ${review.textContent}`);
+    const chips = [...review.querySelectorAll('.assistant-evidence .assistant-chip-e')].map(chip => [chip.textContent, chip.getAttribute('title')]);
+    assert(JSON.stringify(chips) === JSON.stringify([['1 high', '1 open high-severity finding'], ['1 medium', '1 open medium-severity finding'],
+      ['6/6 files', 'Read 6 of the 6 changed files'], ['pnpm test', 'pnpm test --filter stats · exit 0']]), `Evidence is counts and names, the sentence in each tooltip: ${JSON.stringify(chips)}`);
+    const box = element<HTMLElement>('.assistant-finding', review, 'The most severe finding shows in full');
+    assert(box.textContent?.includes('F-1') && box.textContent.includes('src/stats/cache.ts:142') && box.textContent.includes('old row counts')
+      && review.querySelector('.assistant-finding-row')?.textContent?.includes('The cache has no size limit') === true, `The others wait one line each: ${review.textContent}`);
+    buttonIn(box, 'Walkthrough')?.click();
     await settle();
-    assert(JSON.stringify(view.calls.removed) === JSON.stringify([DRAFTED.id]), `A result opened for review has been seen, so it leaves Results: ${JSON.stringify(view.calls.removed)}`);
+    assert(box.querySelector('.assistant-walkthrough pre')?.textContent?.includes('cache.set(table, stats)') && box.querySelector('.assistant-ran')?.textContent === 'Ran it',
+      `The walkthrough is the reviewer's own Markdown, then whether it ran: ${box.textContent}`);
+    assert(buttonIn(box, 'Request fix') === undefined && buttonIn(box, 'Post as comment') !== undefined, 'Someone else’s pull request has no task to send a fix to');
+    assert(failed.dataset.strip === 'failed' && failed.querySelector('.assistant-card__verdict')?.textContent === 'The last turn failed. The task is still open.'
+      && failed.querySelector('.assistant-line-e')?.textContent === '2 checks failing' && buttonIn(failed, 'Retry') !== undefined, `A failure says what failed in its own words: ${failed.textContent}`);
+    assert(drafted.dataset.strip === 'fyi' && drafted.querySelector('.assistant-card__verdict')?.textContent === 'Updated the install guide for the new flags.'
+      && drafted.querySelector('.assistant-evidence')?.textContent === 'Draft2/3 running+42−7' && drafted.querySelector('.assistant-button.is-primary') === null,
+      `A draft with checks running waits with no primary: ${drafted.textContent}`);
+    buttonIn(review, 'Post 2 comments')?.click();
+    await settle();
+    assert(JSON.stringify(posted) === JSON.stringify([['acme/warehouse', 42, 3, '', 'COMMENT', 'abc1234', 'ws1']]) && JSON.stringify(draft.items.map(item => item.findingId)) === '["f1","f2"]',
+      `Both findings go out as one review of comments, at the head the review saw: ${JSON.stringify(posted)}`);
+    const receipt = element<HTMLElement>('.assistant-receipt', view.host, 'The card collapses to its receipt');
+    assert(receipt.textContent === 'Posted 2 comments · PR #42 Cache table statistics between queriesView review' && view.calls.removed.includes(FINISHED_REVIEW.id),
+      `The receipt says what happened and where, and the notice goes: ${receipt.textContent}`);
+    buttonIn(failed, 'Retry')?.click();
+    await settle();
+    assert(sentWords.length === 1 && sentWords[0][0] === 'task-6' && sentWords[0][1] === 'Try again.', `Retry sends the task the words to try again: ${JSON.stringify(sentWords)}`);
   }
   finally { view.dispose(); }
 }
@@ -1224,13 +1302,8 @@ async function reportsWhatItsTasksRaised(): Promise<void> {
     const talk = element<HTMLElement>('.assistant-talk', view.host, 'The conversation shows');
     const line = (text: string) => [...talk.querySelectorAll<HTMLElement>('.assistant-receipt')].find(each => each.textContent?.includes(text) === true);
     assert(line('Started “Expose snapshot id')?.textContent?.includes('Stop work…') === false, 'Once its turn ended, a receipt offers no Stop');
-    assert(talk.querySelectorAll('.assistant-card[data-state="ATTENTION"]').length === 0,
-      'A later result supersedes old failure and stuck cards');
-    const activity = element<HTMLDetailsElement>('.assistant-card[data-state="RESULT_READY"] .assistant-report-activity', talk, 'Earlier outcomes stay in Activity');
-    assert(!activity.open && activity.textContent?.includes('looks stuck') && activity.textContent.includes('failed'), 'History remains available without repeating the obsolete cards');
-    activity.querySelector('summary')?.click();
-    await settle();
-    assert(activity.open, 'Earlier source outcomes can be expanded');
+    assert(!talk.textContent?.includes('looks stuck') && !talk.textContent?.includes('stopped before it finished'),
+      'A later result supersedes old failure and stuck cards, which stay on the task page');
     const replies = () => [...talk.querySelectorAll<HTMLButtonElement>('.assistant-reply-to .assistant-link')];
     assert(replies().length === 1, `Only a task's latest report takes a reply, and not while it waits on an approval: ${replies().length}`);
     replies()[0].click();
@@ -1256,10 +1329,10 @@ async function reportsWhatItsTasksRaised(): Promise<void> {
     assert(JSON.stringify(view.calls.resolved) === JSON.stringify([['a1', 'ALLOW', null, null]]) && JSON.stringify(view.calls.answered) === '["a1"]',
       'Answering it there reaches the task and leaves a receipt');
     const lines = [...talk.querySelectorAll<HTMLElement>('.assistant-receipt')];
-    assert(talk.querySelector('.assistant-card[data-state="APPROVAL_REQUIRED"]') === null && lines.some(line => line.textContent?.startsWith('Allowed · “Metadata cache”') === true),
+    assert(talk.querySelector('.assistant-card[data-card="approval:a1"]') === null && lines.some(line => line.textContent?.startsWith('Allowed · “Metadata cache”') === true),
       `The answered decision stays as its line: ${lines.map(line => line.textContent).join(' | ')}`);
     assert(replies().length === 2, 'Once answered, its task takes a reply too');
-    buttonIn(talk.querySelector<HTMLElement>('.assistant-card[data-state="RESULT_READY"]'), 'Review result')?.click();
+    buttonIn([...talk.querySelectorAll<HTMLElement>('.assistant-card')].find(card => card.textContent?.includes('is ready') === true), 'Open work')?.click();
     await settle();
     assert(view.calls.left === 1, 'A result whose notice is gone opens its task');
   }
@@ -1329,12 +1402,13 @@ async function keepsRuleReceiptsSeparateFromCompletion(): Promise<void> {
     enter(type(view.host, 'How is the work going?'));
     await settle();
     const talk = element<HTMLElement>('.assistant-talk', view.host, 'The conversation shows');
-    const ready = element<HTMLElement>('.assistant-card[data-state="RESULT_READY"]', talk, 'The result keeps its card without a notice');
-    assert(ready.textContent?.includes('The focused tests passed.') && ready.textContent.includes('Result ready'), 'Assessment does not turn a finished turn into completed work');
-    assert(ready.querySelector('.assistant-card__meta')?.textContent === 'owner/project', 'The default card metadata shows the repository without execution identifiers');
-    assert(talk.querySelectorAll('.assistant-card[data-state="COMPLETED"]').length === 1, 'Only verified completed work uses Completed');
-    assert(talk.querySelector('.assistant-card[data-state="APPROVAL_REQUIRED"]') === null && talk.querySelector('.assistant-report-activity')?.textContent?.includes('allowed'),
-      'A rule-resolved permission is a receipt without another approval card');
+    const ready = [...talk.querySelectorAll<HTMLElement>('.assistant-card')].find(card => card.querySelector('.assistant-card__verdict')?.textContent === 'Changes ready for review');
+    assert(ready !== undefined && ready.textContent?.includes('The focused tests passed.') && ready.querySelector('.assistant-card__icon.is-success') === null,
+      'The result keeps its card without a notice, and assessment does not turn a finished turn into completed work');
+    assert(ready.querySelector('.assistant-card__source')?.textContent === 'owner/project', 'The card says where it comes from without execution identifiers');
+    assert(talk.querySelectorAll('.assistant-card__icon.is-success').length === 1, 'Only verified completed work reads as done');
+    assert(talk.querySelector('[data-card^="approval:"]') === null && talk.querySelectorAll('.assistant-actions .is-primary').length === 0,
+      'A rule-resolved permission asks nothing again; the rule receipt stays with the result');
     const details = element<HTMLDetailsElement>('.assistant-rule-receipt', ready, 'Rule actions are retained');
     assert(!details.open && details.querySelector('summary')?.textContent?.includes('Allowed 3 requests under Build access'), 'Rule actions collapse to a factual count and attribution');
     const activity = details.parentElement?.closest('details');
@@ -1454,12 +1528,36 @@ const mine = (number: number, title: string, extra: Partial<PullRequestDto>): Pu
  * Draws a view for a screenshot: `decision` the waiting decisions with their time left, `all` the three questions, `mywork` the board,
  * and `home` Home's My work line with the composer under it.
  */
-export async function showViewPreview(name: 'decision' | 'all' | 'mywork' | 'home'): Promise<void> {
+const CODEX_APPROVAL: AgentPendingApprovalDto = { ...APPROVAL, approvalId: 'a2', taskId: 'task-7', turnId: 'turn-task-7', title: 'Allow Codex command', sandboxed: false,
+  detail: 'pnpm db:migrate --env staging\nReason: The integration tests need the sessions table on staging before they can run.\nNetwork approval: {"host":"db.example.com"}',
+  availableDecisions: ['ALLOW_ONCE', 'DENY'] };
+const QUESTION_APPROVAL: AgentPendingApprovalDto = { ...APPROVAL, approvalId: 'a3', taskId: 'task-8', turnId: 'turn-task-8', title: 'Answer Claude', approvalKind: 'TOOL',
+  scope: ['AskUserQuestion'], availableDecisions: ['ALLOW_ONCE', 'DENY'], detail: JSON.stringify({ questions: [{ question: 'Keep the old /v1/tokens route for one release, or remove it now?',
+    header: 'Route', multiSelect: false, options: [{ label: 'Keep for one release', description: '' }, { label: 'Remove now', description: '' },
+      { label: 'Remove and add a redirect', description: '' }] }] }) };
+const CLEAN_REVIEW: AppNotice = { ...FINISHED_REVIEW, id: 'finished:clean', taskId: 'review-clean', reviewId: 'r10', repository: 'acme/api', pullRequest: 'acme/api#58',
+  pullRequestTitle: 'Add rate-limit headers', occurredAt: '2026-10-16T07:05:00Z' };
+const FAILING: AppNotice = { ...notice('finished:redis', 'TURN_FINISHED', 'task-9', 'Move sessions to Redis'), pullRequest: 'owner/repository#62', occurredAt: '2026-10-16T07:04:00Z' };
+/** A review notice as the backend sends it, with the report its Ask reads; previews use their own ids, so receipts of the scenarios stay theirs. */
+const previewed = (each: AppNotice, id: string): AppNotice => ({ ...each, id, report: { delivery: each.delivery, deliveryReason: each.deliveryReason, state: 'RESULT_READY',
+  noticeId: id, target: target('REVIEW', { id: each.reviewId ?? each.taskId }), sourceTurnId: 'turn-preview', assessment: null, outcome: null, evidence: [], ruleActions: [] } });
+const PREVIEW_DIGESTS: Record<string, ResultDigest> = {
+  'preview:review': { ...RESULT_DIGESTS['finished:review'], noticeId: 'preview:review' },
+  'preview:draft': { ...RESULT_DIGESTS['finished:draft'], noticeId: 'preview:draft' },
+  'finished:clean': digestOf('finished:clean', { review: { ...REVIEWED, findings: [], filesRead: 14, filesChanged: 14, commands: [{ command: 'pnpm test --filter api', exitCode: 0 },
+    { command: 'pnpm exec tsc --noEmit -p api', exitCode: 0 }] }, pull: facts({ number: 58, title: 'Add rate-limit headers', draft: false, mine: false, author: 'dev-sam' }) }),
+  'finished:redis': digestOf('finished:redis', { report: 'Moved session storage to Redis and removed the in-memory store.', pull: facts({ number: 62, title: 'Move sessions to Redis',
+    additions: 412, deletions: 198, files: 11, checks: [...Array.from({ length: 10 }, (_, index) => passing(`check ${index}`)),
+      { name: 'test (node 20)', state: 'failing', url: 'https://ci.example.com/1' }, { name: 'lint', state: 'failing', url: 'https://ci.example.com/2' }] }) }),
+};
+
+export async function showViewPreview(name: 'decision' | 'all' | 'finished' | 'mywork' | 'home'): Promise<void> {
   preview?.dispose();
   document.body.style.margin = '0';
   document.body.style.background = 'var(--bg)';
-  const approvals = [{ ...NOTICES[0], expiresAt: soon(3) }, { ...notice('approval:a2', 'APPROVAL', 'task-7', 'Fix flaky login test'), repository: 'acme/gateway', laneId: 'codex',
-    expiresAt: soon(1) }];
+  const approvals = [{ ...NOTICES[0], expiresAt: soon(3) }, { ...notice('approval:a2', 'APPROVAL', 'task-7', 'Move sessions to Redis'), repository: 'acme/api', laneId: 'codex',
+    expiresAt: soon(9) }, { ...notice('approval:a3', 'QUESTION', 'task-8', 'Rotate session keys'), repository: 'acme/api', expiresAt: soon(42) },
+  { ...notice('stuck:turn-task-10:1', 'STUCK', 'task-10', 'Expose snapshot id in metadata'), message: 'Quiet 25 min · last: Running integration tests' }];
   const prs = [
     mine(57, 'Add snapshot metrics', { requestedReviewers: ['sam-r'] }),
     mine(212, 'Route requests by client tags', { repo: 'acme/gateway', reviewDecision: 'CHANGES_REQUESTED' }),
@@ -1467,8 +1565,12 @@ export async function showViewPreview(name: 'decision' | 'all' | 'mywork' | 'hom
     mine(59, 'Drop the old cache key', { reviewDecision: 'APPROVED', mergeable: true, mergeableState: 'clean', ciStatus: 'PASSING' }),
     mine(58, 'Update the install guide', { repo: 'acme/docs', draft: true }),
   ];
-  const work = { getUserProfile: async () => ({ login: 'you' }), fetchAttentionPrs: async () => prs, fetchAuthoredIssues: async () => [] } as unknown as Partial<Bridge>;
-  const mounted = mount(VIEW, 0, [...approvals, DRAFTED, FINISHED_REVIEW, FAILED], [RUNNING], undefined, undefined, work);
+  const pending = [APPROVAL, CODEX_APPROVAL, QUESTION_APPROVAL];
+  const work = { getUserProfile: async () => ({ login: 'you' }), fetchAttentionPrs: async () => prs, fetchAuthoredIssues: async () => [], readNoticeDigests: digests(PREVIEW_DIGESTS),
+    getAgentReview: async () => FULL_REVIEW, getReviewDraft: async () => ({ body: '', items: [], reviewPublication: null }),
+    readAgentPendingApprovals: async (taskId: string) => pending.filter(each => each.taskId === taskId) } as unknown as Partial<Bridge>;
+  const results = [{ ...DRAFTED, id: 'preview:draft' }, previewed(FINISHED_REVIEW, 'preview:review'), { ...FAILED, id: 'preview:failed' }, previewed(CLEAN_REVIEW, 'finished:clean'), FAILING];
+  const mounted = mount(VIEW, 0, [...approvals, ...results], [RUNNING], undefined, undefined, work);
   preview = mounted;
   if (name === 'home') {
     mounted.dispose();

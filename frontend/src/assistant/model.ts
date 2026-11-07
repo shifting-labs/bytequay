@@ -20,6 +20,7 @@ import type { WorkLane } from '../home/work';
 import { isDecision, type AppNotice } from '../notices/contracts';
 import { SETTINGS_ENTRIES, isWorkspaceSection, settingsRoute } from '../settings/routes';
 import type { AgendaTargetDto, AssistantItemDto, AssistantRowDto } from '../types';
+import { inDecision, laneOf, type Lane, type ResultDigest } from './results';
 import { workspaceLocationFromRoute, workspaceRoute, type WorkspaceTab } from '../workspaces/model';
 
 /** The pills under the composer, each a view of the Assistant; the conversation shows while none is open. */
@@ -50,16 +51,22 @@ export function onOpenAssistant(listener: (request: AssistantRequest) => void): 
   return () => window.removeEventListener(OPEN_EVENT, handle);
 }
 
-/** One card of a view: a task's notice, or a task still running. */
-export type WaitingCard = { key: string; group: 'decision' | 'finished'; at: number; notice: AppNotice }
+/** One card of a view: a task's notice, or a task still running. A result also says where it sits in Results, from its digest. */
+export type WaitingCard = { key: string; group: 'decision'; at: number; notice: AppNotice }
+  | { key: string; group: 'finished'; at: number; notice: AppNotice; lane: Lane; digest?: ResultDigest }
   | { key: string; group: 'running'; at: number; task: RunningTask };
 
 /**
  * Keep every pending decision, and the newest result or running card for each task and pull request. A task waiting on a decision
  * appears there instead of also counting as running. Rule actions without tasks are independent results.
  */
-export function waitingCards(notices: AppNotice[], tasks: RunningTask[]): WaitingCard[] {
-  const cards: WaitingCard[] = notices.map(notice => ({ key: notice.id, group: isDecision(notice) ? 'decision' : 'finished', at: Date.parse(notice.occurredAt), notice }));
+export function waitingCards(notices: AppNotice[], tasks: RunningTask[], digests: ReadonlyMap<string, ResultDigest> = new Map()): WaitingCard[] {
+  const cards: WaitingCard[] = notices.map(notice => {
+    const at = Date.parse(notice.occurredAt);
+    if (inDecision(notice)) return { key: notice.id, group: 'decision', at, notice };
+    const digest = digests.get(notice.id);
+    return { key: notice.id, group: 'finished', at, notice, lane: laneOf(notice, digest), digest };
+  });
   for (const task of tasks) {
     if (task.status === 'RUNNING') cards.push({ key: `running:${task.id}`, group: 'running', at: Date.parse(task.startedAt), task });
   }

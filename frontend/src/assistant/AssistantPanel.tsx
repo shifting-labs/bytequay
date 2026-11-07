@@ -11,7 +11,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import {
   AlarmClock, ArrowUpRight, Ban, CalendarCheck, CheckCheck, CircleCheck, CircleDot, Clock, Flag, GitBranch, GitCompareArrows, GitMerge, GitPullRequest,
   GitPullRequestArrow, GitPullRequestClosed, GitPullRequestDraft, History,
@@ -36,9 +36,11 @@ import { errorMessage } from '../errorMessage';
 import { settingsRoute, type SettingsSection } from '../settings/routes';
 import type { AgendaTargetDto, AssistantItemDto, AssistantReceiptDto, AssistantRowDto, AssistantSummaryDto } from '../types';
 import AssistantList from './AssistantList';
-import { ApprovalCard, DurableReportCard, NoticeCard, ReportActivity, ResultCard, RunningCard, RunningFold, StopButton } from './Cards';
+import { ApprovalCard, NoticeCard, RunningCard, RunningFold, StopButton } from './Cards';
 import DraftCard from './DraftCard';
 import RuleOfferCard from './RuleOfferCard';
+import { AllResults, DurableReportCard, ResultCard, ResultGroups, type CardHost } from './ResultCards';
+import { inDecision, laneOf, type ResultDigest } from './results';
 import {
   SUGGESTION, answeredRules, arrivedOpen, createdDrafts, decisionOrder, endedTurns, inAnswerOrder, linkRefs, pageRoute, reportActivity, refFromHref, refLabel, takesSuggestion, type AssistantRequest,
   type AssistantView, type Pill, type WaitingCard,
@@ -311,7 +313,7 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
     // Not while the task waits on an approval, which its card's buttons answer.
     const replyable = item.report?.target.kind === 'TASK' && latestReports.get(item.report?.target.id ?? '') === item.id && notice?.id.startsWith(APPROVAL_NOTICE) !== true;
     return <Report key={item.id} item={item} notice={notice} conversation={conversation} onAnswered={answeredNotice} onOpenNotice={openNotice}
-      onClearNotice={clearNotice} onShow={show} activity={activity.get(item.id) ?? []} onReply={replyable ? replyOnReport(item.id) : undefined} />;
+      onClearNotice={clearNotice} onShow={show} onReply={replyable ? replyOnReport(item.id) : undefined} />;
   };
   const pick = (pill: Pill) => {
     setHistory(false);
@@ -451,6 +453,8 @@ function AssistantViews({ notices, view, lane, card, talk, pointsDown, composer,
   onClearNotice: (id: string) => void;
 }) {
   const waiting = useWaiting(notices);
+  const digests = new Map(waiting.cards.flatMap(each => 'digest' in each && each.digest !== undefined ? [[each.key, each.digest] as const] : []));
+  const host: CardHost = { show: onShow, openNotice: onOpenNotice, openUrl: url => onLeave(() => void window.bridge.openInAppBrowser(url)) };
   const shown = useShownWork();
   const [read, setRead] = useState<WorkItem[]>([]);
   const work = shown ?? read;
@@ -493,12 +497,10 @@ function AssistantViews({ notices, view, lane, card, talk, pointsDown, composer,
     const { notice } = each;
     return notice.id.startsWith(APPROVAL_NOTICE)
       ? <ApprovalCard key={each.key} notice={notice} focused={opened === notice.id} conversation={conversation} onAnswered={() => onAnswered(notice.id)}
-        onOpen={() => onOpenNotice(notice.id)} onClear={() => onClearNotice(notice.id)} />
-      : <NoticeCard key={each.key} notice={notice} focused={opened === notice.id} onOpen={() => onOpenNotice(notice.id)} onClear={() => onClearNotice(notice.id)} />;
+        onOpen={() => onOpenNotice(notice.id)} />
+      : <NoticeCard key={each.key} notice={notice} focused={opened === notice.id} digest={digests.get(notice.id)} onOpen={() => onOpenNotice(notice.id)}
+        onClear={() => onClearNotice(notice.id)} />;
   };
-  const resultCard = (each: WaitingCard) => 'notice' in each
-    && <ResultCard key={each.key} notice={each.notice} onShow={onShow} onOpen={() => onOpenNotice(each.notice.id)}
-      onClear={() => onClearNotice(each.notice.id)} />;
   const runningCard = (each: WaitingCard) => 'task' in each && <RunningCard key={each.key} task={each.task} onOpen={() => onLeave(() => onPage(runningTaskRoute(each.task)))} />;
   const section = (label: string) => <div className="assistant-section">{label}</div>;
 
@@ -514,13 +516,13 @@ function AssistantViews({ notices, view, lane, card, talk, pointsDown, composer,
       body = running.map(runningCard);
       break;
     case 'finished':
-      body = finished.map(resultCard);
+      body = <ResultGroups cards={cards} host={host} section={section} />;
       break;
     case 'all':
       body = <>
-        {decisions.length > 0 && <>{section('Decision')}{decisions.map(decisionCard)}</>}
-        {running.length > 0 && <>{section('Running')}<RunningFold count={running.length} onOpen={() => onView('running')} /></>}
-        {finished.length > 0 && <>{section('Results')}{finished.map(resultCard)}</>}
+        {decisions.length > 0 && <>{section(`Decision · ${decisions.length}`)}{decisions.map(decisionCard)}</>}
+        <AllResults cards={cards} host={host} section={section}
+          running={running.length > 0 && <>{section(`Running · ${running.length}`)}<RunningFold count={running.length} onOpen={() => onView('running')} /></>} />
       </>;
       break;
     case 'today':
@@ -538,7 +540,7 @@ function AssistantViews({ notices, view, lane, card, talk, pointsDown, composer,
       {composer}
       <AssistantPills waiting={waiting} needsYou={work.some(item => item.lane === 'needs')} open={view === 'conversation' ? null : view} onPick={onPick} />
     </div>
-    {body !== null && <div ref={scroller} className="assistant-body">{body}</div>}
+    {body !== null && <Digests.Provider value={{ digests, host }}><div ref={scroller} className="assistant-body">{body}</div></Digests.Provider>}
   </>;
 }
 
@@ -620,9 +622,11 @@ function Entry({ item, waiting, rows, drafts, ruled, model, retryable, onRetry, 
  * What a task the conversation started or sent words to raised: while its notice lasts, that notice's own card, answered or opened in
  * place; after, the durable result and its evidence remain. A task's latest report takes a reply.
  */
-function Report({ item, notice, conversation, onAnswered, onOpenNotice, onClearNotice, onShow, onReply, activity }: {
+/** The results' digests and where their links go, for the reports the conversation shows inside the views. */
+const Digests = createContext<{ digests: ReadonlyMap<string, ResultDigest>; host: CardHost } | null>(null);
+
+function Report({ item, notice, conversation, onAnswered, onOpenNotice, onClearNotice, onShow, onReply }: {
   item: AssistantItemDto;
-  activity: AssistantItemDto[];
   notice: AppNotice | undefined;
   conversation: string;
   onAnswered: (id: string) => void;
@@ -631,29 +635,23 @@ function Report({ item, notice, conversation, onAnswered, onOpenNotice, onClearN
   onShow: (target: AgendaTargetDto) => void;
   onReply?: (text: string, key: string) => Promise<boolean>;
 }) {
+  const shared = useContext(Digests);
   const report = item.report;
   if (report === null) return null;
-  let entry: ReactNode;
+  // While its notice lasts, the report is that notice's own card; the card then answers, acts and replies itself.
   if (notice !== undefined && report.outcome === null) {
     const open = () => onOpenNotice(notice.id);
-    const clear = () => onClearNotice(notice.id);
-    const pending = report.state === 'APPROVAL_REQUIRED' || report.state === 'ANSWER_REQUIRED';
-    entry = <>
-      {pending && notice.id.startsWith(APPROVAL_NOTICE)
-        ? <ApprovalCard notice={notice} focused={false} conversation={conversation} onAnswered={() => onAnswered(notice.id)} onOpen={open} onClear={clear} />
-        : report.state === 'PROPOSAL' || report.state === 'ATTENTION' || pending
-          ? <NoticeCard notice={notice} focused={false} onOpen={open} onClear={clear} />
-          : report.state === 'COMPLETED' || report.state === 'PROGRESS' || report.state === 'RESULT_READY'
-            ? <DurableReportCard report={report} activity={activity} text={item.text} onOpen={() => onShow(report.target)} />
-            : <ResultCard notice={notice} onShow={onShow} onOpen={open} onClear={clear} />}
-      {report.state !== 'COMPLETED' && report.state !== 'PROGRESS' && report.state !== 'RESULT_READY' && <div className="assistant-report-details">
-        {report.assessment !== null && <div className="assistant-card__assessment">{report.assessment}</div>}
-        <ReportActivity report={report} history={activity} />
-      </div>}
-    </>;
+    const digest = shared?.digests.get(notice.id);
+    const entry = notice.id.startsWith(APPROVAL_NOTICE)
+      ? <ApprovalCard notice={notice} focused={false} conversation={conversation} onAnswered={() => onAnswered(notice.id)} onOpen={open} />
+      : inDecision(notice) ? <NoticeCard notice={notice} focused={false} digest={digest} onOpen={open} onClear={() => onClearNotice(notice.id)} />
+        : shared !== null ? <ResultCard notice={notice} lane={laneOf(notice, digest)} digest={digest} host={shared.host} />
+          : <DurableReportCard report={report} text={item.text} onOpen={() => onShow(report.target)} />;
+    return <div className="assistant-work-report">{entry}
+      {report.assessment !== null && !inDecision(notice) && <div className="assistant-report-details"><div className="assistant-card__assessment">{report.assessment}</div></div>}
+    </div>;
   }
-  else entry = <DurableReportCard report={report} activity={activity} text={item.text} onOpen={() => onShow(report.target)} />;
-  return <div className="assistant-work-report">{entry}
+  return <div className="assistant-work-report"><DurableReportCard report={report} text={item.text} onOpen={() => onShow(report.target)} />
     {onReply !== undefined && report.offer != null && <LetByteQuay offer={report.offer} onSend={words => onReply(words, `offer:${item.id}`)} />}
     {onReply !== undefined && <ReplyToTask onSend={onReply} />}
   </div>;

@@ -1718,6 +1718,10 @@ function registerIpc(): void {
     backendJson(`${backendBase()}/api/assistant/result-discussions`, jsonInit('POST', { target, sourceTurnId, question }, agentHeaders())));
   ipcMain.handle('assistant:reply', (_event, conversationId: unknown, itemId: unknown, text: unknown, key: unknown) =>
     backendJson(`${backendBase()}/api/assistant/replies`, jsonInit('POST', { conversationId, itemId, text, key }, agentHeaders())));
+  ipcMain.handle('assistant:task-words', (_event, taskId: unknown, text: unknown, key: unknown) =>
+    backendJson(`${backendBase()}/api/assistant/task-words`, jsonInit('POST', { taskId, text, key }, agentHeaders())));
+  ipcMain.handle('notices:digests', (_event, notices: unknown) =>
+    backendJson(`${backendBase()}/agent/notices/digests`, jsonInit('POST', Array.isArray(notices) ? notices : [], agentHeaders())));
   ipcMain.handle('settings:assistant', () => backendJson(`${backendBase()}/api/settings/assistant`, { headers: agentHeaders() }));
   ipcMain.handle('settings:assistant:save', (_event, permissions: unknown) => {
     const value = permissions as Partial<Record<'startTasks' | 'answerTasks' | 'changeWork' | 'markAttention' | 'changePullRequests', unknown>> | null;

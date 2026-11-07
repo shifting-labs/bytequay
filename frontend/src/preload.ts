@@ -405,6 +405,8 @@ const bridge: Bridge = {
   recordAssistantPullAction: invoke('assistant:pull-acted'),
   askAssistantResult: invoke('assistant:result-discussion'),
   replyFromAssistant: invoke('assistant:reply'),
+  sendWordsToTask: invoke('assistant:task-words'),
+  readNoticeDigests: invoke('notices:digests'),
   getAssistantPermissions: invoke('settings:assistant'),
   saveAssistantPermissions: invoke('settings:assistant:save'),
 

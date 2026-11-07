@@ -20,6 +20,7 @@ import type { VoiceBridge } from './dictation/contracts';
 import type { ZoomedReference } from './githubReference';
 import type { WorkItemBridge, CreateWorkItem, EpicDraftMessage, EpicDraftReply, EpicJoinDto, EpicRecordDto, WorkItemDto, WorkItemDecision, GoalItemDto, GoalItemKind } from './workitems/contracts';
 import type { NoticeSnapshot } from './notices/contracts';
+import type { DigestRequest } from './assistant/results';
 import type { RunningTask } from './agents/runningTaskModel';
 import type { GoogleBridge } from '@bytequay/google/contracts';
 import type { JiraBridge, JiraSourceRequest, JiraTaskSource } from './jira/contracts';
@@ -2267,6 +2268,10 @@ export type Bridge = LabBridge & WorkItemBridge & JiraBridge & GoogleBridge & Ar
   /** Sends the user's words straight to the task a report named, with no model between; the conversation keeps the receipt. */
   askAssistantResult: (target: AgendaTargetDto, sourceTurnId: string, question: string) => Promise<TaskDiscussionDto>;
   replyFromAssistant: (conversationId: string, itemId: string, text: string, key: string) => Promise<{ itemId: string }>;
+  /** The user's own words to the task a result card names, from its button or reply box; the card keeps the receipt. */
+  sendWordsToTask: (taskId: string, text: string, key: string) => Promise<{ queued: boolean }>;
+  /** What each result card decides from, read from what ByteQuay stores; parse it with parseDigests. */
+  readNoticeDigests: (notices: DigestRequest[]) => Promise<unknown>;
   getAssistantPermissions: () => Promise<AssistantPermissionsDto>;
   saveAssistantPermissions: (permissions: AssistantPermissionsDto) => Promise<AssistantPermissionsDto>;
 

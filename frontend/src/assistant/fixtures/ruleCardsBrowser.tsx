@@ -16,7 +16,9 @@ import { createFixtureRoot } from '../../fixtures/reactFixture';
 import { assert, button, changeInput, element, runScenarios, settle } from '../../fixtures/harness';
 import type { AppNotice } from '../../notices/contracts';
 import type { AssistantItemDto, AssistantReportDto, Bridge, HeldReviewReplyDto } from '../../types';
-import { DurableReportCard, NoticeCard, ResultCard } from '../Cards';
+import { NoticeCard } from '../Cards';
+import { DurableReportCard, ResultCard } from '../ResultCards';
+import { laneOf } from '../results';
 import RuleOfferCard from '../RuleOfferCard';
 import type { TaskDiscussionDto } from '../../agents/discussions/contracts';
 import '../../index.css';
@@ -74,9 +76,13 @@ function render(notice: AppNotice, result = false) {
   let opened = 0;
   let reviewed = 0;
   let cleared = 0;
+  const links = {
+    show: (target: { kind: string; number: number | null }) => { assert(target.kind === 'PULL' && target.number === 4530, 'Open resolves the pull request rather than a synthetic task'); opened++; },
+    openNotice: () => { reviewed++; },
+    openUrl: () => {},
+  };
   flushSync(() => root.render(result
-    ? <ResultCard notice={notice} onShow={target => { assert(target.kind === 'PULL' && target.number === 4530, 'Open resolves the pull request rather than a synthetic task'); opened++; }}
-      onOpen={() => { assert(notice.reviewId !== null, 'A rule without a review must open the pull request'); reviewed++; }} onClear={() => { cleared++; }} />
+    ? <ResultCard notice={notice} lane={laneOf(notice, undefined)} host={links} />
     : <NoticeCard notice={notice} focused={false} onOpen={() => { opened++; }} onClear={() => { cleared++; }} />));
   // Read through functions: an assertion on a plain field would narrow it to the count it checked.
   return { host, opened: () => opened, reviewed: () => reviewed, cleared: () => cleared, dispose };
@@ -93,6 +99,7 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
     },
     keepAgentRuleObserving: async (id: string) => { calls.push(`keep ${id}`); return []; },
     dismissAgentRuleRun: async (id: string, key: string) => { calls.push(`dismiss ${id} ${key}`); return []; },
+    removeAppNotice: async (id: string) => { calls.push(`remove ${id}`); },
   } as unknown as Bridge;
   return runScenarios([
     ['saves an offered rule as the user changed it, says why a save was refused, or leaves it unsaved', async () => {
@@ -171,19 +178,20 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
       const report = { ...quietReport(), state: 'PROGRESS' as const, assessment: null };
       const card = render({ ...RESULT, id: 'finished:source-turn', kind: 'TURN_FINISHED', message: 'Reviewing the result in the background', delivery: 'PASSIVE', deliveryReason: report.deliveryReason, report }, true);
       try {
-        assert(card.host.querySelector('[data-state="PROGRESS"]') !== null, 'Pending interpretation is Progress rather than a stale ready result');
-        assert(card.host.textContent?.includes('Reviewing the result') && !card.host.textContent.includes('Ask about this'), 'Pending summary says what is happening and does not ask about an unfinished assessment');
-        button('Open work', card.host).click(); await settle();
+        assert(card.host.querySelector('[data-strip="fyi"]') !== null, 'Pending interpretation waits quietly as FYI rather than a stale ready result');
+        assert(card.host.textContent?.includes('Reviewing the result') && card.host.querySelector('[aria-label="Ask about this review"]') === null && !card.host.textContent.includes('Ask'),
+          'Pending summary says what is happening and does not ask about an unfinished assessment');
+        button('Open review', card.host).click(); await settle();
         assert(card.reviewed() === 1, 'The underlying result remains accessible during background interpretation');
       }
       finally { card.dispose(); }
     }],
     ['moves a rule up or keeps it observing from its card, and says why a move was refused', async () => {
-      const card = render({ ...MOVE_UP, delivery: 'PASSIVE' }, true);
+      const card = render({ ...MOVE_UP, delivery: 'PASSIVE' });
       try {
         const text = card.host.textContent ?? '';
-        assert(text.includes('Review PRs that need me') && text.includes('Agreed 10 of 12 times. Move it to Suggest?') && text.includes('Move up?'),
-          `The card names the rule and its record: ${text}`);
+        assert(text.includes('Review PRs that need me is ready to move up to Suggest.') && text.includes('Agreed 10 of 12 times.') && !text.includes('Move it to Suggest?')
+          && text.includes('Move up?') && card.host.querySelector('[data-strip="decide"]') !== null, `The card names the rule, its record as evidence, and waits in Decide: ${text}`);
         button('Move to Suggest', card.host).click();
         await settle();
         assert(calls.at(-1) === `up ${RULE}` && card.cleared() === 1, `Move to Suggest moves the rule up and clears the card: ${calls.join(' | ')}`);
@@ -207,9 +215,10 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
           verdict: 'PENDING', suggestion: false, skipped: null, outcome: 'MERGED', authorization: { ruleId: RULE, ruleName: 'Merge approved work', ruleVersion: 2 } } };
       const card = render(notice, true);
       try {
-        assert(card.host.querySelector('[data-state="COMPLETED"]') !== null && card.host.textContent?.includes('under Merge approved work'), 'A verified merge is completed and attributed');
+        assert(laneOf(notice, undefined) === 'done', 'A verified merge is done, so Results folds it into Done today');
+        assert(card.host.textContent?.includes('Merged the approved pull request.') && card.host.textContent.includes('under Merge approved work'), 'A verified merge is attributed');
         assert(!card.host.textContent?.includes('Check suggestion') && !card.host.textContent?.includes('Dismiss'), 'An already authorized action does not ask for acceptance');
-        button('Open pull request', card.host).click();
+        button('Open PR', card.host).click();
         await settle();
         assert(card.opened() === 1, 'Open uses the pull request');
       }
@@ -217,7 +226,10 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
       const run = notice.ruleRun;
       if (run == null) throw new Error('The result needs its rule run');
       const uncertain = render({ ...notice, kind: 'FAILURE', ruleRun: { ...run, outcome: 'UNKNOWN' } }, true);
-      try { assert(uncertain.host.querySelector('[data-state="ATTENTION"]') !== null, 'Unknown remote outcomes need attention, never a retry or completion claim'); }
+      try {
+        assert(uncertain.host.querySelector('[data-strip="failed"]') !== null && button('Open PR', uncertain.host) !== null && !uncertain.host.textContent?.includes('Retry'),
+          'Unknown remote outcomes need attention, never a retry or completion claim');
+      }
       finally { uncertain.dispose(); }
     }],
     ['shows the Assistant assessment inline and opens the full private review', async () => {
@@ -228,16 +240,19 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
           authorization: { ruleId: RULE, ruleName: 'Review changes to my lines', ruleVersion: 3 } } };
       const card = render(notice, true);
       try {
-        assert(card.host.querySelector('[data-state="RESULT_READY"]') !== null, 'A completed review is a result to inspect, not completed work');
-        assert(card.host.querySelector('.assistant-card__assessment')?.textContent === summary, 'The Assistant summary is readable without opening the full review');
+        assert(card.host.querySelector('[data-strip]') !== null && card.host.querySelector('.assistant-card__verdict')?.textContent === summary,
+          'The Assistant summary is the verdict, readable without opening the full review');
         assert(card.host.textContent?.includes('under Review changes to my lines') && card.host.textContent.includes('rule revision 3'), 'The card retains the rule and revision that started the review');
         assert(!card.host.textContent?.includes('The latest response is ready to read.'), 'The generic ready message does not replace the assessment');
-        button('Read full review', card.host).click();
+        button('Open review', card.host).click();
         await settle();
-        assert(card.reviewed() === 1 && card.opened() === 0 && card.cleared() === 0, 'Read full review opens the linked private review without clearing it or opening the PR');
-        button('Clear result', card.host).click();
+        assert(card.reviewed() === 1 && card.opened() === 0, 'Open review opens the linked private review without opening the PR');
+        element<HTMLButtonElement>('button[aria-label="Clear"]', card.host).click();
         await settle();
-        assert(card.cleared() === 1, 'The result can still be cleared');
+        assert(card.host.textContent?.includes('Cleared') && !calls.includes(`remove ${notice.id}`), 'Clear waits for Undo before the notice goes');
+        button('Undo', card.host).click();
+        await settle();
+        assert(card.host.querySelector('.assistant-card__verdict')?.textContent === summary, 'Undo brings the card back as it was');
       }
       finally { card.dispose(); }
     }],
@@ -281,17 +296,17 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
       }
     }],
     ["opens a rule's finished work, or dismisses it as the run it came from", async () => {
-      const card = render(RESULT);
+      const card = render(RESULT, true);
       try {
         const text = card.host.textContent ?? '';
-        assert(text.includes('Review · Cache block reads') && text.includes('Check suggestion') && text.includes('nothing is posted until you publish them'),
-          `The card names the work and that nothing was posted: ${text}`);
+        assert(text.includes('PR #4530 Cache block reads') && text.includes('rule Review PRs that need me') && text.includes('nothing is posted until you publish them')
+          && card.host.querySelector('[data-strip="next"]') !== null, `The card names the work, the rule, and that nothing was posted: ${text}`);
         button('Open', card.host).click();
         await settle();
-        assert(card.opened() === 1 && card.cleared() === 0, 'Open opens the work and keeps the card until the record decides');
+        assert(card.reviewed() === 1 && !calls.some(call => call.startsWith('remove')), 'Open opens the work and keeps the card until the record decides');
         button('Dismiss', card.host).click();
         await settle();
-        assert(calls.at(-1) === `dismiss ${RULE} pr:4530:requested:0` && card.cleared() === 1, `Dismiss names the rule and the run: ${calls.join(' | ')}`);
+        assert(calls.includes(`dismiss ${RULE} pr:4530:requested:0`) && calls.at(-1) === `remove ${RESULT.id}`, `Dismiss names the rule and the run: ${calls.join(' | ')}`);
       }
       finally {
         card.dispose();
