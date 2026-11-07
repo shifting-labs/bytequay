@@ -20,7 +20,7 @@ import {
 } from './teams/contracts';
 import type { TeamDirectory } from './teams/types';
 import { parseUnifiedWorkItem, parseWorkItemContextLink, type Publication, parseConcludedEpics, parseEpicDraftReply, parseEpicJoin, parseEpicRecord, type EpicDraftMessage, parseWorkItem, type CreateWorkItem, type WorkItemDecision, parseGoalItem, parseList, type GoalItemKind } from './workitems/contracts';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, screen, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, screen, shell, systemPreferences } from 'electron';
 import fs from 'node:fs';
 import os from 'node:os';
 import { spawn as spawnPty } from 'node-pty';
@@ -31,7 +31,6 @@ import { parseArtifactPage, parseArtifactRows, parseArtifactView } from './artif
 import { repositoryAvatar } from './repositoryAvatars';
 import { ARTIFACT_NOTICE } from './notices/contracts';
 import { NoticeHost } from './notices/host';
-import { QuickAsk } from './quick/host';
 import { isAssistantShortcut, isNextTaskShortcut } from './assistantShortcut';
 import { APP_NAVIGATION_SHORTCUTS, type AppNavigationTarget } from './appNavigation';
 import { registerGoogleIpc } from '@bytequay/google/main';
@@ -350,12 +349,7 @@ const appNotices = new NoticeHost(() => mainWindow,
     mainWindow?.webContents.send('notices:open-task', { taskId: notice.taskId, workspaceId: notice.workspaceId, turnId: notice.turnId, reviewId: notice.reviewId,
       workItemId: notice.workItemId ?? null, artifact });
     mainWindow?.webContents.focus();
-  }, () => path.join(app.getPath('userData'), 'dismissed-notices.json'), revealWindow, () => quickAsk.contents());
-const quickAsk = new QuickAsk(async target => {
-  await revealWindow();
-  if ('url' in target) requestBrowser(target.url);
-  else mainWindow?.webContents.send('assistant:navigate', target);
-});
+  }, () => path.join(app.getPath('userData'), 'dismissed-notices.json'), revealWindow);
 const ideViews = new IdeViews(() => mainWindow, sender => codeTerminals.hasLive(sender), () => appNotices.raise());
 const appUpdater = new AppUpdater(() => mainWindow, async () => {
   const tasks = parseRunningTasks(await backendJson(`${backendBase()}/agent/tasks/running`));
@@ -508,6 +502,14 @@ function openPopup(url: string): void {
 
 function revealWindow(): Promise<void> {
   return ensureWindow().then(() => { mainWindow?.show(); mainWindow?.focus(); });
+}
+
+async function openAssistantAnywhere(): Promise<void> {
+  const front = mainWindow !== null && !mainWindow.isDestroyed() && mainWindow.isFocused();
+  if (!front) await revealWindow();
+  mainWindow?.webContents.focus();
+  // From another app it opens, even when the panel was left open there.
+  mainWindow?.webContents.send('assistant:toggle', !front);
 }
 
 function ensureWindow(): Promise<void> {
@@ -2231,7 +2233,9 @@ function registerIpc(): void {
   registerBrowserTabIpc(browserTabs, () => mainWindow);
   registerFocusBreakBackground(() => mainWindow);
   appNotices.register();
-  quickAsk.register();
+  // ⌥Space from any app opens the ⌘J Assistant, bringing ByteQuay forward first; while ByteQuay is in front it is ⌘J. It stays off while
+  // another app, such as another assistant, holds the key.
+  if (!globalShortcut.register('Alt+Space', () => { void openAssistantAnywhere(); })) console.warn('Another app holds Alt+Space; it opens no Assistant');
   ideViews.register();
   artifactView.register();
   ipcMain.handle('inapp:popout', (_event, url: string) => openPopup(url));
@@ -2265,7 +2269,7 @@ async function recoverBackend(): Promise<void> {
 app.on('ready', async () => {
   configureApplication();
   nativeTheme.on('updated', () => {
-    for (const window of BrowserWindow.getAllWindows()) if (!quickAsk.owns(window)) window.setBackgroundColor(windowBackground());
+    for (const window of BrowserWindow.getAllWindows()) window.setBackgroundColor(windowBackground());
   });
   // Packaged startup restores the login-shell PATH before IPC services discover tools such as Gemini.
   spawnBackend();

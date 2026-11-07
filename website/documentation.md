@@ -307,11 +307,9 @@ nothing waiting on you, or whose command runs far longer than that program
 usually takes, moves to **Decision** as **Looks stuck**, with why. Open it or
 choose **Stop work…**; nothing is stopped for you.
 
-**⌥Space** opens the same Assistant from any app, even over a full-screen
-window, with voice, cards and replies. What you open from it shows in
-ByteQuay. Escape puts it away and keeps what you typed. If another app, such
-as Claude, already uses ⌥Space, quit it or change its shortcut, then restart
-ByteQuay.
+**⌥Space** opens the Assistant from any app: ByteQuay comes to the front with
+it open, as **⌘J** opens it there. If another app, such as Claude, already uses
+⌥Space, quit it or change its shortcut, then restart ByteQuay.
 
 <a id="assistant-actions"></a>
 

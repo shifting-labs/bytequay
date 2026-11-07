@@ -17,7 +17,6 @@ import type { LabBridge } from '@bytequay/lab/contracts';
 import type { ArtifactBridge } from './artifacts/contracts';
 import type { FocusBreakBackground } from './focus/contracts';
 import type { VoiceBridge } from './dictation/contracts';
-import type { ZoomedReference } from './githubReference';
 import type { WorkItemBridge, CreateWorkItem, EpicDraftMessage, EpicDraftReply, EpicJoinDto, EpicRecordDto, WorkItemDto, WorkItemDecision, GoalItemDto, GoalItemKind } from './workitems/contracts';
 import type { NoticeSnapshot } from './notices/contracts';
 import type { DigestRequest } from './assistant/results';
@@ -1831,12 +1830,10 @@ export type Bridge = LabBridge & WorkItemBridge & JiraBridge & GoogleBridge & Ar
   removeAppNotice: (id: string) => Promise<void>;
   /** The open panel lists every notice, so no alert shows meanwhile. */
   setAssistantPanelOpen: (open: boolean) => void;
-  /** ⌘J from any page, browser tab or editor. */
-  onAssistantToggle: (callback: () => void) => () => void;
+  /** ⌘J from any page, browser tab or editor; `open` when ⌥Space brought ByteQuay forward from another app, which only opens it. */
+  onAssistantToggle: (callback: (open?: boolean) => void) => () => void;
   /** Answer on an approval or question alert: the notice whose card the panel opens at. */
   onAssistantOpenCard: (callback: (id: string) => void) => () => void;
-  /** Where the floating Assistant over other apps opened something: a page route or a reference to show over the page. */
-  onAssistantNavigate: (callback: (target: { hash: string } | { zoom: ZoomedReference }) => void) => () => void;
   savePat: (pat: string) => Promise<boolean>;
   hasPat: () => Promise<boolean>;
   fetchPrs: (workspaceId: string | undefined, page: number, pageSize: number) => Promise<PullRequestPageDto>;

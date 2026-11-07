@@ -37,11 +37,12 @@
 /* One box: the composer and its pills on top, then one scroll; My work widens it to fit four lanes. */
 .assistant-float {
   position: absolute;
-  top: 64px;
+  /* An eighth of the way down the window, with 32px free under it. */
+  top: calc(12.5% + 24px);
   left: 50%;
   display: flex;
   width: min(800px, calc(100% - 32px));
-  max-height: calc(100% - 96px);
+  max-height: calc(87.5% - 56px);
   box-sizing: border-box;
   flex-direction: column;
   overflow: hidden;

@@ -281,9 +281,9 @@ function AppContent() {
     return () => { stopAttention(); stopNotification(); };
   }, []);
 
-  useEffect(() => window.bridge.onAssistantToggle?.(() => {
+  useEffect(() => window.bridge.onAssistantToggle?.(open => {
     if (!assistantAccessible) return;
-    setAssistantOpen(!assistantShown);
+    setAssistantOpen(open === true || !assistantShown);
     setAssistantDetails(new Set());
   }), [assistantAccessible, assistantShown]);
 
@@ -309,17 +309,9 @@ function AppContent() {
     setAssistantRequest(request);
   }), []);
 
-  // Where the floating Assistant over other apps opened something; it shows here, in front of any web page.
-  useEffect(() => window.bridge.onAssistantNavigate?.(target => {
-    backToApp();
-    if ('hash' in target) openPage(target.hash);
-    else zoomReference(target.zoom);
-    setPageComposerFocus(true);
-  }), [backToApp, openPage]);
-
   useEffect(() => window.bridge.setAssistantPanelOpen?.(assistantShown), [assistantShown]);
 
-  // A web page is a native view the floating Assistant cannot cover: opening the Assistant goes back to the app, and opening a page closes it.
+  // A web page is a native view the Assistant cannot cover: opening the Assistant goes back to the app, and opening a page closes it.
   useEffect(() => { if (assistantShown) backToApp(); }, [assistantShown, backToApp]);
   useEffect(() => { if (browserOpen && !assistantCovered) setAssistantOpen(false); }, [browserOpen, assistantCovered]);
 

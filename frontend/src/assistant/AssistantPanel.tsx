@@ -57,7 +57,7 @@ function setHash(hash: string) {
 }
 
 /**
- * The Assistant over every page, opened with ⌘J, from Home, or over other apps: the composer and its pills on top, then one view under
+ * The Assistant over every page, opened with ⌘J, ⌥Space from any app, or from Home: the composer and its pills on top, then one view under
  * them, the conversation until a pill opens another. Each topic gets its own conversation: New starts one, after a break the Assistant
  * opens on a new one, and the history or the line to continue goes back to an earlier one. It floats, and nothing paints over a native
  * view, so the app leaves a web page before it opens and the editor hides under any dialog.
@@ -77,7 +77,7 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
   onClose: () => void;
   /** Opens a page's route with nothing left over it. */
   onPage?: (hash: string) => void;
-  /** The main window can cover this panel with a detail; the floating window hands off and closes. */
+  /** The window can cover this panel with a detail it opened. */
   onOpenDetail?: (target: AgendaTargetDto) => void;
   /** After opening a page or detail, where the user goes on. */
   onOpened?: () => void;

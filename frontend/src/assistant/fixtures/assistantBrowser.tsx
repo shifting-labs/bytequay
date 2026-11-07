@@ -252,7 +252,8 @@ async function floatsOverThePage(): Promise<void> {
     const float = view.host.querySelector<HTMLElement>('.assistant-float');
     assert(float !== null && document.activeElement === float.querySelector('textarea'), 'Opening focuses the composer');
     const box = float.getBoundingClientRect();
-    assert(box.width === 800 && box.top === 64 && Math.round(box.left + box.width / 2) === window.innerWidth / 2, `It floats 800px wide, 64px down, centred: ${JSON.stringify(box)}`);
+    assert(box.width === 800 && box.top === window.innerHeight / 8 + 24 && Math.round(box.left + box.width / 2) === window.innerWidth / 2,
+      `It floats 800px wide, an eighth of the way down, centred: ${JSON.stringify(box)}`);
     const composer = element<HTMLTextAreaElement>('.assistant-float .agt-compose__input', view.host, 'The composer shows');
     assert(composer.getBoundingClientRect().height >= 76, `The composer leaves room for a few lines: ${composer.getBoundingClientRect().height}`);
     const page = view.host.querySelector<HTMLElement>('.app-surfaces')?.getBoundingClientRect();
