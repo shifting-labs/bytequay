@@ -67,7 +67,11 @@ final class AgentSseSubscriber
                 current.request(1);
             }
         }
-        catch (IOException | RuntimeException failure) {
+        catch (IOException disconnected) {
+            // Spring has already marked the request failed and the server finishes it; completing it here races that cleanup.
+            cancel();
+        }
+        catch (RuntimeException failure) {
             if (stopped.compareAndSet(false, true)) {
                 cancelSubscription();
                 emitter.completeWithError(failure);

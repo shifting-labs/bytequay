@@ -22,9 +22,11 @@ import com.bytequay.agent.spi.ProviderAgentEvent.MessagePhase;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.concurrent.Flow;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static com.bytequay.agent.core.AgentEventSource.root;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -39,7 +41,46 @@ class TestAgentSseSubscriber
         subscriber.onSubscribe(subscription);
         assertThat(subscription.requested).isEqualTo(8);
 
-        subscriber.onNext(new AgentEventEnvelope(
+        subscriber.onNext(event());
+        // Each delivered event is asked for again, so eight stay outstanding.
+        assertThat(subscription.requested).isEqualTo(9);
+
+        RecordingSubscription duplicate = new RecordingSubscription();
+        subscriber.onSubscribe(duplicate);
+        assertThat(duplicate.cancelled).isTrue();
+    }
+
+    @Test
+    void aDisconnectedClientStopsEventsWithoutCompletingTheRequest()
+    {
+        AtomicReference<Throwable> completedWith = new AtomicReference<>();
+        AgentSseSubscriber subscriber = new AgentSseSubscriber(new SseEmitter()
+        {
+            @Override
+            public void send(SseEventBuilder builder)
+                    throws IOException
+            {
+                throw new IOException("Broken pipe");
+            }
+
+            @Override
+            public synchronized void completeWithError(Throwable failure)
+            {
+                completedWith.set(failure);
+            }
+        });
+        RecordingSubscription subscription = new RecordingSubscription();
+        subscriber.onSubscribe(subscription);
+
+        subscriber.onNext(event());
+
+        assertThat(subscription.cancelled).isTrue();
+        assertThat(completedWith).hasNullValue();
+    }
+
+    private static AgentEventEnvelope event()
+    {
+        return new AgentEventEnvelope(
                 AgentEventEnvelope.CURRENT_SCHEMA_VERSION,
                 EventId.random(),
                 1,
@@ -47,13 +88,7 @@ class TestAgentSseSubscriber
                 Optional.empty(),
                 root(),
                 Instant.parse("2026-08-16T00:00:00Z"),
-                new AgentEventPayload.AssistantMessage(MessageKind.ANSWER, MessagePhase.FINAL, "done")));
-        // Each delivered event is asked for again, so eight stay outstanding.
-        assertThat(subscription.requested).isEqualTo(9);
-
-        RecordingSubscription duplicate = new RecordingSubscription();
-        subscriber.onSubscribe(duplicate);
-        assertThat(duplicate.cancelled).isTrue();
+                new AgentEventPayload.AssistantMessage(MessageKind.ANSWER, MessagePhase.FINAL, "done"));
     }
 
     private static final class RecordingSubscription
