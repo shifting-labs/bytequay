@@ -242,6 +242,7 @@ const selected = (host: HTMLElement) => host.querySelector('.assistant-pill.is-o
 const pill = (host: HTMLElement, name: string) => host.querySelector<HTMLButtonElement>(`.assistant-pill[data-pill="${name}"]`);
 const top = (host: HTMLElement) => host.querySelector<HTMLElement>('.assistant-card');
 const cards = (host: HTMLElement) => [...host.querySelectorAll<HTMLElement>('.assistant-card')];
+const headers = (host: HTMLElement) => [...host.querySelectorAll('.assistant-body .assistant-section')].map(each => each.textContent);
 const buttonIn = (node: ParentNode | null | undefined, text: string) => [...(node?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(button => button.textContent === text);
 
 async function floatsOverThePage(): Promise<void> {
@@ -270,8 +271,8 @@ async function floatsOverThePage(): Promise<void> {
     await settle();
     assert(input.value === 'What needs my attention first?', '→ types it too');
     changeInput(input, '');
-    assert(view.host.querySelector('.assistant-talk') === null && top(view.host) === null && view.host.querySelector('.assistant-body') === null,
-      'A new conversation shows only the composer and its pills');
+    assert(view.host.querySelector('.assistant-talk') === null && top(view.host)?.dataset.card === 'approval:a1'
+      && JSON.stringify(headers(view.host)) === '["Decision · 1","Next step · 1"]', `A new conversation opens on what needs the user: ${JSON.stringify(headers(view.host))}`);
     assert(JSON.stringify(pills(view.host)) === JSON.stringify(['All', 'Decision1', 'Running', 'Results1', 'Today0/2', 'My work']),
       `Zero counts hide and All has none: ${JSON.stringify(pills(view.host))}`);
     assert(selected(view.host) === undefined, 'No pill is open on the conversation');
@@ -337,6 +338,59 @@ async function showsTheDayOnceTheUserTalks(): Promise<void> {
     assert(window.location.hash === workspaceAgentTaskRoute('ws1', 't9'), `Open goes to the started task: ${window.location.hash}`);
   }
   finally { view.dispose(); }
+}
+
+async function landsOnWhatNeedsYou(): Promise<void> {
+  const clear = (host: HTMLElement) => host.querySelector('.assistant-clear')?.textContent ?? null;
+  let updatedAt = ago(5 * 24 * 60);
+  const quiet = mount(VIEW, 0, [], [], undefined, undefined, {
+    listAssistantConversations: async () => [{ id: 'c-last', title: 'What changed in the retry task?', updatedAt, running: false }],
+  });
+  try {
+    await settle();
+    assert(clear(quiet.host) === 'Nothing needs you right now.' && headers(quiet.host).length === 0 && top(quiet.host) === null,
+      `With nothing waiting, the landing says so in one line: ${quiet.host.querySelector('.assistant-body')?.textContent}`);
+    assert(quiet.host.querySelector('.assistant-list') === null && quiet.host.querySelector('button[aria-label="Conversations"]') !== null,
+      'A conversation from an earlier day stays in the history, off the landing');
+    updatedAt = new Date().toISOString();
+    quiet.render(false);
+    quiet.render(true);
+    await settle();
+    assert(JSON.stringify(headers(quiet.host)) === '["Last conversation"]'
+      && quiet.host.querySelector('.assistant-list .assistant-line__text')?.textContent === 'What changed in the retry task?',
+      `Today's conversation is one line away, under the quiet line: ${JSON.stringify(headers(quiet.host))}`);
+  }
+  finally { quiet.dispose(); }
+
+  const rows = Array.from({ length: 2 }, (_, index) => ({ ...notice(`finished:turn-${index + 3}`, 'TURN_FINISHED', `task-${index + 3}`, `Results task ${index + 3}`),
+    occurredAt: `2026-10-16T07:0${index}:00Z` }));
+  publishShownWork([{ key: 'home-1', source: 'pr', label: 'owner/repository#12', title: 'Retry flaky uploads', updatedAt: '2026-10-16T07:00:00Z',
+    target: { kind: 'PULL', repo: 'owner/repository', number: 12, workspaceId: 'ws1', id: null, connectionId: null, cloudId: null }, task: null, running: null,
+    branch: null, prs: [], lane: 'needs', next: null, decision: null, keys: ['home-1'], ended: null, repos: ['owner/repository'], agents: [] } as WorkItem]);
+  const view = mount(VIEW, 0, [...NOTICES, ...rows], [RUNNING]);
+  try {
+    await settle();
+    assert(JSON.stringify(headers(view.host)) === '["Decision · 1","Next step · 1","My work","Running · 1"]' && clear(view.host) === null,
+      `The landing holds what waits on the user, decisions first, and leaves FYI to Results: ${JSON.stringify(headers(view.host))}`);
+    const folds = [...view.host.querySelectorAll<HTMLElement>('.assistant-fold')];
+    assert(JSON.stringify(folds.map(each => each.textContent)) === '["1 needs you","1 running · all fine"]'
+      && getComputedStyle(folds[0].querySelector('svg') as Element).animationName === 'none',
+      `My work and Running fold to a line each, and only Running's icon spins: ${JSON.stringify(folds.map(each => each.textContent))}`);
+    folds[0].click();
+    await settle();
+    assert(selected(view.host) === 'My work' && view.host.querySelector('.mw-lane.is-focused')?.getAttribute('aria-label') === 'Needs you',
+      'The My work line opens its Needs you lane');
+    pill(view.host, 'mywork')?.click();
+    await settle();
+    enter(type(view.host, 'allow it'));
+    await settle();
+    assert(JSON.stringify(view.calls.sent[0][2]) === '["approval:a1"]' && view.host.querySelector('.assistant-talk') !== null,
+      `A message from the landing carries its decisions and opens the conversation: ${JSON.stringify(view.calls.sent[0][2])}`);
+  }
+  finally {
+    publishShownWork(null);
+    view.dispose();
+  }
 }
 
 async function opensOneViewAtATime(): Promise<void> {
@@ -746,7 +800,8 @@ async function opensAtACardFromItsAlert(): Promise<void> {
     view.render(false);
     view.render(true);
     await settle();
-    assert(selected(view.host) === undefined && top(view.host) === null, 'Opening again with ⌘J goes back to the conversation');
+    assert(selected(view.host) === undefined && headers(view.host)[0] === 'Decision · 1' && top(view.host)?.classList.contains('is-opened') === false,
+      'Opening again with ⌘J goes back to the landing, with no card picked out');
   }
   finally { view.dispose(); timers.restore(); }
 }
@@ -1334,7 +1389,10 @@ async function keepsAConversationForEachTopic(): Promise<void> {
     Date.now = () => realNow() + 16 * 60_000;
     view.render(true);
     await settle();
-    assert(view.host.querySelector('.assistant-talk') === null && lines().length === 1, 'After a break the Assistant opens on a new conversation, one line from the last');
+    // Unless the break ran past midnight, which leaves yesterday's conversation to the history.
+    const sameDay = localDay(realNow()) === localDay(Date.now());
+    assert(view.host.querySelector('.assistant-talk') === null && lines().length === (sameDay ? 1 : 0),
+      'After a break the Assistant opens on a new conversation, one line from the last');
   }
   finally {
     Date.now = realNow;
@@ -1512,7 +1570,7 @@ async function sendsRulesToTheAssistant(): Promise<void> {
 }
 
 export async function run(): Promise<{ name: string; error?: string }[]> {
-  return runScenarios([['floats over the page', floatsOverThePage], ['shows the day once the user talks', showsTheDayOnceTheUserTalks],
+  return runScenarios([['floats over the page', floatsOverThePage], ['lands on what needs the user', landsOnWhatNeedsYou], ['shows the day once the user talks', showsTheDayOnceTheUserTalks],
     ['opens one view at a time', opensOneViewAtATime], ['answers with the task’s buttons', answersWithTheTasksButtons], ['sends with what is shown', sendsWithWhatIsShown],
     ['starts a task command in a repository', startsATaskCommandInARepository], ['shows running tasks and All', showsRunningTasksAndAll], ['draws results with their evidence', drawsResultsWithTheirEvidence],
     ['opens at a card from its alert', opensAtACardFromItsAlert], ['waits in line while it answers', waitsInLineWhileItAnswers], ['opens My work', opensMyWork], ['takes the list Home shows', takesTheListHomeShows],
@@ -1611,7 +1669,7 @@ const PREVIEW_DIGESTS: Record<string, ResultDigest> = {
       { name: 'test (node 20)', state: 'failing', url: 'https://ci.example.com/1' }, { name: 'lint', state: 'failing', url: 'https://ci.example.com/2' }] }) }),
 };
 
-export async function showViewPreview(name: 'decision' | 'all' | 'finished' | 'mywork' | 'home'): Promise<void> {
+export async function showViewPreview(name: 'landing' | 'clear' | 'decision' | 'all' | 'finished' | 'mywork' | 'home'): Promise<void> {
   preview?.dispose();
   document.body.style.margin = '0';
   document.body.style.background = 'var(--bg)';
@@ -1630,7 +1688,10 @@ export async function showViewPreview(name: 'decision' | 'all' | 'finished' | 'm
     getAgentReview: async () => FULL_REVIEW, getReviewDraft: async () => ({ body: '', items: [], reviewPublication: null }),
     readAgentPendingApprovals: async (taskId: string) => pending.filter(each => each.taskId === taskId) } as unknown as Partial<Bridge>;
   const results = [{ ...DRAFTED, id: 'preview:draft' }, previewed(FINISHED_REVIEW, 'preview:review'), { ...FAILED, id: 'preview:failed' }, previewed(CLEAN_REVIEW, 'finished:clean'), FAILING];
-  const mounted = mount(VIEW, 0, [...approvals, ...results], [RUNNING], undefined, undefined, work);
+  // Clear is the landing with nothing waiting, and today's conversation to continue.
+  const mounted = name === 'clear' ? mount(VIEW, 0, [], [], undefined, undefined,
+    { listAssistantConversations: async () => [{ id: 'c-last', title: 'What needs my attention first?', updatedAt: new Date().toISOString(), running: false }] })
+    : mount(VIEW, 0, [...approvals, ...results], [RUNNING], undefined, undefined, work);
   preview = mounted;
   if (name === 'home') {
     mounted.dispose();
@@ -1640,7 +1701,7 @@ export async function showViewPreview(name: 'decision' | 'all' | 'finished' | 'm
     flushSync(() => root.render(<main className="home-main" style={{ padding: 28, maxWidth: 760 }}><div className="mw-home"><MyWorkLine items={items} onOpen={() => {}} /><HomeComposer work={items} /></div></main>));
     preview = { dispose };
   }
-  else mounted.render(true, { view: name });
+  else mounted.render(true, name === 'landing' || name === 'clear' ? undefined : { view: name });
   await new Promise(resolve => setTimeout(resolve, 300));
   // Results shows its first walkthrough open, so the picture has its cards.
   if (name === 'finished') {

@@ -40,7 +40,7 @@ it('floats the Assistant over the page, opens one view per pill, answers decisio
           await window.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
           await window.webContents.executeJavaScript('AssistantTests.showPreview()');
           await writeFile(join(screenshots, 'assistant-' + theme + '.png'), (await window.webContents.capturePage()).toPNG());
-          for (const name of ['decision', 'all', 'finished', 'mywork', 'home']) {
+          for (const name of ['landing', 'clear', 'decision', 'all', 'finished', 'mywork', 'home']) {
             await window.webContents.executeJavaScript('AssistantTests.showViewPreview(' + JSON.stringify(name) + ')');
             await writeFile(join(screenshots, 'assistant-view-' + name + '-' + theme + '.png'), (await window.webContents.capturePage()).toPNG());
           }
@@ -53,5 +53,5 @@ it('floats the Assistant over the page, opens one view per pill, answers decisio
     `,
   });
   expect(results.filter(result => result.error !== undefined)).toEqual([]);
-  expect(results).toHaveLength(27);
+  expect(results).toHaveLength(28);
 }, deadline(SCREENSHOTS ? 120_000 : 30_000));

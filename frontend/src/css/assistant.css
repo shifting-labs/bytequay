@@ -1144,11 +1144,27 @@
 
 .assistant-fold:hover { background: var(--assistant-hover); }
 
-.assistant-fold__icon {
+.assistant-fold__icon,
+.assistant-fold__mark {
   flex: none;
   color: var(--fg-link);
-  animation: bq-spin 1.6s linear infinite;
 }
+
+.assistant-fold__icon { animation: bq-spin 1.6s linear infinite; }
+
+/* The landing once nothing waits on the user: one quiet line, lined up with the folds. */
+.assistant-clear {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.assistant-clear > svg { flex: none; color: var(--fg-success); }
 
 /* What a result changed: added lines on green, deleted on red, as one pill. */
 .assistant-lines {

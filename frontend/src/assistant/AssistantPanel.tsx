@@ -43,9 +43,9 @@ import { AllResults, DurableReportCard, ResultCard, ResultGroups, type CardHost 
 import { inDecision, laneOf, type ResultDigest } from './results';
 import {
   SUGGESTION, answeredRules, arrivedOpen, createdDrafts, decisionOrder, endedTurns, inAnswerOrder, linkRefs, pageRoute, reportActivity, refFromHref, refLabel, takesSuggestion, type AssistantRequest,
-  type AssistantView, type Pill, type WaitingCard,
+  localDay, type AssistantView, type Pill, type WaitingCard,
 } from './model';
-import AssistantPills, { useWaiting } from './Pills';
+import AssistantPills, { counted, useWaiting } from './Pills';
 import { approvePull, closePull, mergePull, type PullAction } from './pullActions';
 import { useAssistant } from './useAssistant';
 import '../css/assistant.css';
@@ -165,7 +165,8 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
 
   useLayoutEffect(() => {
     const node = scroller.current;
-    if (node !== null && view === 'conversation') node.scrollTop = node.scrollHeight;
+    // The landing reads from its top, where the decisions are.
+    if (node !== null && view === 'conversation' && talkOpen) node.scrollTop = node.scrollHeight;
   }, [open, view, talkOpen, items.length, running]);
 
   // The Assistant closes first, so nothing opens under it, and focus stays with what opened instead of going back.
@@ -336,11 +337,14 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
       <p key="thinking" className="assistant-thinking" role="status">Thinking<span className="assistant-caret" aria-hidden="true" /></p>);
   }
 
-  // The newest conversation that is not on screen, to continue from a new one with one click.
+  // A new conversation opens on what needs the user; not while a chosen one is still being read, so the landing does not flash before it.
+  const landing = !history && !talkOpen && chat?.id === conversation;
+  // The newest conversation that is not on screen, one click away while it is from today; the history keeps older ones, and with chat
+  // off, which has no history button, the line stays the way back.
   const latest = conversations.find(each => each.id !== conversation);
+  const resume = latest !== undefined && (!chatEnabled || localDay(latest.updatedAt) === localDay(Date.now())) ? latest : undefined;
   const talk = history ? <Conversations conversations={conversations} current={conversation} onChoose={choose} />
-    // Not while a chosen conversation is still being read, so the line does not flash before it.
-    : !talkOpen ? chat !== null && latest !== undefined && <Conversations conversations={[latest]} current={conversation} onChoose={choose} />
+    : !talkOpen ? landing && resume !== undefined && <Conversations conversations={[resume]} current={conversation} onChoose={choose} />
     : <div className="assistant-talk" onClickCapture={openLink} onAuxClickCapture={openLink}>{entries}</div>;
 
   const composer = chatEnabled ? (
@@ -415,7 +419,7 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
             startNew();
           }
         }}>
-        <AssistantViews notices={waiting} view={history ? 'conversation' : view} lane={lane} card={card} talk={talk} pointsDown={pointsDown}
+        <AssistantViews notices={waiting} view={history ? 'conversation' : view} lane={lane} card={card} talk={talk} landing={landing} pointsDown={pointsDown}
           composer={composer} scroller={scroller} visible={visible} conversation={conversation} onPick={pick} onView={setView} onLane={setLane}
           onCardShown={() => setCard(null)} onLeave={leave} onPage={onPage} onShow={show} onAnswered={answeredNotice} onOpenNotice={openNotice} onClearNotice={clearNotice} />
       </section>
@@ -427,14 +431,16 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
  * The pills and the view they open, mounted only while the Assistant is open, since it reads running tasks, today's agenda and the
  * viewer's work: the composer and pills on top, one scroll under them.
  */
-function AssistantViews({ notices, view, lane, card, talk, pointsDown, composer, scroller, visible, conversation, onPick, onView, onLane, onCardShown, onLeave, onPage, onShow,
-  onAnswered, onOpenNotice, onClearNotice }: {
+function AssistantViews({ notices, view, lane, card, talk, landing, pointsDown, composer, scroller, visible, conversation, onPick, onView, onLane, onCardShown, onLeave, onPage,
+  onShow, onAnswered, onOpenNotice, onClearNotice }: {
   notices: AppNotice[];
   view: AssistantView;
   lane: WorkLane | null;
   /** The card an alert's Answer asked for, until it has been shown. */
   card: string | null;
   talk: ReactNode;
+  /** A new conversation, which opens on what needs the user. */
+  landing: boolean;
   pointsDown: boolean;
   composer: ReactNode;
   scroller: React.RefObject<HTMLDivElement | null>;
@@ -463,7 +469,7 @@ function AssistantViews({ notices, view, lane, card, talk, pointsDown, composer,
   const decisions = decisionOrder(cards);
   const running = cards.filter(each => each.group === 'running');
   const finished = cards.filter(each => each.group === 'finished');
-  const showsDecisions = view === 'decision' || view === 'all' || view === 'conversation' && pointsDown;
+  const showsDecisions = view === 'decision' || view === 'all' || view === 'conversation' && (pointsDown || landing);
   // Not before the first read of running tasks, or a view opened from Home would close before its cards arrive.
   const emptied = waiting.ready && (view === 'decision' && decisions.length === 0 || view === 'running' && running.length === 0 || view === 'finished' && finished.length === 0
     || view === 'all' && cards.length === 0);
@@ -503,11 +509,29 @@ function AssistantViews({ notices, view, lane, card, talk, pointsDown, composer,
   };
   const runningCard = (each: WaitingCard) => 'task' in each && <RunningCard key={each.key} task={each.task} onOpen={() => onLeave(() => onPage(runningTaskRoute(each.task)))} />;
   const section = (label: string) => <div className="assistant-section">{label}</div>;
+  const decisionGroup = decisions.length > 0 && <>{section(`Decision · ${decisions.length}`)}{decisions.map(decisionCard)}</>;
+  const runningGroup = running.length > 0 && <>{section(`Running · ${running.length}`)}<RunningFold count={running.length} onOpen={() => onView('running')} /></>;
+  const needsWork = work.filter(item => item.lane === 'needs').length;
+  // Running counts as waiting on the pills, but it needs nothing from the user.
+  const needed = cards.some(each => each.group !== 'running' && counted(each)) || needsWork > 0;
 
   let body: ReactNode;
   switch (view) {
     case 'conversation':
-      body = talk || pointsDown ? <>{talk}{pointsDown && decisions.map(decisionCard)}</> : null;
+      // FYI and Done stay behind Results and All, so the landing holds only what waits on the user; before the first read it says nothing.
+      body = !landing ? (talk || pointsDown ? <>{talk}{pointsDown && decisions.map(decisionCard)}</> : null)
+        : !needed && running.length === 0 && !waiting.ready && !talk ? null : <>
+        {decisionGroup}
+        <AllResults cards={cards} host={host} section={section} needsOnly running={<>
+          {needsWork > 0 && <>{section('My work')}
+            <button type="button" className="assistant-fold" title="Open Needs you in My work" onClick={() => { onLane('needs'); onView('mywork'); }}>
+              <ListTodo size={16} className="assistant-fold__mark" aria-hidden="true" /><span>{needsWork} {needsWork === 1 ? 'needs' : 'need'} you</span>
+            </button></>}
+          {runningGroup}
+        </>} />
+        {waiting.ready && !needed && <p className="assistant-clear"><CircleCheck size={16} aria-hidden="true" />Nothing needs you right now.</p>}
+        {talk && <>{section('Last conversation')}{talk}</>}
+      </>;
       break;
     case 'decision':
       body = decisions.map(decisionCard);
@@ -519,11 +543,7 @@ function AssistantViews({ notices, view, lane, card, talk, pointsDown, composer,
       body = <ResultGroups cards={cards} host={host} section={section} />;
       break;
     case 'all':
-      body = <>
-        {decisions.length > 0 && <>{section(`Decision · ${decisions.length}`)}{decisions.map(decisionCard)}</>}
-        <AllResults cards={cards} host={host} section={section}
-          running={running.length > 0 && <>{section(`Running · ${running.length}`)}<RunningFold count={running.length} onOpen={() => onView('running')} /></>} />
-      </>;
+      body = <>{decisionGroup}<AllResults cards={cards} host={host} section={section} running={runningGroup} /></>;
       break;
     case 'today':
       body = <div className="assistant-today"><TodayList today={waiting.today} scope="global" onOpen={onShow} /></div>;

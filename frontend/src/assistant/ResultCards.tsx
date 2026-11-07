@@ -708,8 +708,10 @@ export function ResultGroups({ cards, host, section }: { cards: WaitingCard[]; h
   </>;
 }
 
-/** All in groups: Results to decide, then Next step, Running folded to one line, FYI, and Done. */
-export function AllResults({ cards, host, section, running }: { cards: WaitingCard[]; host: CardHost; section: (label: string) => ReactNode; running: ReactNode }) {
+/** All in groups: Results to decide, then Next step, Running folded to one line, FYI, and Done; `needsOnly` stops after Running. */
+export function AllResults({ cards, host, section, running, needsOnly = false }: {
+  cards: WaitingCard[]; host: CardHost; section: (label: string) => ReactNode; running: ReactNode; needsOnly?: boolean;
+}) {
   const lane = (wanted: Lane) => cards.filter(card => card.group === 'finished' && card.lane === wanted);
   const group = (wanted: Lane, label: string) => {
     const shown = lane(wanted);
@@ -722,8 +724,7 @@ export function AllResults({ cards, host, section, running }: { cards: WaitingCa
     {group('decide', 'Results · decide')}
     {group('next', 'Next step')}
     {running}
-    {group('fyi', 'FYI')}
-    <DoneDigest cards={cards} host={host} />
+    {!needsOnly && <>{group('fyi', 'FYI')}<DoneDigest cards={cards} host={host} /></>}
   </>;
 }
 
