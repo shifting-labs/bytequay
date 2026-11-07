@@ -479,6 +479,8 @@ public class GitHubActionsClient
     {
         int attempt = positiveOrOne(run.runAttempt());
         String status = firstNonBlank(run.status(), "queued");
+        // A passed run has no failure to find, and GitHub can fail one page of a large run's job list on every try.
+        boolean passed = "completed".equalsIgnoreCase(status) && "success".equalsIgnoreCase(run.conclusion());
         return new CiRun(
                 run.id(),
                 run.workflowId(),
@@ -488,7 +490,7 @@ public class GitHubActionsClient
                 Optional.ofNullable(run.conclusion()),
                 run.headSha(),
                 firstNonBlank(run.htmlUrl(), "https://github.com/"),
-                awaitingRerun(fetchJobs(pat, pullRequest, run.id(), attempt, run.htmlUrl()), attempt, status));
+                passed ? ImmutableList.of() : awaitingRerun(fetchJobs(pat, pullRequest, run.id(), attempt, run.htmlUrl()), attempt, status));
     }
 
     /**

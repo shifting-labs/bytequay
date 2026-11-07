@@ -104,10 +104,6 @@ class TestGitHubActionsClient
                   {"id":901,"workflow_id":80,"name":"Description","run_attempt":1,
                    "status":"completed","conclusion":"success","head_sha":"%s"}]}
                 """.formatted(HEAD_SHA, HEAD_SHA), MediaType.APPLICATION_JSON));
-        fixture.apiServer.expect(requestTo(jobsUrl(901, 1))).andRespond(withSuccess("""
-                {"total_count":1,"jobs":[{"id":902,"name":"check-description","run_attempt":1,
-                  "status":"completed","conclusion":"success","steps":[]}]}
-                """, MediaType.APPLICATION_JSON));
         CiHeadSnapshot snapshot = fixture.client.inspect(fixture.target(), 7);
         assertThat(snapshot.runs()).extracting(CiRun::id).containsExactly(901L);
         assertThat(snapshot.green()).isTrue();
@@ -167,12 +163,10 @@ class TestGitHubActionsClient
                   {"id":901,"workflow_id":80,"event":"pull_request","name":"Build","run_attempt":1,
                    "status":"completed","conclusion":"success","head_sha":"%s"}]}
                 """.formatted(HEAD_SHA, HEAD_SHA), MediaType.APPLICATION_JSON));
-        for (int runId = 900; runId <= 901; runId++) {
-            fixture.apiServer.expect(requestTo(jobsUrl(runId, 1))).andRespond(withSuccess("""
-                    {"total_count":1,"jobs":[{"id":%d,"name":"Build","run_attempt":1,
-                      "status":"completed","conclusion":"%s","steps":[]}]}
-                    """.formatted(runId + 10, runId == 900 ? "failure" : "success"), MediaType.APPLICATION_JSON));
-        }
+        fixture.apiServer.expect(requestTo(jobsUrl(900, 1))).andRespond(withSuccess("""
+                {"total_count":1,"jobs":[{"id":910,"name":"Build","run_attempt":1,
+                  "status":"completed","conclusion":"failure","steps":[]}]}
+                """, MediaType.APPLICATION_JSON));
         CiHeadSnapshot snapshot = fixture.client.inspect(fixture.target(), 7);
         assertThat(snapshot.runs()).hasSize(2);
         assertThat(snapshot.green()).isFalse();
@@ -295,13 +289,21 @@ class TestGitHubActionsClient
     }
 
     @Test
-    void identifiesAllGreenHead()
+    void passedRunIsGreenWithoutReadingItsJobs()
     {
         Fixture fixture = fixture();
-        expectSingleHead(fixture, "completed", "success", "completed", "success");
+        expectPullRequest(fixture);
+        fixture.apiServer.expect(requestTo(runsUrl(1))).andRespond(withSuccess("""
+                {"total_count":1,"workflow_runs":[{
+                  "id":900,"workflow_id":80,"name":"Build","run_attempt":2,
+                  "status":"completed","conclusion":"success","head_sha":"%s",
+                  "html_url":"https://github.com/owner/repo/actions/runs/900"
+                }]}
+                """.formatted(HEAD_SHA), MediaType.APPLICATION_JSON));
 
         CiHeadSnapshot snapshot = fixture.client.inspect(fixture.target(), 7);
 
+        assertThat(snapshot.runs()).singleElement().satisfies(run -> assertThat(run.jobs()).isEmpty());
         assertThat(snapshot.actionableFailures()).isEmpty();
         assertThat(snapshot.pending()).isFalse();
         assertThat(snapshot.green()).isTrue();
@@ -403,7 +405,7 @@ class TestGitHubActionsClient
         fixture.apiServer.expect(requestTo(runsUrl(1))).andRespond(withSuccess("""
                 {"total_count":1,"workflow_runs":[{
                   "id":900,"workflow_id":80,"name":"Build","run_attempt":1,
-                  "status":"completed","conclusion":"success","head_sha":"%s",
+                  "status":"completed","conclusion":"failure","head_sha":"%s",
                   "html_url":"https://github.com/owner/repo/actions/runs/900"
                 }]}
                 """.formatted(HEAD_SHA), MediaType.APPLICATION_JSON));

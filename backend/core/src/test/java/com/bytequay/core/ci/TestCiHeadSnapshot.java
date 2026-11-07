@@ -36,8 +36,17 @@ class TestCiHeadSnapshot
             assertThat(snapshot.pending()).isTrue();
             assertThat(snapshot.green()).isFalse();
         }
-        assertThat(snapshot(ImmutableList.of(passing, run(2, "completed", Optional.of("success"), false))).green()).isFalse();
+        for (String conclusion : ImmutableList.of("neutral", "skipped")) {
+            assertThat(snapshot(ImmutableList.of(passing, run(2, "completed", Optional.of(conclusion), false))).green()).isFalse();
+        }
         assertThat(snapshot(ImmutableList.of()).green()).isFalse();
+    }
+
+    @Test
+    void successfulRunIsGreenWithoutListedJobs()
+    {
+        assertThat(snapshot(ImmutableList.of(run(1, "completed", Optional.of("success"), false))).green()).isTrue();
+        assertThat(snapshot(ImmutableList.of(run(1, "completed", Optional.of("success"), false), run(2, "completed", Optional.of("success"), true))).green()).isTrue();
     }
 
     @Test

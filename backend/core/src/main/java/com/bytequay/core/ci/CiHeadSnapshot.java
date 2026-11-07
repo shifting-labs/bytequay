@@ -18,6 +18,7 @@ import com.bytequay.core.domain.RepoRef;
 import com.google.common.collect.ImmutableList;
 
 import java.util.List;
+import java.util.Optional;
 
 import static com.bytequay.core.ci.CiChecks.checkPullRequest;
 import static com.bytequay.core.ci.CiChecks.checkUrl;
@@ -80,9 +81,10 @@ public record CiHeadSnapshot(
 
     public boolean green()
     {
-        List<CiJob> jobs = jobs();
-        return !jobs.isEmpty()
-                && runs.stream().allMatch(run -> "completed".equals(run.status()) && isPassingConclusion(run.conclusion()) && !run.jobs().isEmpty())
-                && jobs.stream().allMatch(CiJob::passing);
+        // A successful run vouches for its own jobs, so a provider may leave them unread.
+        return !runs.isEmpty()
+                && runs.stream().allMatch(run -> "completed".equals(run.status()) && isPassingConclusion(run.conclusion())
+                        && (!run.jobs().isEmpty() || run.conclusion().equals(Optional.of("success"))))
+                && jobs().stream().allMatch(CiJob::passing);
     }
 }
