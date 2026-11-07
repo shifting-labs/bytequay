@@ -39,16 +39,16 @@ import static java.util.Objects.requireNonNull;
 /**
  * The {@code assistant_context} tool for one message. The agenda's kinds read a fresh snapshot on every call; the rest read what runs
  * now, the cards the message lists as visible, the page it was sent from, any item named by its ref or found by its title, number or
- * key, what a task said last, and what a new task can start with. Every ref a call hands out joins the refs served earlier in the conversation,
+ * key, what a task said last, what was said on a pull request, and what a new task can start with. Every ref a call hands out joins the refs served earlier in the conversation,
  * so a later message may act on it.
  */
 final class AssistantContext
 {
     static final String NAME = "assistant_context";
     private static final List<String> KINDS = ImmutableList.<String>builder().addAll(AgendaPages.KINDS)
-            .add("today", "running", "waiting", "screen", "lookup", "result", "search", "start_options").build();
+            .add("today", "running", "waiting", "screen", "lookup", "result", "discussion", "search", "start_options").build();
     /** The kinds that read one item the agent names by its ref. */
-    private static final Set<String> NAMED = ImmutableSet.of("lookup", "result");
+    private static final Set<String> NAMED = ImmutableSet.of("lookup", "result", "discussion");
     private static final int MAXIMUM_ARGUMENTS = 4096;
 
     private final AssistantReader reader;
@@ -85,11 +85,13 @@ final class AssistantContext
                                 + "whether it is made and which items are done), running (tasks at work now), waiting (the cards on screen and what answers "
                                 + "them, such as a review result's open findings), screen (the page the user is on), lookup (one pull "
                                 + "request, task, review or work item by its ref, with a review's open findings), result (what a task or review said last and "
-                                + "how its latest turn ended), "
+                                + "how its latest turn ended), discussion (what reviewers and others said on a pull request by its pr: ref, newest first: "
+                                + "reviews, inline threads with their replies, and comments, as of when ByteQuay last read them), "
                                 + "search (stored pull requests, issues, Jira tickets, tasks, work items and Epics by query), "
                                 + "start_options (repositories, agents and automation for a new task)"),
                 "page", ImmutableMap.of("type", "integer", "minimum", 0, "description", "From nextPage; 0 when absent"),
-                "ref", ImmutableMap.of("type", "string", "description", "For lookup and result: a ref such as pr:owner/name#12, task:id, review:id or work:id"),
+                "ref", ImmutableMap.of("type", "string", "description", "For lookup, result and discussion: a ref such as pr:owner/name#12, task:id, review:id or "
+                        + "work:id"),
                 "query", ImmutableMap.of("type", "string", "description", "For search: words every matching title holds, or a number such as 31402 or a key "
                         + "such as ICE-7")), "kind");
         return new ReviewTool(NAME, "Read the user's day in ByteQuay as it is now: what moved, what runs and waits, what is on screen, how a task can start, and any "
@@ -138,6 +140,7 @@ final class AssistantContext
                     reader.taskRef(ref).ifPresent(assess);
                     yield result;
                 }
+                case "discussion" -> reader.discussion(ref, page.asInt(0));
                 case "search" -> reader.search(request.path("query").asText(""), page.asInt(0));
                 case "start_options" -> reader.startOptions();
                 default -> throw new IllegalArgumentException("Unknown kind " + kind);

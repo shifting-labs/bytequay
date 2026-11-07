@@ -153,8 +153,9 @@ class TestAssistantContext
     private final AssistantRows rows = new AssistantRows(pullRequests, mock(PrDetailStore.class), issues, jira, mock(JiraActivityReader.class), tasks, reviews, running, activities,
             workItems, epics, workspaces, agenda, models, credentials);
     private final ResultDigestService digests = mock(ResultDigestService.class);
-    private final AssistantReader reader = new AssistantReader(agenda, agendas, agendaService, running, notices, approvals, tasks, activities, reviews, digests, pullRequests,
-            workItems, workspaces, rows, credentials, models, settings, mapper, Clock.fixed(NOW, ZoneOffset.UTC));
+    private final AssistantDiscussion discussions = mock(AssistantDiscussion.class);
+    private final AssistantReader reader = new AssistantReader(agenda, agendas, agendaService, running, notices, approvals, tasks, activities, reviews, digests, discussions,
+            pullRequests, workItems, workspaces, rows, credentials, models, settings, mapper, Clock.fixed(NOW, ZoneOffset.UTC));
 
     @BeforeEach
     void storesHoldOneDay()
@@ -416,6 +417,22 @@ class TestAssistantContext
         // A result with nothing open to decide waits for nothing.
         when(digests.review("r1")).thenReturn(Optional.empty());
         assertThat(read(context.tool(), "waiting").path("entries")).isEmpty();
+    }
+
+    @Test
+    void readsWhatWasSaidOnAPullRequestByItsRefAndServesIt()
+            throws Exception
+    {
+        AgendaTarget pull = AgendaTarget.pull(12, "example/harbor", 12, Optional.of("ws1"));
+        when(discussions.read("pr:example/harbor#12", 1)).thenReturn(new AssistantReader.Page(new AssistantDiscussion.Discussion("discussion", "pr:example/harbor#12",
+                Optional.of(NOW), Optional.empty(), ImmutableList.of(), Optional.empty()), ImmutableMap.of("pr:example/harbor#12", Optional.of(pull))));
+        AssistantContext context = context(Optional.empty(), ImmutableMap.of());
+
+        JsonNode said = mapper.readTree(context.tool().call().apply("{\"kind\":\"discussion\",\"ref\":\"pr:example/harbor#12\",\"page\":1}"));
+
+        assertThat(said.path("ref").asText()).isEqualTo("pr:example/harbor#12");
+        assertThat(context.served()).containsEntry("pr:example/harbor#12", new ServedRef("discussion", Optional.of(pull)));
+        assertThat(error(context.tool(), "{\"kind\":\"discussion\"}")).isEqualTo("discussion needs a ref");
     }
 
     @Test

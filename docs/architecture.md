@@ -641,8 +641,10 @@ with the same title, description and draft state, then closes the old one and
 keeps its branch, because a pull request cannot switch its head branch and
 GitHub closes one whose head branch is renamed; a retry reuses the branch and replacement an earlier attempt made, and a
 pull request a task follows is left to its task.
-Merging stays the card's click. Each call is logged and leaves a receipt in the
-conversation. The switches that let it act are off by default, except pull
+Merging stays the card's click. A pull request's discussion is read from its
+stored detail, never from its host on the turn: a copy older than the pull
+request's activity says when it is from and is read again in the background.
+Each call is logged and leaves a receipt in the conversation. The switches that let it act are off by default, except pull
 request work, which is on.
 
 A task-start or task-reply receipt atomically saves the conversation's follow

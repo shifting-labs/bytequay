@@ -82,8 +82,8 @@ import static java.util.Objects.requireNonNull;
 /**
  * Reads what the assistant's {@code assistant_context} answers, fresh on every call: the agenda's pages over the stores as they are
  * now, the tasks at work, the cards a message lists as visible, the page it was sent from, any item named by its ref or found by its
- * title, number or key, what a task said last, and what a new task can start with. Like the agenda's reader, it reads only what
- * ByteQuay stores: no hosting, Jira, calendar or provider request is made here.
+ * title, number or key, what a task said last, what was said on a pull request, and what a new task can start with. Like the agenda's
+ * reader, it reads only what ByteQuay stores: no hosting, Jira, calendar or provider request is waited for here.
  */
 @Component
 class AssistantReader
@@ -104,6 +104,7 @@ class AssistantReader
     private final TaskActivityReader activities;
     private final AgentReviewStore reviews;
     private final ResultDigestService digests;
+    private final AssistantDiscussion discussions;
     private final PullRequestStore pullRequests;
     private final WorkItemStore workItems;
     private final WorkspaceStore workspaces;
@@ -125,6 +126,7 @@ class AssistantReader
             TaskActivityReader activities,
             AgentReviewStore reviews,
             ResultDigestService digests,
+            AssistantDiscussion discussions,
             PullRequestStore pullRequests,
             WorkItemStore workItems,
             WorkspaceStore workspaces,
@@ -145,6 +147,7 @@ class AssistantReader
         this.activities = requireNonNull(activities, "activities is null");
         this.reviews = requireNonNull(reviews, "reviews is null");
         this.digests = requireNonNull(digests, "digests is null");
+        this.discussions = requireNonNull(discussions, "discussions is null");
         this.pullRequests = requireNonNull(pullRequests, "pullRequests is null");
         this.workItems = requireNonNull(workItems, "workItems is null");
         this.workspaces = requireNonNull(workspaces, "workspaces is null");
@@ -268,6 +271,12 @@ class AssistantReader
     {
         checkArgument(LOOKUP_REFS.contains(AgendaRefs.kind(ref)), "lookup reads pr, task, review and work refs");
         return facts("lookup", ref).orElseGet(() -> nothing("lookup"));
+    }
+
+    /** What was said on a pull request, newest first, from the copy ByteQuay stored; a stale copy says so and is read again in the background. */
+    Page discussion(String ref, int page)
+    {
+        return discussions.read(ref, page);
     }
 
     /** Canonical execution task for a task or private-review reference, without exposing a second action target. */

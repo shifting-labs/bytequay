@@ -331,6 +331,13 @@ with comments stays yours to send. Updating a branch merges its base in, or
 rebases it when you say rebase; GitLab can only rebase. Merging stays your
 click on the pull request's card.
 
+Ask what reviewers said, such as "what did sam-r ask for on #58?", and it reads
+the reviews, the inline comments with their replies, and the comments ByteQuay
+holds for that pull request, newest first. It never waits on the host: when that
+copy is older than the latest activity, it says when the copy is from and reads
+the pull request again in the background. Then ask it to act, such as giving
+your words to the pull request's development task.
+
 To rename the branch of one of your own pull requests, say so with the new
 name, such as "move #58 to fix-cache-v2". A pull request can't switch
 branches, so the Assistant opens a new one from the new branch with the same
