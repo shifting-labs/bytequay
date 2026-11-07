@@ -34,7 +34,7 @@ import {
 } from './Cards';
 import { localDay, type WaitingCard } from './model';
 import { approvePull, mergePull } from './pullActions';
-import { ResultDiscussion } from './ResultDiscussion';
+import { ResultDiscussion, askable } from './ResultDiscussion';
 import {
   askSuggestions, checkCounts, findingPlace, firstSentence, headMoved, openFindings, recommend, sentences, severityCounts, shortCommand, taskEnded, walkthroughSections, type ActionId, type DigestCommand,
   type DigestFinding, type DigestPull, type DigestReview, type Lane, type ResultDigest,
@@ -80,9 +80,9 @@ function RuleReceipt({ notice }: { notice: AppNotice }) {
     outcome: run.outcome ?? 'UNKNOWN', detail: `${run.subject} · ${run.title}` }] }} />;
 }
 
-/** A news card of Results, with its digest's facts, collapsing to its receipt once acted on. */
-export function ResultCard({ notice, lane, digest, host }: { notice: AppNotice; lane: Lane; digest?: ResultDigest; host: CardHost }) {
-  const props = { notice, lane, digest, host };
+/** A news card of Results, with its digest's facts, collapsing to its receipt once acted on; `children`, such as the Assistant's reading of it, open its body. */
+export function ResultCard({ notice, lane, digest, host, children }: { notice: AppNotice; lane: Lane; digest?: ResultDigest; host: CardHost; children?: ReactNode }) {
+  const props = { notice, lane, digest, host, children };
   const card = notice.id.startsWith(RULE_RESULT_NOTICE) ? <RuleResultCard {...props} />
     : notice.ruleRun != null && notice.taskId.startsWith('rule:') ? <RuleActionCard {...props} />
       : notice.kind === 'FAILURE' ? <FailureCard {...props} />
@@ -92,7 +92,7 @@ export function ResultCard({ notice, lane, digest, host }: { notice: AppNotice; 
   return <Settled notice={notice}>{card}</Settled>;
 }
 
-type CardProps = { notice: AppNotice; lane: Lane; digest?: ResultDigest; host: CardHost };
+type CardProps = { notice: AppNotice; lane: Lane; digest?: ResultDigest; host: CardHost; children?: ReactNode };
 
 /** The receipt's link to where an action happened: the pull request on its host, or the app's page for it. */
 const viewOn = (digest: ResultDigest | undefined, host: CardHost, label?: string) => digest?.pull == null ? undefined
@@ -252,18 +252,20 @@ const FIX_WORDS = 'Fix this finding.';
  * A private review's result: the verdict, what the reviewer read and ran, and the most severe finding with its walkthrough folded away;
  * then the one click the state allows, such as Approve, Merge, Post the comments, or Fix them on the user's own pull request.
  */
-function ReviewResultCard({ notice, lane, digest, host }: CardProps) {
+function ReviewResultCard({ notice, lane, digest, host, children }: CardProps) {
   const [asking, setAsking] = useState<string[] | null>(null);
   const review = digest?.review ?? null;
   const pull = digest?.pull ?? null;
   const recommended = recommend(notice, digest);
   const draftPending = useDraftPending(notice, recommended === 'approve');
   const target = pullTarget(notice);
+  // Only a result whose private discussion can open takes questions, from the card or from a finding.
+  const askAbout = notice.report !== null && askable(notice.report) ? notice.report : null;
   const openReview: CardAction = { id: 'open-review', label: 'Open review', run: async () => host.openNotice(notice.id) };
   const openPull: CardAction = { id: 'open-pr', label: 'Open PR', run: async () => { if (target !== null) host.show(target); else host.openNotice(notice.id); } };
   if (review === null) {
     return <CardRow strip={STRIPS[lane]} icon={Eye} tone="accent" verdict={sentence(notice.message)} source={reviewSource(notice, pull, null)} side={<Age at={notice.occurredAt} />}
-      actions={<ActionBar secondary={[openReview]} onClear={() => clearCard(notice)} />}><RuleReceipt notice={notice} /></CardRow>;
+      actions={<ActionBar secondary={[openReview]} onClear={() => clearCard(notice)} />}>{children}<RuleReceipt notice={notice} /></CardRow>;
   }
   const moved = headMoved(review);
   const open = openFindings(review);
@@ -311,11 +313,12 @@ function ReviewResultCard({ notice, lane, digest, host }: CardProps) {
         {was !== '' && <span className="assistant-dim">Was {was}</span>}
       </> : <ReviewChips review={review} pull={pull} />}
       actions={<ActionBar primary={primary} secondary={secondary} asking={asking !== null} onClear={() => clearCard(notice)}
-        onAsk={notice.report === null ? undefined : () => setAsking(current => current === null ? askSuggestions(digest) : null)} />}>
+        onAsk={askAbout === null ? undefined : () => setAsking(current => current === null ? askSuggestions(digest) : null)} />}>
+      {children}
       <RuleReceipt notice={notice} />
       {!moved && open.length > 0 && notice.reviewId !== null && <Findings notice={notice} reviewId={notice.reviewId} findings={open} own={own} host={host}
-        onAsk={suggestions => setAsking(suggestions)} />}
-      {asking !== null && notice.report !== null && <ResultDiscussion report={notice.report} suggestions={asking} scope="Ask about this review"
+        onAsk={askAbout === null ? undefined : suggestions => setAsking(suggestions)} />}
+      {asking !== null && askAbout !== null && <ResultDiscussion report={askAbout} suggestions={asking} scope="Ask about this review"
         placeholder={open.length > 0 ? `Ask about ${open.map(finding => finding.label).join(', ')} or the diff` : 'Ask about this review or the diff'} onClose={() => setAsking(null)} />}
     </CardRow>
   );
@@ -338,7 +341,7 @@ function mergeAction(notice: AppNotice, pull: DigestPull | null, name: string, d
 
 /** The open findings once the review is read in full: the most severe as a box, the rest one line each until opened. */
 function Findings({ notice, reviewId, findings, own, host, onAsk }: {
-  notice: AppNotice; reviewId: string; findings: DigestFinding[]; own: boolean; host: CardHost; onAsk: (suggestions: string[]) => void;
+  notice: AppNotice; reviewId: string; findings: DigestFinding[]; own: boolean; host: CardHost; onAsk?: (suggestions: string[]) => void;
 }) {
   const [review, setReview] = useState<AgentReviewDto | null>(null);
   useEffect(() => {
@@ -350,7 +353,8 @@ function Findings({ notice, reviewId, findings, own, host, onAsk }: {
   return review === null ? <FindingList {...body} review={null} actions={null} /> : <ActingFindings {...body} review={review} onReview={setReview} />;
 }
 
-type FindingListProps = { notice: AppNotice; findings: DigestFinding[]; own: boolean; host: CardHost; onAsk: (suggestions: string[]) => void };
+/** Without `onAsk`, the review cannot be asked about, so its findings offer no Ask. */
+type FindingListProps = { notice: AppNotice; findings: DigestFinding[]; own: boolean; host: CardHost; onAsk?: (suggestions: string[]) => void };
 
 /** The review page's own finding actions, so the Assistant cannot drift from them. */
 function ActingFindings({ review, onReview, ...props }: FindingListProps & { review: AgentReviewDto; onReview: (review: AgentReviewDto) => void }) {
@@ -379,8 +383,8 @@ function FindingList({ notice, findings, own, host, onAsk, review, actions }: Fi
   const act = (finding: DigestFinding): FindingAct[] => {
     const dto = full(finding.id);
     if (actions === null || dto === undefined) return [];
-    const ask = { id: 'ask', label: 'Ask', icon: MessageCircleQuestion, run: async () => onAsk([finding.severity === null ? `Why does ${finding.label} matter?`
-      : `Why is ${finding.label} ${finding.severity}?`, `How would I fix ${finding.label}?`]) };
+    const ask = onAsk === undefined ? [] : [{ id: 'ask', label: 'Ask', icon: MessageCircleQuestion, run: async () => onAsk([finding.severity === null ? `Why does ${finding.label} matter?`
+      : `Why is ${finding.label} ${finding.severity}?`, `How would I fix ${finding.label}?`]) }];
     const dismiss = { id: 'dismiss', label: 'Dismiss', icon: EyeOff, run: async () => {
       await actions.onResolve(dto, 'Dismissed from the Assistant', false);
       handle(finding.id, { lead: `Resolved ${finding.label} privately`, undo: async () => {
@@ -393,7 +397,7 @@ function FindingList({ notice, findings, own, host, onAsk, review, actions }: Fi
     const main = own && actions.onRequestFix !== undefined
       ? { id: 'fix', label: 'Request fix', icon: Wrench, run: async () => { await actions.onRequestFix?.(dto, FIX_WORDS); handle(finding.id, { lead: `Fix requested · ${finding.label}` }); } }
       : { id: 'post', label: 'Post as comment', icon: MessageSquare, run: async () => { await actions.onPostNow(dto, findingReviewText(dto)); handle(finding.id, { lead: `Posted ${finding.label}` }); } };
-    return [main, ask, dismiss];
+    return [main, ...ask, dismiss];
   };
   // Three at most until asked, the most severe first; the one the user opened stays in view.
   const shown = all ? findings : findings.filter((finding, index) => index < SHOWN_FINDINGS || finding.id === opened);
@@ -481,7 +485,7 @@ function taskLook(pull: DigestPull | null, recommended: ActionId | null, lane: L
  * A development task's result: the agent's own outcome, shortened, with the whole report on expand; its pull request as chips; then the
  * one click the state recommends, such as Mark ready, Merge, Let ByteQuay fix CI or push it.
  */
-function TaskResultCard({ notice, lane, digest, host }: CardProps) {
+function TaskResultCard({ notice, lane, digest, host, children }: CardProps) {
   const [full, setFull] = useState(false);
   const [replying, setReplying] = useState(false);
   const pull = digest?.pull ?? null;
@@ -541,6 +545,7 @@ function TaskResultCard({ notice, lane, digest, host }: CardProps) {
         {commits !== null && commits > 0 ? `${plural(commits, 'commit')} not pushed` : 'Not pushed'}
       </Chip> : undefined}
       actions={<ActionBar primary={primary} secondary={secondary} onClear={() => clearCard(notice)} />}>
+      {children}
       <RuleReceipt notice={notice} />
       {failing.length > 0 && <div className="assistant-checks">
         {failing.map(check => <button key={check.name} type="button" className="assistant-check" title="Open this check"
@@ -563,7 +568,7 @@ function TaskResultCard({ notice, lane, digest, host }: CardProps) {
 }
 
 /** Failed work: what failed, in the failure's own words, and the way forward; a failed task takes no new turns, so it has no Retry. */
-function FailureCard({ notice, lane, host }: CardProps) {
+function FailureCard({ notice, lane, host, children }: CardProps) {
   const review = notice.reviewId !== null;
   const ended = taskEnded(notice);
   const rule = notice.taskId.startsWith('rule:');
@@ -583,6 +588,7 @@ function FailureCard({ notice, lane, host }: CardProps) {
     <CardRow strip={lane === 'next' ? 'failed' : STRIPS[lane]} icon={CircleX} tone="danger" verdict={verdict}
       source={review ? reviewSource(notice, null, null) : taskSource(notice)} side={<Age at={notice.occurredAt} />}
       actions={<ActionBar primary={primary} secondary={secondary} onClear={() => clearCard(notice)} />}>
+      {children}
       {!rule && notice.message !== '' && <EvidenceLine icon={Terminal}>{notice.message}</EvidenceLine>}
       <RuleReceipt notice={notice} />
     </CardRow>
@@ -590,7 +596,7 @@ function FailureCard({ notice, lane, host }: CardProps) {
 }
 
 /** A rule's finished work, asked about in place of its task's result: Open and Dismiss both count toward the rule's record. */
-function RuleResultCard({ notice, lane, digest, host }: CardProps) {
+function RuleResultCard({ notice, lane, digest, host, children }: CardProps) {
   // The rule's id holds no colon; the run's key, which follows it, can.
   const rest = notice.id.slice(RULE_RESULT_NOTICE.length);
   const rule = rest.slice(0, rest.indexOf(':'));
@@ -604,12 +610,14 @@ function RuleResultCard({ notice, lane, digest, host }: CardProps) {
       source={[pullName(notice, pull), notice.repository, `rule ${name}`].join(' · ')} side={<Age at={notice.occurredAt} />}
       evidence={review === null ? undefined : <ReviewChips review={review} pull={null} />}
       actions={<ActionBar secondary={[{ id: 'open', label: 'Open', run: async () => host.openNotice(notice.id) },
-        { id: 'dismiss', label: 'Dismiss', run: async () => { await window.bridge.dismissAgentRuleRun(rule, key); await window.bridge.removeAppNotice(notice.id); } }]} />} />
+        { id: 'dismiss', label: 'Dismiss', run: async () => { await window.bridge.dismissAgentRuleRun(rule, key); await window.bridge.removeAppNotice(notice.id); } }]} />}>
+      {children}
+    </CardRow>
   );
 }
 
 /** A rule's own action on a pull request, such as waiting in the merge queue or failing, with what the rule allowed. */
-function RuleActionCard({ notice, lane, host }: CardProps) {
+function RuleActionCard({ notice, lane, host, children }: CardProps) {
   const run = notice.ruleRun;
   const target = pullTarget(notice);
   const failed = notice.kind === 'FAILURE';
@@ -618,16 +626,18 @@ function RuleActionCard({ notice, lane, host }: CardProps) {
       verdict={sentence(notice.message)} source={[heading(notice), notice.repository, 'Rules'].join(' · ')} side={<Age at={notice.occurredAt} />}
       actions={<ActionBar secondary={[{ id: 'open-pr', label: 'Open PR', run: async () => { if (target !== null) host.show(target); else host.openNotice(notice.id); } }]}
         onClear={() => clearCard(notice)} />}>
+      {children}
       <RuleReceipt notice={notice} />
     </CardRow>
   );
 }
 
 /** The Epic's next work once a pull request of it merged: nothing to do yet but start it. */
-function NextWorkCard({ notice, lane, host }: CardProps) {
+function NextWorkCard({ notice, lane, host, children }: CardProps) {
   return (
     <CardRow strip={STRIPS[lane]} icon={ListTodo} tone="muted" verdict={`Next in Epic: ${sentence(notice.title)}`} source={notice.repository} side={<Age at={notice.occurredAt} />}
       actions={<ActionBar secondary={[{ id: 'open', label: 'Open work', run: async () => host.openNotice(notice.id) }]} onClear={() => clearCard(notice)} />}>
+      {children}
       {notice.message !== '' && <EvidenceLine icon={GitMerge}>{notice.message}</EvidenceLine>}
     </CardRow>
   );
@@ -731,23 +741,48 @@ export function AllResults({ cards, host, section, running, needsOnly = false }:
 }
 
 /**
- * A conversation's report after its notice is gone: the line it reported and, for a decision, how it was answered; the work opens from
- * here, and the result can still be asked about.
+ * A conversation's report after its notice is gone: the line it reported and, for a decision, how it was answered. The work opens from
+ * here, the task's latest report takes words and the step its result offered, and the result can still be asked about.
  */
-export function DurableReportCard({ report, text, onOpen }: { report: AssistantReportDto; text: string; onOpen: () => void }) {
+export function DurableReportCard({ report, text, onOpen, onReply, onOffer }: {
+  report: AssistantReportDto;
+  text: string;
+  onOpen: () => void;
+  /** Words to the report's task, which only its latest report takes. */
+  onReply?: (text: string, key: string) => Promise<void>;
+  /** Sends the task the words for the step its result offered to do. */
+  onOffer?: (words: string) => Promise<void>;
+}) {
+  const [replying, setReplying] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [offered, setOffered] = useState(false);
+  const reply = replying && onReply !== undefined && <ReplyBox label="Continue this work" placeholder="Describe the next change" onCancel={() => setReplying(false)}
+    onSend={async (words, key) => { await onReply(words, key); setReplying(false); }} />;
   const outcomes: Record<string, string> = { ANSWERED: 'Answered', ALLOWED: 'Allowed', DENIED: 'Denied', EXPIRED: 'Expired', CANCELLED: 'Cancelled' };
   const Receipt = report.outcome === 'DENIED' || report.outcome === 'EXPIRED' || report.outcome === 'CANCELLED' ? ShieldX : ShieldCheck;
   if (report.outcome !== null && report.outcome in outcomes) {
     return <div className="assistant-report-resolved">
-      <ReceiptRow receipt={{ noticeId: report.noticeId, icon: Receipt, lead: outcomes[report.outcome] ?? report.outcome, rest: text, at: 0, link: { label: 'Open work', open: onOpen } }} />
+      <ReceiptRow receipt={{ noticeId: report.noticeId, icon: Receipt, lead: outcomes[report.outcome] ?? report.outcome, rest: text, at: 0, link: { label: 'Open work', open: onOpen } }}
+        extra={onReply !== undefined && <button type="button" className="assistant-button" aria-expanded={replying} onClick={() => setReplying(value => !value)}>
+          <MessageSquareReply size={12} aria-hidden="true" />Continue this work
+        </button>}>
+        {reply}
+      </ReceiptRow>
       <ReportEvidence report={report} />
     </div>;
   }
   const done = report.state === 'COMPLETED';
+  const offer = offered ? null : report.offer ?? null;
+  const primary: CardAction | null = offer === null || onOffer === undefined ? null : { id: offer.toLowerCase(), label: OFFERED[offer].label, icon: OFFERED[offer].icon,
+    run: async () => { await onOffer(OFFERED[offer].words); setOffered(true); } };
+  const openWork: CardAction = { id: 'open', label: 'Open work', run: async () => onOpen() };
+  const continueWork: CardAction = { id: 'continue', label: 'Continue this work', icon: MessageSquareReply, run: async () => setReplying(value => !value) };
   return <CardRow icon={done ? CircleCheck : Eye} tone={done ? 'success' : 'accent'} verdict={text} source={report.target.repo ?? ''}
-    actions={<ActionBar secondary={[{ id: 'open', label: 'Open work', run: async () => onOpen() }]} />}>
+    actions={<ActionBar primary={primary} secondary={onReply === undefined ? [openWork] : [continueWork, openWork]} asking={asking}
+      onAsk={askable(report) ? () => setAsking(value => !value) : undefined} />}>
     {report.assessment !== null && <div className="assistant-card__assessment">{report.assessment}</div>}
     <ReportEvidence report={report} />
-    <ResultDiscussion report={report} suggestions={[]} scope="Ask about this result" placeholder="What would you like to understand?" collapsed />
+    {reply}
+    {asking && <ResultDiscussion report={report} suggestions={[]} scope="Ask about this result" placeholder="What would you like to understand?" onClose={() => setAsking(false)} />}
   </CardRow>;
 }

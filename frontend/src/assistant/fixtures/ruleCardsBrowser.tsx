@@ -163,9 +163,11 @@ export async function run(): Promise<{ name: string; error?: string }[]> {
       } as Bridge;
       try {
         flushSync(() => fixture.root.render(<DurableReportCard report={report} text="Cache invalidation updated" onOpen={() => {}} />));
-        button('Ask about this', fixture.host).click(); await settle();
-        changeInput(element<HTMLTextAreaElement>('textarea', fixture.host), 'What do the checks cover?'); await settle();
-        button('Ask', fixture.host).click(); await settle();
+        const ask = button('Ask', element('.assistant-card .assistant-actions', fixture.host, 'The result keeps its actions in its card'));
+        assert(ask.getAttribute('aria-expanded') === 'false', 'Ask is the card’s own action, folded until clicked');
+        ask.click(); await settle();
+        changeInput(element<HTMLTextAreaElement>('.assistant-card .assistant-ask textarea', fixture.host, 'Ask opens the discussion in the card'), 'What do the checks cover?'); await settle();
+        button('Ask', element('.assistant-ask', fixture.host)).click(); await settle();
         assert(asked.length === 1 && JSON.stringify(asked[0]) === JSON.stringify([report.target, report.sourceTurnId, 'What do the checks cover?']),
           'Ask sends the immutable result identity and question, without sending a generated quote or task input');
         assert(fixture.host.textContent?.includes('The focused checks cover invalidation after a write.'), 'The private answer appears directly under the result');

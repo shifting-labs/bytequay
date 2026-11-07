@@ -22,22 +22,23 @@ import { errorMessage } from '../errorMessage';
 import { reviewThreadBridge } from '../pulls/PrivateThread';
 import type { AssistantReportDto } from '../types';
 
+/** A finished task's or review's result, whose turn its private discussion is anchored to, can be asked about. */
+export const askable = ({ target, sourceTurnId, state }: AssistantReportDto): boolean =>
+  sourceTurnId !== null && target.id !== null && target.workspaceId !== null && (target.kind === 'TASK' || target.kind === 'REVIEW') && state !== 'PROGRESS';
+
 /**
  * Questions use the work's private, read-only discussion, anchored by the server to this exact result. It opens with questions drawn
  * from the card, each sent with one click, and says what it can see.
  */
-export function ResultDiscussion({ report, suggestions, scope, placeholder, onClose, collapsed = false }: {
+export function ResultDiscussion({ report, suggestions, scope, placeholder, onClose }: {
   report: AssistantReportDto;
   suggestions: string[];
   /** The panel's heading, such as "Ask about this review". */
   scope: string;
   placeholder: string;
-  onClose?: () => void;
-  /** Starts as a link, for a result kept in the conversation. */
-  collapsed?: boolean;
+  onClose: () => void;
 }) {
   const { target, sourceTurnId } = report;
-  const [open, setOpen] = useState(!collapsed);
   const [question, setQuestion] = useState('');
   const [sending, setSending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -45,8 +46,8 @@ export function ResultDiscussion({ report, suggestions, scope, placeholder, onCl
   const focus = useMemo(() => created === null ? null : { id: created.id }, [created]);
   const bridge = useMemo(() => target.kind === 'REVIEW' && target.id !== null ? reviewThreadBridge(target.id) : undefined, [target.kind, target.id]);
   const query = target.id === null || target.workspaceId === null ? null : { taskId: target.id, workspaceId: target.workspaceId };
-  const discussions = useTaskDiscussions(query, { active: open, bridge });
-  if (sourceTurnId === null || query === null || target.kind !== 'TASK' && target.kind !== 'REVIEW' || report.state === 'PROGRESS') return null;
+  const discussions = useTaskDiscussions(query, { bridge });
+  if (sourceTurnId === null || query === null || !askable(report)) return null;
   const saved = discussions.discussions.filter(discussion => discussion.turnId === sourceTurnId || discussion.id === created?.id);
   const rows = created === null || saved.some(discussion => discussion.id === created.id) ? saved : [...saved, created];
   const ask = async (text: string) => {
@@ -60,11 +61,10 @@ export function ResultDiscussion({ report, suggestions, scope, placeholder, onCl
     catch (cause) { setFailure(errorMessage(cause)); }
     finally { setSending(false); }
   };
-  if (!open) return <button type="button" className="assistant-link" onClick={() => setOpen(true)}>Ask about this</button>;
   return <div className="assistant-ask" role="group" aria-label={scope}>
     <div className="assistant-ask__head">
       <MessageCircleQuestion size={13} aria-hidden="true" /><span>{scope}</span><span className="assistant-spacer" />
-      <IconButton label="Close" title="Close" onClick={() => { setOpen(false); onClose?.(); }}><X size={13} aria-hidden="true" /></IconButton>
+      <IconButton label="Close" title="Close" onClick={onClose}><X size={13} aria-hidden="true" /></IconButton>
     </div>
     {rows.length > 0 ? <DiscussionsPanel discussions={{ ...discussions, discussions: rows }} repository={target.repo} focus={focus} /> : <>
       {suggestions.length > 0 && <div className="assistant-options">

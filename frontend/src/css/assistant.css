@@ -1289,6 +1289,7 @@
 .assistant-receipt {
   display: flex;
   min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 5px 6px 5px 10px;
@@ -1314,15 +1315,19 @@
 .assistant-receipt__lead { color: var(--fg-default); }
 .assistant-receipt.is-refused .assistant-receipt__lead { color: var(--fg-muted); }
 
-.assistant-receipt .assistant-button {
+.assistant-receipt > .assistant-button {
   height: 22px;
   padding: 0 8px;
   font-size: 12px;
 }
 
-/* A reply on a task's report, which goes to the task itself. */
+/* A receipt's words for its task: a line of their own inside it, under its text. */
+.assistant-receipt > .assistant-reply-to { flex-basis: 100%; margin: 2px 0 1px 22px; }
+
+/* A reply on a task's report, which goes to the task itself; a failure says why under it. */
 .assistant-reply-to {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 8px;
   margin-top: -4px;
@@ -1816,8 +1821,6 @@
 .assistant-card__state[data-state="PROPOSAL"] { color: var(--fg-link); }
 .assistant-card__state[data-state="COMPLETED"] { color: var(--fg-success); }
 .assistant-card__assessment { font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
-.assistant-report-details { display: flex; flex-direction: column; gap: 7px; padding: 7px 12px 2px 42px; }
-.assistant-report-details:empty { display: none; }
 .assistant-report-resolved { display: flex; flex-direction: column; gap: 6px; }
 .assistant-rule-receipt { color: var(--fg-muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .assistant-rule-receipt summary { cursor: pointer; }

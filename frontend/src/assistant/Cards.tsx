@@ -189,8 +189,11 @@ export function ActionBar({ primary, secondary = [], onAsk, asking = false, onCl
   </div>;
 }
 
-/** What an action did, on one line, with one link to where it happened; a private change also offers Undo. */
-export function ReceiptRow({ receipt, onUndone }: { receipt: Receipt; onUndone?: () => void }) {
+/**
+ * What an action did, on one line, with one link to where it happened; a private change also offers Undo. `extra` buttons go before the
+ * link, and `children`, such as a reply box, on a line of their own under the text.
+ */
+export function ReceiptRow({ receipt, onUndone, extra, children }: { receipt: Receipt; onUndone?: () => void; extra?: ReactNode; children?: ReactNode }) {
   const { busy, error, run } = useAsyncAction();
   const Icon = receipt.icon;
   const { link, undo } = receipt;
@@ -200,8 +203,10 @@ export function ReceiptRow({ receipt, onUndone }: { receipt: Receipt; onUndone?:
     {undo !== undefined && <button type="button" className="assistant-button" disabled={busy} onClick={() => void run(async () => { await undo(); onUndone?.(); })}>
       <Undo2 size={12} aria-hidden="true" />Undo
     </button>}
+    {extra}
     {link !== undefined && <button type="button" className="assistant-button" onClick={link.open}>{link.label}{link.external === true && <ArrowUpRight size={12} aria-hidden="true" />}</button>}
     {error !== null && <span className="assistant-error" role="alert">{error}</span>}
+    {children}
   </div>;
 }
 
@@ -271,7 +276,9 @@ export function ReplyBox({ placeholder, label, onSend, onCancel }: {
   const [key, setKey] = useState(() => crypto.randomUUID());
   const { busy, error, run } = useAsyncAction();
   const input = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => { if (onCancel !== undefined) input.current?.focus(); }, [onCancel]);
+  // Once, as it opens: a card drawn again, such as on every keystroke in the Assistant's composer, must not take the focus back.
+  const folds = onCancel !== undefined;
+  useEffect(() => { if (folds) input.current?.focus(); }, [folds]);
   const send = () => {
     const words = text.trim();
     if (words === '' || busy) return;

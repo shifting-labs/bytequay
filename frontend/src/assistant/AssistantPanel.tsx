@@ -32,7 +32,6 @@ import { useMyWork, useShownWork } from '../home/useMyWork';
 import type { WorkItem, WorkLane } from '../home/work';
 import { requestPullComment } from '../pulls/PullOverview';
 import { APPROVAL_NOTICE, type AppNotice } from '../notices/contracts';
-import { errorMessage } from '../errorMessage';
 import { settingsRoute, type SettingsSection } from '../settings/routes';
 import type { AgendaTargetDto, AssistantItemDto, AssistantReceiptDto, AssistantRowDto, AssistantSummaryDto } from '../types';
 import AssistantList from './AssistantList';
@@ -299,16 +298,9 @@ export default function AssistantPanel({ open, covered = false, chatEnabled = tr
     const task = item.report?.target.id;
     if (task != null) latestReports.set(task, item.id);
   }
-  // The user's words go straight to the report's task, with no model between; the receipt comes with the next read.
-  const replyOnReport = (itemId: string) => (text: string, key: string): Promise<boolean> =>
-    window.bridge.replyFromAssistant(conversation, itemId, text, key).then(() => {
-      setFailure(null);
-      refresh();
-      return true;
-    }, (cause: unknown) => {
-      setFailure(errorMessage(cause));
-      return false;
-    });
+  // The user's words go straight to the report's task, with no model between; the receipt comes with the next read, a failure in the card.
+  const replyOnReport = (itemId: string) => (text: string, key: string): Promise<void> =>
+    window.bridge.replyFromAssistant(conversation, itemId, text, key).then(() => refresh());
   const reportEntry = (item: AssistantItemDto) => {
     const notice = waiting.find(each => each.id === item.report?.noticeId);
     // Not while the task waits on an approval, which its card's buttons answer.
@@ -653,7 +645,7 @@ function Report({ item, notice, conversation, onAnswered, onOpenNotice, onClearN
   onOpenNotice: (id: string) => void;
   onClearNotice: (id: string) => void;
   onShow: (target: AgendaTargetDto) => void;
-  onReply?: (text: string, key: string) => Promise<boolean>;
+  onReply?: (text: string, key: string) => Promise<void>;
 }) {
   const shared = useContext(Digests);
   const report = item.report;
@@ -665,78 +657,15 @@ function Report({ item, notice, conversation, onAnswered, onOpenNotice, onClearN
     const entry = notice.id.startsWith(APPROVAL_NOTICE)
       ? <ApprovalCard notice={notice} focused={false} conversation={conversation} onAnswered={() => onAnswered(notice.id)} onOpen={open} />
       : inDecision(notice) ? <NoticeCard notice={notice} focused={false} digest={digest} onOpen={open} onClear={() => onClearNotice(notice.id)} />
-        : shared !== null ? <ResultCard notice={notice} lane={laneOf(notice, digest)} digest={digest} host={shared.host} />
+        : shared !== null ? <ResultCard notice={notice} lane={laneOf(notice, digest)} digest={digest} host={shared.host}>
+          {report.assessment !== null && <div className="assistant-card__assessment">{report.assessment}</div>}
+        </ResultCard>
           : <DurableReportCard report={report} text={item.text} onOpen={() => onShow(report.target)} />;
-    return <div className="assistant-work-report">{entry}
-      {report.assessment !== null && !inDecision(notice) && <div className="assistant-report-details"><div className="assistant-card__assessment">{report.assessment}</div></div>}
-    </div>;
+    return <div className="assistant-work-report">{entry}</div>;
   }
-  return <div className="assistant-work-report"><DurableReportCard report={report} text={item.text} onOpen={() => onShow(report.target)} />
-    {onReply !== undefined && report.offer != null && <LetByteQuay offer={report.offer} onSend={words => onReply(words, `offer:${item.id}`)} />}
-    {onReply !== undefined && <ReplyToTask onSend={onReply} />}
-  </div>;
-}
-
-/** The words an offer sends: the step the result left to the user, named so the task's own tool may do it at once. */
-const OFFERED: Record<'PUSH' | 'CLOSE', { label: string; words: string }> = {
-  PUSH: { label: 'Let ByteQuay push it', words: "Push this task's committed branch with push_task_branch." },
-  CLOSE: { label: 'Let ByteQuay close it', words: "Close this task's pull request with close_task_pull_request." },
-};
-
-/** One click sends the task the offer's words; one key per report, so a second click reaches the task once. */
-function LetByteQuay({ offer, onSend }: { offer: 'PUSH' | 'CLOSE'; onSend: (words: string) => Promise<boolean> }) {
-  const [state, setState] = useState<'idle' | 'sending' | 'sent'>('idle');
-  if (state === 'sent') return null;
-  const send = () => {
-    setState('sending');
-    void onSend(OFFERED[offer].words).then(sent => setState(sent ? 'sent' : 'idle'));
-  };
-  return <div className="assistant-reply-to">
-    <button type="button" className="assistant-button" disabled={state === 'sending'} onClick={send}>{OFFERED[offer].label}</button>
-  </div>;
-}
-
-/** A reply on a task's report, which goes to the task itself: Enter sends, Escape puts it away. */
-function ReplyToTask({ onSend }: { onSend: (text: string, key: string) => Promise<boolean> }) {
-  const [open, setOpen] = useState(false);
-  const [text, setText] = useState('');
-  const [sending, setSending] = useState(false);
-  // One key for each reply, so one sent again after its answer was lost reaches the task once.
-  const [key, setKey] = useState(() => crypto.randomUUID());
-  const input = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => { if (open) input.current?.focus(); }, [open]);
-  if (!open) {
-    return <div className="assistant-reply-to"><button type="button" className="assistant-link" onClick={() => setOpen(true)}>Continue this work</button></div>;
-  }
-  const send = () => {
-    const words = text.trim();
-    if (words === '' || sending) return;
-    setSending(true);
-    void onSend(words, key).then(sent => {
-      setSending(false);
-      if (!sent) return;
-      setText('');
-      setKey(crypto.randomUUID());
-      setOpen(false);
-    });
-  };
-  return (
-    <div className="assistant-reply-to">
-      <textarea ref={input} className="assistant-reply-to__text" aria-label="Continue this work" placeholder="Describe the next change" rows={1} maxLength={16 * 1024}
-        value={text} disabled={sending} onChange={event => setText(event.target.value)}
-        onKeyDown={event => {
-          if (event.key === 'Escape') {
-            event.preventDefault();
-            setOpen(false);
-          }
-          else if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-            event.preventDefault();
-            send();
-          }
-        }} />
-      <button type="button" className="assistant-button" disabled={text.trim() === '' || sending} onClick={send}>Send</button>
-    </div>
-  );
+  // One key per report for its offer, so a second click reaches the task once.
+  return <div className="assistant-work-report"><DurableReportCard report={report} text={item.text} onOpen={() => onShow(report.target)} onReply={onReply}
+    onOffer={onReply === undefined ? undefined : words => onReply(words, `offer:${item.id}`)} /></div>;
 }
 
 const ACTED: Record<AssistantReceiptDto['operation'], LucideIcon> = {

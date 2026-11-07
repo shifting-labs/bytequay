@@ -53,5 +53,5 @@ it('floats the Assistant over the page, opens one view per pill, answers decisio
     `,
   });
   expect(results.filter(result => result.error !== undefined)).toEqual([]);
-  expect(results).toHaveLength(29);
+  expect(results).toHaveLength(31);
 }, deadline(SCREENSHOTS ? 120_000 : 30_000));
