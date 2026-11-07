@@ -14,19 +14,17 @@
 import { expect, it } from 'vitest';
 import { runBrowserFixture, deadline } from '../fixtures/browserFixture';
 
-const FRAMES = process.env.BYTEQUAY_DICTATION_FRAMES;
-
-it('talks to the Assistant to start a task, then asks it to open the running task', async () => {
-  const holds = await runBrowserFixture<[string, number][]>({
+/** Plays one story; with a folder it writes each dark 2x frame there, plus holds.json with each frame's hold. */
+function play(story: 'start' | 'agent', frames: string | undefined) {
+  return runBrowserFixture<[string, number][]>({
     prefix: 'bytequay-dictation-movie-',
     entry: 'src/assistant/fixtures/dictationMovieBrowser.tsx',
     global: 'DictationMovie',
     styles: true,
-    // The website's frames are dark and drawn at 2x.
-    beforeReady: FRAMES === undefined ? undefined : "nativeTheme.themeSource = 'dark'; app.commandLine.appendSwitch('force-device-scale-factor', '2');",
+    beforeReady: frames === undefined ? undefined : "nativeTheme.themeSource = 'dark'; app.commandLine.appendSwitch('force-device-scale-factor', '2');",
     timeoutMs: 40_000,
     body: `
-      const frames = process.env.BYTEQUAY_DICTATION_FRAMES;
+      const frames = ${JSON.stringify(frames ?? null)};
       const { mkdirSync, writeFileSync } = require('node:fs');
       const { join } = require('node:path');
       window.setContentSize(1100, 700);
@@ -34,7 +32,7 @@ it('talks to the Assistant to start a task, then asks it to open the running tas
       if (frames) mkdirSync(frames, { recursive: true });
       const results = [];
       for (;;) {
-        const hold = await window.webContents.executeJavaScript('DictationMovie.next()');
+        const hold = await window.webContents.executeJavaScript('DictationMovie.next(${JSON.stringify(story)})');
         if (hold === null) break;
         const name = 'frame-' + String(results.length).padStart(2, '0') + '.png';
         if (frames) writeFileSync(join(frames, name), (await window.webContents.capturePage()).toPNG());
@@ -43,5 +41,12 @@ it('talks to the Assistant to start a task, then asks it to open the running tas
       if (frames) writeFileSync(join(frames, 'holds.json'), JSON.stringify(results));
     `,
   });
-  expect(holds).toHaveLength(24);
+}
+
+it('talks to the Assistant to start a task, then asks it to open the running task', async () => {
+  expect(await play('start', process.env.BYTEQUAY_DICTATION_FRAMES)).toHaveLength(24);
+}, deadline(60_000));
+
+it('carries a task in one conversation from the ask to its result and the next step on its pull request', async () => {
+  expect(await play('agent', process.env.BYTEQUAY_AGENT_MOVIE_FRAMES)).toHaveLength(23);
 }, deadline(60_000));

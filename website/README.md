@@ -16,8 +16,8 @@ release-notes link also offers the ZIP. Verify the resolver with
 `node --test scripts/website-download.test.mjs` from the repository root.
 
 The landing page stays short: a headline with one line, one app screenshot,
-four feature rows led by the Assistant and Today, and link cards, each with a
-sentence or less. Framed bands separate the sections, feature rows alternate
+the Assistant's band with its loop and four steps, three feature rows led by
+Today, and link cards, each with a sentence or less. Framed bands separate the sections, feature rows alternate
 sides, and screenshots sit on flat gray panels. Put details in the guides, not
 on the landing page.
 
@@ -82,23 +82,33 @@ captured at 2880 × 1800, rendering a 1440 × 900 workspace at 2× scale. The
 landing page shows development, the Assistant, Today, review, and private
 discussion.
 
-`app-assistant.jpg`, its animated `app-assistant.webp`, and `app-today.jpg`
-come from the browser tests' screenshot modes, cropped from the dark captures:
-from `frontend/`, run `src/assistant/assistantBrowser.test.ts` with
+`app-assistant.jpg` and `app-today.jpg` come from the browser tests' screenshot
+modes, cropped from the dark captures: from `frontend/`, run
+`src/assistant/assistantBrowser.test.ts` with
 `BYTEQUAY_ASSISTANT_SCREENSHOTS=<folder>` or `src/home/todayBrowser.test.ts`
-with `BYTEQUAY_TODAY_SCREENSHOTS=<folder>` through `npx vitest run`. The
-animation cycles the default, cards, and timeline views; the landing page
-shows the still image when reduced motion is preferred. Leave out views whose
-sample text names a real repository.
+with `BYTEQUAY_TODAY_SCREENSHOTS=<folder>` through `npx vitest run`.
+`app-assistant.jpg` is the floating panel in `assistant-dark.png`, with 40
+pixels of the page around it. Leave out views whose sample text names a real
+repository.
 
 `app-dictation.gif` and its reduced-motion still `app-dictation.jpg` come from
-`src/assistant/dictationMovieBrowser.test.ts`: from `frontend/`, run it with
-`BYTEQUAY_DICTATION_FRAMES=<folder>` through `npx vitest run`. It writes each
-dark 2× frame as a PNG, plus `holds.json` with each frame's hold in
-milliseconds. Encode the frames in order at 1100 × 700 with one 256-color
-palette per frame and no dithering, for example with Pillow's fast octree
-quantizer; one shared palette turns the window buttons and running spinner
-gray. The still is `frame-08.png`, where the strip shows the words as heard.
+the `start` story of `src/assistant/dictationMovieBrowser.test.ts`: from
+`frontend/`, run it with `BYTEQUAY_DICTATION_FRAMES=<folder>` through
+`npx vitest run`. It writes each dark 2× frame as a PNG, plus `holds.json` with
+each frame's hold in milliseconds. Encode the frames in order at 1100 × 700
+with one 256-color palette per frame and no dithering, for example with
+Pillow's fast octree quantizer; one shared palette turns the window buttons and
+running spinner gray. The still is `frame-08.png`, where the strip shows the
+words as heard.
+
+`app-one-agent.webp` and its reduced-motion still `app-one-agent.jpg` show the
+Assistant's band loop. They come from the same test's `agent` story: run it with
+`BYTEQUAY_AGENT_MOVIE_FRAMES=<folder>`. The story asks out loud for a task. Its
+result then returns to the same conversation, and one more sentence acts on the
+pull request. Encode its frames in order as an animated WebP at their full
+2200 × 1400 size, with each frame's hold and quality 70, for example Pillow's
+`save_all` with `duration` and `method=6`. The still is the last frame as a
+JPEG.
 
 Capture through an isolated browser fixture with sample bridge data, blocked
 external images and connections, and no live provider or backend. Development

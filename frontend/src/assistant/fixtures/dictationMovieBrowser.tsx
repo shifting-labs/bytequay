@@ -21,9 +21,12 @@ import { initialAgentTaskState, type AgentTaskState } from '../../agents/model';
 import { TASK_BODY_NOOPS, agentTurn, previewTask } from '../../agents/fixtures/previewBridge';
 import type { AgentEventEnvelope } from '../../agents/events';
 import type { DictationEvent } from '../../dictation/contracts';
+import type { AppNotice } from '../../notices/contracts';
+import type { DigestRequest, ResultDigest } from '../results';
 import type { AgendaTargetDto, AssistantItemDto, AssistantViewDto, ModelOptionDto, WorkspaceDto } from '../../types';
 
-// The website's dictation animation: the user talks to the Assistant to start a task, then asks it to open the running task.
+// The website's spoken Assistant animations. In `start` the user talks to the Assistant to start a task, then asks it to open the running
+// task; in `agent` one conversation carries a task from the ask to its result and the next step on its pull request.
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -38,7 +41,23 @@ const MODELS: ModelOptionDto[] = [{ id: 'opus', name: 'Opus 5.5', description: '
 const TITLE = 'Add retry backoff to the webhook client';
 const START_WORDS = 'Start a task to add retry backoff to the webhook client.';
 const OPEN_WORDS = 'Take me to that task.';
+const READY_WORDS = 'Mark it ready and ask sam-r to review.';
 const TASK: AgendaTargetDto = { kind: 'TASK', workspaceId: WS, repo: null, number: null, id: 'new-1', connectionId: null, cloudId: null };
+const PULL: AgendaTargetDto = { kind: 'PULL', workspaceId: WS, repo: 'example/harbor', number: 58, id: null, connectionId: null, cloudId: null };
+// The task's finished turn: while its notice waits, the conversation shows the result as that notice's card.
+const FINISHED: AppNotice = {
+  delivery: 'PASSIVE', deliveryReason: 'The task finished its turn', report: null, id: 'finished:turn-new', kind: 'TURN_FINISHED', taskId: 'new-1', workspaceId: WS,
+  turnId: 'turn-new', reviewId: null, title: TITLE, pullRequest: 'example/harbor#58', pullRequestTitle: TITLE, changes: null, message: 'Draft PR #58 · checks passing',
+  repository: 'example/harbor', laneId: 'claude', occurredAt: new Date().toISOString(),
+};
+let notices: AppNotice[] = [];
+// What the backend tells of the result's pull request: a draft with passing checks, until the user's words mark it ready.
+let marked = false;
+const digest = (): ResultDigest => ({ noticeId: FINISHED.id, host: 'GitHub', review: null, report: 'Added exponential backoff with jitter; 9 retry tests pass.', pull: {
+  number: 58, title: TITLE, url: 'https://example.com/example/harbor/pull/58', state: 'open', draft: !marked, mine: true, author: 'you', head: 'c0ffee1', base: 'main',
+  additions: 86, deletions: 12, files: 3, checks: [{ name: 'test', state: 'successful', url: null }, { name: 'lint', state: 'successful', url: null }],
+  approvers: [], youApproved: false, mergeBlocked: false, mergeable: true,
+} });
 
 const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 let sequence = 0;
@@ -93,8 +112,11 @@ function running(step: number): AgentTaskState {
   };
 }
 
-const item = (id: string, kind: AssistantItemDto['kind'], text: string, receipt: AssistantItemDto['receipt'] = null): AssistantItemDto =>
-  ({ id, conversationId: 'c1', at: new Date().toISOString(), kind, text, targets: {}, notReady: false, receipt, list: null, draft: null, report: null });
+// How far the story has moved past now, so what happens after the task worked a while carries a later time.
+let later = 0;
+const at = () => new Date(Date.now() + later).toISOString();
+const item = (id: string, kind: AssistantItemDto['kind'], text: string, more: Partial<AssistantItemDto> = {}): AssistantItemDto =>
+  ({ id, conversationId: 'c1', at: at(), kind, text, targets: {}, notReady: false, receipt: null, list: null, draft: null, report: null, ...more });
 let conversation: AssistantViewDto = { id: 'c1', assessing: 0, model: 'Claude Sonnet', running: false, waiting: [], items: [], rows: {} };
 const reply = (...items: AssistantItemDto[]) => { conversation = { ...conversation, running: false, items: [...conversation.items, ...items] }; };
 
@@ -108,7 +130,7 @@ window.bridge = new Proxy({
   cancelDictation: async () => {},
   onDictationEvent: (listener: typeof emit) => { emit = listener; return () => {}; },
   listAssistantConversations: async () => conversation.items.length === 0 ? []
-    : [{ id: conversation.id, title: 'Webhook retries', updatedAt: new Date().toISOString(), running: conversation.running }],
+    : [{ id: conversation.id, title: 'Webhook retries', updatedAt: at(), running: conversation.running }],
   getAssistantConversation: async (id: string) => ({ ...conversation, id }),
   sendAssistantMessage: async (id: string, text: string) => {
     conversation = { ...conversation, id, running: true, items: [...conversation.items, item(`u${conversation.items.length}`, 'USER', text)] };
@@ -122,6 +144,7 @@ window.bridge = new Proxy({
   // My work in the Assistant lists the watched repositories and what asks for attention; the movie has none.
   listWorkspaces: async () => [],
   fetchAttentionPrs: async () => [],
+  readNoticeDigests: async (requests: DigestRequest[]) => requests.filter(request => request.noticeId === FINISHED.id).map(digest),
 }, {
   // The sidebar and task page read more than the movie needs; the rest answers empty.
   get: (target, name: string) => (target as Record<string, unknown>)[name] ?? (name.startsWith('on') ? () => () => {} : async () => null),
@@ -145,7 +168,7 @@ function render() {
           </main>
         </div>
       </div>
-      <AssistantPanel open={open} notices={[]} request={null} onScreen={null} onClose={() => { open = false; render(); }} />
+      <AssistantPanel open={open} notices={notices} request={null} onScreen={null} onClose={() => { open = false; render(); }} />
       {pointer && <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"
         style={{ position: 'fixed', left: pointer.x, top: pointer.y, zIndex: 99999, pointerEvents: 'none', filter: 'drop-shadow(0 1px 2px rgba(0,0,0,.5))' }}>
         <path d="M3 2l14 9-6.5 1.3L7 19z" fill="white" stroke="black" strokeWidth="1.2" strokeLinejoin="round" />
@@ -211,7 +234,8 @@ async function* send(): AsyncGenerator<number> {
   yield 800;
 }
 
-async function* frames(): AsyncGenerator<number> {
+/** The panel opens over the finished task, and the user asks for a new one out loud. */
+async function* opening(): AsyncGenerator<number> {
   document.body.style.margin = '0';
   render();
   await wait(400);
@@ -224,18 +248,61 @@ async function* frames(): AsyncGenerator<number> {
   yield* talk(START_WORDS);
   yield* send();
   reply(
-    item('r1', 'RECEIPT', `Started “${TITLE}”`, { operation: 'START_TASK', outcome: 'DONE', detail: 'example/harbor · Claude Code Opus 5.5 · Auto-Draft PR',
-      target: TASK, page: null, turnId: 'turn-new', fix: null, words: 'start a task to add retry backoff' }),
+    item('r1', 'RECEIPT', `Started “${TITLE}”`, { receipt: { operation: 'START_TASK', outcome: 'DONE', detail: 'example/harbor · Claude Code Opus 5.5 · Auto-Draft PR',
+      target: TASK, page: null, turnId: 'turn-new', fix: null, words: 'start a task to add retry backoff' } }),
     item('a1', 'REPLY', 'Started it in example/harbor. It is reading the webhook client now.'),
   );
   await reread();
   assert(panel()?.querySelector('.assistant-receipt')?.textContent?.startsWith(`Started “${TITLE}”`) === true, 'The start leaves a receipt');
+}
+
+/** The task works on its own; its result comes back to the conversation that asked, and words take the pull request on. */
+async function* agent(): AsyncGenerator<number> {
+  yield* opening();
+  yield 1800;
+  later = 14 * 60_000;
+  // The result is fresh, so its age reads from now while the conversation's clock has moved on.
+  notices = [{ ...FINISHED, occurredAt: new Date().toISOString() }];
+  render();
+  reply(item('p1', 'REPORT', `“${TITLE}”: Draft PR #58 · checks passing. Added exponential backoff with jitter; 9 retry tests pass.`, {
+    report: { delivery: 'PASSIVE', deliveryReason: 'The task finished its turn', state: 'RESULT_READY', noticeId: FINISHED.id,
+      target: { ...TASK, repo: 'example/harbor' }, sourceTurnId: 'turn-new', assessment: 'Ready for review: the change is small and its tests pass.', outcome: null,
+      evidence: [], ruleActions: [] },
+  }));
+  await reread();
+  await wait(250);
+  assert(panel()?.querySelector('.assistant-work-report')?.textContent?.includes('Mark PR #58 ready') === true,
+    'The result comes back to the conversation as its card, one click from ready');
+  yield 2600;
+
+  yield* talk(READY_WORDS);
+  yield* send();
+  const done = (id: string, operation: 'MARK_READY' | 'REQUEST_REVIEW', text: string, words: string) => item(id, 'RECEIPT', text,
+    { receipt: { operation, outcome: 'DONE', detail: 'example/harbor#58', target: PULL, page: null, turnId: null, fix: null, words } });
+  reply(
+    done('r2', 'MARK_READY', `Marked ready for review: “${TITLE}”`, 'mark it ready'),
+    done('r3', 'REQUEST_REVIEW', `Asked sam-r to review “${TITLE}”`, 'ask sam-r to review'),
+    item('a2', 'REPLY', 'Done. #58 is ready for review, and sam-r is asked to look at it.'),
+  );
+  // The card reads its pull request again and shows it ready, with nothing left to click.
+  marked = true;
+  notices = [{ ...FINISHED, occurredAt: new Date().toISOString() }];
+  render();
+  await reread();
+  await wait(250);
+  assert(panel()?.querySelectorAll('.assistant-receipt').length === 3, 'Each change on the pull request leaves its own receipt');
+  assert(panel()?.querySelector('.assistant-work-report')?.textContent?.includes('Mark PR #58 ready') === false, 'The card no longer offers what the words did');
+  yield 3200;
+}
+
+async function* start(): AsyncGenerator<number> {
+  yield* opening();
   yield 2000;
 
   yield* talk(OPEN_WORDS);
   yield* send();
-  reply(item('r2', 'RECEIPT', `Opened “${TITLE}”`, { operation: 'OPEN', outcome: 'DONE', detail: null, target: TASK, page: null, turnId: null, fix: null,
-    words: 'take me to that task' }));
+  reply(item('r2', 'RECEIPT', `Opened “${TITLE}”`, { receipt: { operation: 'OPEN', outcome: 'DONE', detail: null, target: TASK, page: null, turnId: null, fix: null,
+    words: 'take me to that task' } }));
   await reread();
   await wait(300);
   assert(panel() === null && page === 'running', 'An open that arrives while the panel is open closes it and goes to the task');
@@ -251,9 +318,9 @@ async function* frames(): AsyncGenerator<number> {
 
 let movie: AsyncGenerator<number> | null = null;
 
-/** Draws the next frame and returns how long it holds, or null after the last one. */
-export async function next(): Promise<number | null> {
-  movie ??= frames();
+/** Draws the next frame of the story and returns how long it holds, or null after the last one. */
+export async function next(story: 'start' | 'agent' = 'start'): Promise<number | null> {
+  movie ??= story === 'agent' ? agent() : start();
   const frame = await movie.next();
   return frame.done === true ? null : frame.value;
 }

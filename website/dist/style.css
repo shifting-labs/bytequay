@@ -472,6 +472,55 @@ p {
 .cta h2 {
   margin-top: 16px;
 }
+/* The Assistant's band: the idea beside its one line, the loop it runs, then its four steps. */
+.agent-head {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  align-items: end;
+  gap: 48px;
+  padding: 80px 48px 64px;
+}
+.agent-head h2 {
+  margin-top: 16px;
+  font-size: 3.75rem;
+  line-height: 1;
+  font-weight: 500;
+  letter-spacing: -0.04em;
+}
+.agent-head p:not(.eyebrow) {
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+}
+.steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+.steps li {
+  padding: 32px 32px 40px;
+}
+.steps li + li {
+  border-left: 1px solid var(--line);
+}
+.step {
+  font: 500 0.75rem/1rem var(--mono);
+  letter-spacing: 0.04em;
+  color: var(--accent-text);
+}
+.steps h3 {
+  margin-top: 16px;
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+  font-weight: 600;
+}
+.steps p {
+  margin-top: 8px;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
 /* Sections below the first screen rise in once; reveal.js adds these classes. */
 .reveal {
   opacity: 0;
@@ -525,10 +574,45 @@ p {
   .cards > :nth-child(n + 3) {
     border-top: 1px solid var(--line);
   }
+  .agent-head {
+    grid-template-columns: 1fr;
+    align-items: start;
+    gap: 32px;
+    padding: 64px 32px 48px;
+  }
+  .agent-head h2 {
+    font-size: 3rem;
+  }
+  .steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .steps li:nth-child(odd) {
+    border-left: 0;
+  }
+  .steps li:nth-child(n + 3) {
+    border-top: 1px solid var(--line);
+  }
 }
 @media (max-width: 720px) {
   .landing .wrap {
     width: calc(100% - 32px);
+  }
+  .agent-head {
+    padding: 48px 24px 40px;
+  }
+  .agent-head h2 {
+    font-size: 2.25rem;
+    line-height: 2.5rem;
+  }
+  .steps {
+    grid-template-columns: 1fr;
+  }
+  .steps li {
+    padding: 24px;
+  }
+  .steps li + li {
+    border-left: 0;
+    border-top: 1px solid var(--line);
   }
   .landing .header nav .nav-features {
     display: none;
