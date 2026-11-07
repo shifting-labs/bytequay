@@ -89,9 +89,9 @@ import static java.util.stream.Collectors.joining;
  * only the user's words, never the assistant's: a task's own messages count as the user's authority for what it does next. It also
  * marks Epics, adds work to them, creates work items, and acknowledges or snoozes Needs attention items, all of which stay local, and
  * acts on a pull request the user names: close or reopen, ready for review or back to draft, rerun failed checks, reviewers, labels, a
- * comment or title in their own words, approval, updating its branch with its base, and moving it to a new branch. It acts on a private
- * review's findings too, as their result card does: posting them to the pull request, sending them to the development task to fix, or
- * dismissing them. Merging stays the user's click on the pull request's card.
+ * comment or title in their own words, approval, updating its branch with its base, moving it to a new branch, and merging it once it is
+ * ready when the user's words say merge. It acts on a private review's findings too, as their result card does: posting them to the pull
+ * request, sending them to the development task to fix, or dismissing them.
  */
 @Component
 class AssistantActions
@@ -124,6 +124,7 @@ class AssistantActions
             .put("comment", Operation.COMMENT)
             .put("approve", Operation.APPROVE)
             .put("edit_pull_request", Operation.EDIT_PULL_REQUEST)
+            .put("merge", Operation.MERGE)
             .put("post_findings", Operation.POST_FINDINGS)
             .put("fix_findings", Operation.FIX_FINDINGS)
             .put("dismiss_findings", Operation.DISMISS_FINDINGS)
@@ -150,6 +151,7 @@ class AssistantActions
             .put(Operation.COMMENT, ImmutableSet.of("op", "words", "pr", "body"))
             .put(Operation.APPROVE, ImmutableSet.of("op", "words", "pr"))
             .put(Operation.EDIT_PULL_REQUEST, ImmutableSet.of("op", "words", "pr", "title", "body"))
+            .put(Operation.MERGE, ImmutableSet.of("op", "words", "pr"))
             .put(Operation.POST_FINDINGS, ImmutableSet.of("op", "words", "review", "findings"))
             .put(Operation.FIX_FINDINGS, ImmutableSet.of("op", "words", "review", "findings"))
             .put(Operation.DISMISS_FINDINGS, ImmutableSet.of("op", "words", "review", "findings"))
@@ -165,7 +167,7 @@ class AssistantActions
     /** The operations the "change pull requests" switch allows, each on a pr: ref the user could see. */
     private static final Set<Operation> PULL_REQUEST = Sets.immutableEnumSet(Operation.CLOSE_PULL_REQUEST, Operation.REOPEN_PULL_REQUEST, Operation.MARK_READY,
             Operation.MARK_DRAFT, Operation.RERUN_CHECKS, Operation.REQUEST_REVIEW, Operation.SET_LABELS, Operation.COMMENT, Operation.APPROVE,
-            Operation.EDIT_PULL_REQUEST, Operation.UPDATE_BRANCH, Operation.RENAME_BRANCH);
+            Operation.EDIT_PULL_REQUEST, Operation.UPDATE_BRANCH, Operation.RENAME_BRANCH, Operation.MERGE);
     // A number the user's words give, such as "#58" in "close #58", names the pull request they mean.
     private static final Pattern NUMBER = Pattern.compile("#(\\d+)");
     /** The operations on a private review's findings, each on a review: ref the user could see; posting writes to the pull request. */
@@ -289,9 +291,9 @@ class AssistantActions
                 + "acknowledge or snooze a Needs attention item, or act on a pull request: close or reopen it, mark it ready for review or turn it back "
                 + "into a draft, rerun its failed checks, request or take back reviews, add or remove labels, comment or set its title or description in "
                 + "the user's own words, approve it, update its branch with its base (a rebase when the user's words say rebase), or move it to a "
-                + "new branch the user named; or act on a private review's open findings: post them to its pull request as comments, send them to "
-                + "the development task as fix requests, or dismiss them privately. "
-                + "Merging is the user's click on the pull request's card. The app checks every call and shows the user a receipt.", schema, run::call, false);
+                + "new branch the user named, or merge it when the user's words say merge (squash, rebase or a merge commit when they name one); "
+                + "or act on a private review's open findings: post them to its pull request as comments, send them to the development task as fix "
+                + "requests, or dismiss them privately. The app checks every call and shows the user a receipt.", schema, run::call, false);
     }
 
     /**
@@ -455,9 +457,9 @@ class AssistantActions
                 case START_TASK -> optional("from").orElse(text("workspace"));
                 case ANSWER_APPROVAL, ANSWER_QUESTION -> text("approval");
                 case REPLY_TO_TASK -> text("task");
-                case OPEN, CREATE_EPIC, MAKE_AGENDA, SAVE_RULE, MERGE -> text("ref");
+                case OPEN, CREATE_EPIC, MAKE_AGENDA, SAVE_RULE -> text("ref");
                 case CLOSE_PULL_REQUEST, REOPEN_PULL_REQUEST, MARK_READY, MARK_DRAFT, RERUN_CHECKS, REQUEST_REVIEW, SET_LABELS, COMMENT, APPROVE,
-                     EDIT_PULL_REQUEST, UPDATE_BRANCH, RENAME_BRANCH -> text("pr");
+                     EDIT_PULL_REQUEST, UPDATE_BRANCH, RENAME_BRANCH, MERGE -> text("pr");
                 case MARK_EPIC, ADD_TO_EPIC, ACKNOWLEDGE, SNOOZE -> text("item");
                 case CREATE_WORK_ITEM -> optional("epic").orElse(text("workspace"));
                 // The findings too, so "Already done" compares the same findings, not just the same review.
@@ -563,7 +565,7 @@ class AssistantActions
                     checkArgument(ATTENTION.contains(AgendaRefs.kind(request.text("item"))), "snooze takes a pr:, issue:, jira: or task: ref");
                     checkArgument(SNOOZES.containsKey(request.text("until")), "until must be hour, tomorrow or monday");
                 }
-                case CLOSE_PULL_REQUEST, REOPEN_PULL_REQUEST, MARK_READY, MARK_DRAFT, RERUN_CHECKS, APPROVE, UPDATE_BRANCH -> {}
+                case CLOSE_PULL_REQUEST, REOPEN_PULL_REQUEST, MARK_READY, MARK_DRAFT, RERUN_CHECKS, APPROVE, UPDATE_BRANCH, MERGE -> {}
                 case REQUEST_REVIEW, SET_LABELS -> checkArgument(!(names(body, "add").isEmpty() && names(body, "remove").isEmpty()),
                         "%s needs names to add or remove", body.path("op").asText());
                 case COMMENT -> checkArgument(request.optional("body").isPresent(), "comment needs the user's words as its body");
@@ -591,9 +593,9 @@ class AssistantActions
                 case MARK_EPIC, ADD_TO_EPIC, CREATE_WORK_ITEM -> allowed.changeWork() ? Optional.empty() : Optional.of("Changing Epics and work items is off");
                 case ACKNOWLEDGE, SNOOZE -> allowed.markAttention() ? Optional.empty() : Optional.of("Acknowledging and snoozing is off");
                 case CLOSE_PULL_REQUEST, REOPEN_PULL_REQUEST, MARK_READY, MARK_DRAFT, RERUN_CHECKS, REQUEST_REVIEW, SET_LABELS, COMMENT, APPROVE,
-                     EDIT_PULL_REQUEST, UPDATE_BRANCH, RENAME_BRANCH, POST_FINDINGS, FIX_FINDINGS, DISMISS_FINDINGS ->
+                     EDIT_PULL_REQUEST, UPDATE_BRANCH, RENAME_BRANCH, MERGE, POST_FINDINGS, FIX_FINDINGS, DISMISS_FINDINGS ->
                         allowed.changePullRequests() ? Optional.empty() : Optional.of("Changing pull requests is off");
-                case ANSWER_APPROVAL, ANSWER_QUESTION, REPLY_TO_TASK, OPEN, CREATE_EPIC, MAKE_AGENDA, SAVE_RULE, MERGE ->
+                case ANSWER_APPROVAL, ANSWER_QUESTION, REPLY_TO_TASK, OPEN, CREATE_EPIC, MAKE_AGENDA, SAVE_RULE ->
                         allowed.answerTasks() ? Optional.empty() : Optional.of("Answering tasks is off");
             };
             if (off.isPresent()) {
@@ -609,9 +611,9 @@ class AssistantActions
             }
             // An item's own rules, such as a ticket that already has a task, are its service's, and a refusal there reads as a failure.
             Optional<Result> state = switch (operation) {
-                case START_TASK, OPEN, MARK_EPIC, ADD_TO_EPIC, CREATE_WORK_ITEM, CREATE_EPIC, ACKNOWLEDGE, SNOOZE, MAKE_AGENDA, SAVE_RULE, MERGE -> Optional.empty();
+                case START_TASK, OPEN, MARK_EPIC, ADD_TO_EPIC, CREATE_WORK_ITEM, CREATE_EPIC, ACKNOWLEDGE, SNOOZE, MAKE_AGENDA, SAVE_RULE -> Optional.empty();
                 case CLOSE_PULL_REQUEST, REOPEN_PULL_REQUEST, MARK_READY, MARK_DRAFT, RERUN_CHECKS, REQUEST_REVIEW, SET_LABELS, COMMENT, APPROVE,
-                     EDIT_PULL_REQUEST, UPDATE_BRANCH, RENAME_BRANCH -> named(request);
+                     EDIT_PULL_REQUEST, UPDATE_BRANCH, RENAME_BRANCH, MERGE -> named(request);
                 case POST_FINDINGS, FIX_FINDINGS, DISMISS_FINDINGS -> namedFindings(request);
                 case ANSWER_APPROVAL, ANSWER_QUESTION -> approvalState(request);
                 case REPLY_TO_TASK -> taskState(request);
@@ -746,6 +748,10 @@ class AssistantActions
             if (operation == Operation.RENAME_BRANCH && !UserWords.names(message.text(), request.text("branch"))) {
                 return Optional.of(Result.refused(operation, "“" + clip(request.text("branch"), 60) + "” isn't in your message"));
             }
+            // Only the user's own word merges: "merge" whole and not negated, so "looks ready" or "don't merge yet" never does.
+            if (operation == Operation.MERGE && !UserWords.names(request.words(), "merge")) {
+                return Optional.of(Result.refused(operation, "Your words don't say merge"));
+            }
             return Optional.empty();
         }
 
@@ -814,12 +820,13 @@ class AssistantActions
                 case COMMENT -> done(request, pulls.comment(request.target(), request.text("body")));
                 case APPROVE -> done(request, pulls.approve(request.target()));
                 case EDIT_PULL_REQUEST -> done(request, pulls.edit(request.target(), request.optional("title"), request.optional("body")));
+                case MERGE -> done(request, pulls.merge(request.target(), request.words()));
                 case POST_FINDINGS -> done(request, findings.post(request.text("review"), names(request.body(), "findings")));
                 case FIX_FINDINGS -> done(request, findings.fix(request.text("review"), names(request.body(), "findings"), identity(request)));
                 case DISMISS_FINDINGS -> done(request, findings.dismiss(request.text("review"), names(request.body(), "findings")));
-                // assistant_show opens and makes the agenda, and only the user's click creates a draft's issue, saves an offered rule or merges; this
-                // tool parses none of them.
-                case OPEN, CREATE_EPIC, MAKE_AGENDA, SAVE_RULE, MERGE -> throw new IllegalStateException("assistant_act does not " + request.operation());
+                // assistant_show opens and makes the agenda, and only the user's click creates a draft's issue or saves an offered rule; this tool
+                // parses none of them.
+                case OPEN, CREATE_EPIC, MAKE_AGENDA, SAVE_RULE -> throw new IllegalStateException("assistant_act does not " + request.operation());
             };
         }
 

@@ -641,10 +641,15 @@ with the same title, description and draft state, then closes the old one and
 keeps its branch, because a pull request cannot switch its head branch and
 GitHub closes one whose head branch is renamed; a retry reuses the branch and replacement an earlier attempt made, and a
 pull request a task follows is left to its task.
-Merging stays the card's click. A pull request's discussion is read from its
-stored detail, never from its host on the turn: a copy older than the pull
-request's activity says when it is from and is read again in the background.
-Each call is logged and leaves a receipt in the conversation. The switches that let it act are off by default, except pull
+Merging needs the user's own word merge, and the pull request open, approved
+with no changes requested, its checks passing, no review thread open and
+nothing on the host blocking it, at the head commit ByteQuay held when the user
+asked; it goes through the card's merge service with the card's method, or the
+squash, rebase or merge commit the words name. A pull request's discussion is
+read from its stored detail, never from its host on the turn: a copy older
+than the pull request's activity says when it is from and is read again in the
+background. Each call is logged and leaves a receipt in the
+conversation. The switches that let it act are off by default, except pull
 request work, which is on.
 
 A task-start or task-reply receipt atomically saves the conversation's follow

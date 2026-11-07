@@ -328,8 +328,14 @@ checks, ask or stop asking reviewers, add or remove labels, approve it, update
 its branch with its base, and comment or change its title or description in
 your own words. It approves only the commits you last saw, and a review draft
 with comments stays yours to send. Updating a branch merges its base in, or
-rebases it when you say rebase; GitLab can only rebase. Merging stays your
-click on the pull request's card.
+rebases it when you say rebase; GitLab can only rebase.
+
+Say merge to merge it, such as "merge #58". The Assistant merges only an open
+pull request that is approved with no changes requested, its checks passing, no
+review thread left open and nothing on the host blocking it, at the commits you
+last saw. It merges the way the card's **Merge** does, or squashes, rebases or
+makes a merge commit when you say so; a branch with a merge queue merges through
+the queue. When it can't, its receipt says why.
 
 Ask what reviewers said, such as "what did sam-r ask for on #58?", and it reads
 the reviews, the inline comments with their replies, and the comments ByteQuay

@@ -501,6 +501,35 @@ class TestAssistantActions
     }
 
     @Test
+    void mergesOnlyWhenTheUsersOwnWordsSayMerge()
+    {
+        String pr = "pr:example/harbor#12";
+        AgendaTarget opens = AgendaTarget.pull(5, "example/harbor", 12, Optional.of("ws1"));
+        when(pulls.merge(pr, "squash and merge #12")).thenReturn(new AssistantWork.Done("Merged “Fix cache eviction” into main", Optional.of("example/harbor#12 · squash"),
+                Optional.of(opens), "example/harbor#12"));
+
+        act(message("looks ready, ship #12", ImmutableList.of(), Optional.of(pr)), "{\"op\":\"merge\",\"pr\":\"" + pr + "\",\"words\":\"ship #12\"}");
+        assertRefused("Your words don't say merge", Optional.empty());
+        act(message("don't merge #12 yet", ImmutableList.of(), Optional.of(pr)), "{\"op\":\"merge\",\"pr\":\"" + pr + "\",\"words\":\"merge #12\"}");
+        assertRefused("Your message says not to do that", Optional.empty());
+        act(message("merge #13", ImmutableList.of(), Optional.of(pr)), "{\"op\":\"merge\",\"pr\":\"" + pr + "\",\"words\":\"merge #13\"}");
+        assertRefused("Your words name another pull request", Optional.empty());
+        act(message("merge #12", ImmutableList.of()), "{\"op\":\"merge\",\"pr\":\"" + pr + "\",\"words\":\"merge #12\"}");
+        assertRefused("That isn't on screen", Optional.empty());
+        verify(pulls, never()).merge(any(), any());
+
+        act(message("squash and merge #12", ImmutableList.of(), Optional.of(pr)), "{\"op\":\"merge\",\"pr\":\"" + pr + "\",\"words\":\"squash and merge #12\"}");
+        assertThat(receipts.getLast().receipt().orElseThrow()).isEqualTo(new AssistantReceipt(AssistantReceipt.Operation.MERGE, DONE, Optional.of("example/harbor#12 · squash"),
+                Optional.of(opens), Optional.empty(), Optional.empty(), Optional.empty(), Optional.of("squash and merge #12")));
+
+        allowed.set(new AssistantPermissions(true, true, true, true, false));
+        act(message("merge #12", ImmutableList.of(), Optional.of(pr)), "{\"op\":\"merge\",\"pr\":\"" + pr + "\",\"words\":\"merge #12\"}");
+        assertRefused("Changing pull requests is off", Optional.of(SETTINGS));
+        assertThat(act(message("merge it", ImmutableList.of()), "{\"op\":\"merge\",\"words\":\"merge it\"}")).contains("merge needs a pr: ref");
+        verify(pulls, times(1)).merge(any(), any());
+    }
+
+    @Test
     void actsOnAReviewsFindingsWithOneReceiptForEachAction()
     {
         String review = "review:r1";
@@ -888,7 +917,7 @@ class TestAssistantActions
                 "{\"op\":\"start_task\",\"workspace\":\"ws:ws1\",\"agent\":\"gemini\",\"words\":\"add a metadata table\"}");
         assertRefused("That agent isn't ready", Optional.empty());
         int written = receipts.size();
-        assertThat(act(message("allow it", ImmutableList.of()), "{\"op\":\"merge\",\"words\":\"allow it\"}")).contains("op must be one of");
+        assertThat(act(message("allow it", ImmutableList.of()), "{\"op\":\"delete_branch\",\"words\":\"allow it\"}")).contains("op must be one of");
         String forTask = "{\"op\":\"answer_approval\",\"approval\":\"" + CARD + "\",\"decision\":\"allow_for_task\",\"words\":\"allow it\"}";
         assertThat(act(message("allow it", ImmutableList.of()), forTask))
                 .contains("decision must be allow_once or deny");

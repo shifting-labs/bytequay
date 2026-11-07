@@ -23,7 +23,9 @@ import com.bytequay.app.service.pr.PullRequestRoute;
 import com.bytequay.app.service.pr.PullRequestService;
 import com.bytequay.core.domain.AgendaTarget;
 import com.bytequay.core.domain.CreatedPullRequest;
+import com.bytequay.core.domain.MergeResult;
 import com.bytequay.core.domain.PrRawDetail;
+import com.bytequay.core.domain.PrTimelinePayload;
 import com.bytequay.core.domain.PullRequestDetail;
 import com.bytequay.core.domain.PullRequestIdentity;
 import com.bytequay.core.domain.PullRequestRef;
@@ -323,6 +325,102 @@ class TestAssistantPullRequests
         fresh("closed", false, "sam-r", HEAD, ImmutableList.of());
         assertThatThrownBy(() -> pulls.postFindings(REF, "r1", findings, HEAD, review)).hasMessage("That pull request is not open");
         verify(reviews, times(1)).submit(any(), anyLong(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void mergesAReadyPullRequestAtTheHeadTheUserSaw()
+    {
+        hosted(HostingServer.GITHUB_COM);
+        mergeable();
+        when(service.mergePullRequest(eq(route), eq(5L), anyString(), eq(HEAD))).thenReturn(new MergeResult("m1", true, "Merged"));
+
+        assertThat(pulls.merge(REF, "merge #58")).isEqualTo(new AssistantWork.Done("Merged “Fix the cache” into main", Optional.of("owner/repository#58"),
+                Optional.of(TARGET), "owner/repository#58"));
+        verify(service).mergePullRequest(route, 5L, "default", HEAD);
+        // The method the words name, where the host takes it per request.
+        assertThat(pulls.merge(REF, "squash and merge it").detail()).contains("owner/repository#58 · squash");
+        verify(service).mergePullRequest(route, 5L, "squash", HEAD);
+        pulls.merge(REF, "merge it with a merge commit");
+        verify(service).mergePullRequest(route, 5L, "merge", HEAD);
+
+        // A branch with a merge queue merges through it once its checks pass, so running checks, and the block they hold, don't stop it.
+        when(service.hasMergeQueue(route, "main")).thenReturn(true);
+        when(service.refreshForAction(route).ciStatus()).thenReturn(PullRequestDetail.CiStatus.PENDING);
+        when(service.refreshForAction(route).mergeableState()).thenReturn("blocked");
+        when(service.mergePullRequest(route, 5L, "when-ready", HEAD)).thenReturn(new MergeResult(null, false, "Will enter the merge queue when required checks and reviews pass"));
+        assertThat(pulls.merge(REF, "rebase and merge #58")).isEqualTo(new AssistantWork.Done("Set “Fix the cache” to merge into main through its merge queue",
+                Optional.of("owner/repository#58 · Will enter the merge queue when required checks and reviews pass"), Optional.of(TARGET), "owner/repository#58"));
+
+        // Anything else that did not merge is a failure, in the host's words.
+        when(service.hasMergeQueue(route, "main")).thenReturn(false);
+        when(service.refreshForAction(route).ciStatus()).thenReturn(PullRequestDetail.CiStatus.PASSING);
+        when(service.refreshForAction(route).mergeableState()).thenReturn("clean");
+        when(service.mergePullRequest(route, 5L, "default", HEAD)).thenReturn(new MergeResult(null, false, "Base branch was modified"));
+        assertThatThrownBy(() -> pulls.merge(REF, "merge #58")).isInstanceOf(IllegalStateException.class).hasMessage("Base branch was modified");
+    }
+
+    @Test
+    void refusesToMergeWhatIsNotReadyAndSaysWhere()
+    {
+        hosted(HostingServer.GITHUB_COM);
+        PullRequestDetail detail = mergeable();
+        when(detail.viewerCanWrite()).thenReturn(false);
+        assertRefusedMerge("merge #58", "You can't merge into owner/repository", Optional.empty());
+        when(detail.viewerCanWrite()).thenReturn(true);
+        when(detail.draft()).thenReturn(true);
+        assertRefusedMerge("merge #58", "It's a draft; mark it ready for review first", Optional.of(TARGET));
+        when(detail.draft()).thenReturn(false);
+        when(detail.reviewers()).thenReturn(ImmutableList.of(new PullRequestDetail.Reviewer("lee-k", "", "APPROVED"),
+                new PullRequestDetail.Reviewer("sam-r", "", "CHANGES_REQUESTED")));
+        assertRefusedMerge("merge #58", "A reviewer requested changes", Optional.of(TARGET));
+        when(detail.reviewers()).thenReturn(ImmutableList.of());
+        when(detail.approvalCount()).thenReturn(0);
+        assertRefusedMerge("merge #58", "It isn't approved yet", Optional.of(TARGET));
+        when(detail.approvalCount()).thenReturn(1);
+        when(detail.recentActivity()).thenReturn(ImmutableList.of(new PullRequestDetail.ActivityItem("sam-r", "review_thread", NOW, null, 9L, PrTimelinePayload.empty())));
+        assertRefusedMerge("merge #58", "1 review thread is still open; resolve them first", Optional.of(TARGET));
+        when(detail.recentActivity()).thenReturn(ImmutableList.of());
+        when(detail.ciStatus()).thenReturn(PullRequestDetail.CiStatus.FAILING);
+        assertRefusedMerge("merge #58", "Its checks are failing", Optional.of(TARGET));
+        when(detail.ciStatus()).thenReturn(PullRequestDetail.CiStatus.PENDING);
+        assertRefusedMerge("merge #58", "Its checks are still running; ask again once they pass", Optional.of(TARGET));
+        when(detail.ciStatus()).thenReturn(PullRequestDetail.CiStatus.NONE);
+        when(detail.mergeable()).thenReturn(false);
+        assertRefusedMerge("merge #58", "It has merge conflicts; update its branch first", Optional.of(TARGET));
+        when(detail.mergeable()).thenReturn(null);
+        when(detail.mergeableState()).thenReturn("blocked");
+        assertRefusedMerge("merge #58", "The host blocks merging it for now, such as for a required review or check", Optional.of(TARGET));
+        when(detail.mergeableState()).thenReturn("clean");
+
+        hosted(new HostingServer(HostingProvider.GITLAB, URI.create("https://gitlab.example.com"), URI.create("https://gitlab.example.com/api/v4")));
+        assertRefusedMerge("rebase and merge #58", "GitLab merges with the project's own method; ask to merge it without naming rebase", Optional.empty());
+        // Commits that arrived since the user last saw it are theirs to look at first.
+        when(detail.headSha()).thenReturn("b".repeat(40));
+        assertRefusedMerge("merge #58", "New commits arrived since you last saw it; open the pull request to check them", Optional.of(TARGET));
+        verify(service, never()).mergePullRequest(any(PullRequestRead.class), anyLong(), anyString(), anyString());
+    }
+
+    private void assertRefusedMerge(String words, String reason, Optional<AgendaTarget> opens)
+    {
+        assertThatThrownBy(() -> pulls.merge(REF, words)).isInstanceOfSatisfying(AssistantWork.Refused.class, refused -> assertThat(refused.opens()).isEqualTo(opens))
+                .hasMessage(reason);
+    }
+
+    /** Open at the head the user saw, approved, its checks passing and nothing blocking it, into main; each test changes what it needs. */
+    private PullRequestDetail mergeable()
+    {
+        stored(HEAD);
+        fresh("open", false, "sam-r", HEAD, ImmutableList.of());
+        PullRequestDetail detail = service.refreshForAction(route);
+        when(detail.viewerCanWrite()).thenReturn(true);
+        when(detail.reviewers()).thenReturn(ImmutableList.of(new PullRequestDetail.Reviewer("lee-k", "", "APPROVED")));
+        when(detail.approvalCount()).thenReturn(1);
+        when(detail.recentActivity()).thenReturn(ImmutableList.of());
+        when(detail.ciStatus()).thenReturn(PullRequestDetail.CiStatus.PASSING);
+        when(detail.mergeable()).thenReturn(true);
+        when(detail.mergeableState()).thenReturn("clean");
+        when(detail.baseRef()).thenReturn("main");
+        return detail;
     }
 
     @Test

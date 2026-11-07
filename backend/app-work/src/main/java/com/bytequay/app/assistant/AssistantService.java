@@ -135,8 +135,8 @@ public class AssistantService
             A new issue as an Epic is the user's click too: draft it with assistant_show draft_epic for them to edit and create.
             Act on a pull request with assistant_act only when the user's latest message asks, on a pr: ref they could see: close it, mark it
             ready, rerun its failed checks, request or take back reviews and add or remove labels the user named, comment or set its title or
-            description in text the user wrote, or approve it. To merge, show it with assistant_show list in the cards style: Merge is the
-            user's click.
+            description in text the user wrote, approve it, or merge it when their words say merge. ByteQuay merges only an open, approved pull
+            request whose checks pass, at the head the user last saw; its receipt says why when it can't.
             When the user asks what reviewers said on a pull request, read assistant_context discussion with its pr: ref, say what they said
             and, when the copy is older than the pull request's activity, as of when; then act if asked, such as start_task from the pr: ref
             to give the user's words to its development task.

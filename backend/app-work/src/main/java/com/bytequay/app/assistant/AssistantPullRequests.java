@@ -21,6 +21,7 @@ import com.bytequay.app.service.pr.PullRequestRead;
 import com.bytequay.app.service.pr.PullRequestRoute;
 import com.bytequay.app.service.pr.PullRequestService;
 import com.bytequay.core.domain.AgendaTarget;
+import com.bytequay.core.domain.MergeResult;
 import com.bytequay.core.domain.PullRequestDetail;
 import com.bytequay.core.domain.PullRequestIdentity;
 import com.bytequay.core.domain.RepoUser;
@@ -56,8 +57,8 @@ import static java.util.stream.Collectors.joining;
 
 /**
  * What the assistant's pull request operations do once its checks pass. Each reads the pull request from its host again first, then
- * writes through the service the pull request page's own controls use, under the account of the repository's workspace. Merging is not
- * here: it stays the user's click on the pull request's card, which reads it again with the head it showed.
+ * writes through the service the pull request page's own controls use, under the account of the repository's workspace. A merge, like an
+ * approval, is bound to the head commit the user last saw.
  */
 @Component
 class AssistantPullRequests
@@ -230,6 +231,56 @@ class AssistantPullRequests
     }
 
     /**
+     * Merges it as its card's Merge does, at the head commit the user last saw, only once it is ready: open and not a draft, approved with no
+     * changes requested, its checks passing, no review thread left open, no conflict, and nothing on the host blocking it. The method is the
+     * one the card uses, or the squash, rebase or merge commit the user's words name; a branch with a merge queue merges through the queue
+     * when it is ready, with the queue's own method.
+     */
+    AssistantWork.Done merge(String ref, String words)
+    {
+        Found found = resolve(ref);
+        Read pr = openAsSeen(found);
+        PullRequestDetail detail = pr.detail();
+        Optional<AgendaTarget> opens = Optional.of(found.target());
+        refuseUnless(detail.viewerCanWrite(), "You can't merge into " + found.repo(), Optional.empty());
+        refuseUnless(!detail.draft(), "It's a draft; mark it ready for review first", opens);
+        refuseUnless(detail.reviewers().stream().noneMatch(reviewer -> "CHANGES_REQUESTED".equalsIgnoreCase(reviewer.state())), "A reviewer requested changes", opens);
+        refuseUnless(detail.approvalCount() > 0, "It isn't approved yet", opens);
+        long unresolved = detail.recentActivity().stream().filter(activity -> "review_thread".equals(activity.eventType()) && !activity.payload().resolved()).count();
+        refuseUnless(unresolved == 0, (unresolved == 1 ? "1 review thread is" : unresolved + " review threads are") + " still open; resolve them first", opens);
+        refuseUnless(detail.ciStatus() != PullRequestDetail.CiStatus.FAILING, "Its checks are failing", opens);
+        refuseUnless(!Boolean.FALSE.equals(detail.mergeable()), "It has merge conflicts; update its branch first", opens);
+        // A merge queue waits for running checks and the host's other rules itself; that wait is what merging when ready is for.
+        boolean queue = detail.baseRef() != null && service.hasMergeQueue(found.route(), detail.baseRef());
+        // As the pull request list reads it: the host's own rules, such as a required review or check, block it for now.
+        refuseUnless(queue || !"blocked".equalsIgnoreCase(detail.mergeableState()), "The host blocks merging it for now, such as for a required review or check", opens);
+        refuseUnless(queue || detail.ciStatus() != PullRequestDetail.CiStatus.PENDING, "Its checks are still running; ask again once they pass", opens);
+        String method = queue ? "when-ready" : UserWords.names(words, "squash") ? "squash" : UserWords.names(words, "rebase") ? "rebase"
+                : UserWords.names(words, "merge commit") ? "merge" : "default";
+        refuseUnless(!method.equals("rebase") || found.route().session().access().server().provider() != HostingProvider.GITLAB,
+                "GitLab merges with the project's own method; ask to merge it without naming rebase", Optional.empty());
+        MergeResult result = service.mergePullRequest(found.route(), found.id(), method, detail.headSha());
+        String title = clip(detail.title(), TITLE);
+        String into = Optional.ofNullable(detail.baseRef()).orElse("its base branch");
+        if (result.merged()) {
+            return new AssistantWork.Done("Merged “" + title + "” into " + into, Optional.of(found.key() + (method.equals("default") ? "" : " · " + method)),
+                    Optional.of(found.target()), found.key());
+        }
+        // Merging when ready on a branch with a queue succeeds before anything merges: GitHub merges it once its checks and reviews pass.
+        checkState(result.queued() || queue, "%s", Optional.ofNullable(result.message()).filter(message -> !message.isBlank()).orElse("The host did not merge it"));
+        return new AssistantWork.Done("Set “" + title + "” to merge into " + into + " through its merge queue",
+                Optional.of(found.key() + Optional.ofNullable(result.message()).filter(message -> !message.isBlank()).map(message -> " · " + message).orElse("")),
+                Optional.of(found.target()), found.key());
+    }
+
+    private static void refuseUnless(boolean ready, String reason, Optional<AgendaTarget> opens)
+    {
+        if (!ready) {
+            throw new AssistantWork.Refused(reason, opens);
+        }
+    }
+
+    /**
      * Brings its branch up to date with its base, from the head commit the user last saw: a rebase when their words say rebase, else a merge
      * of the base. GitLab only rebases, which rewrites the branch's commits, so there it waits for the word. The host finishes it later.
      */
@@ -344,7 +395,9 @@ class AssistantPullRequests
         Optional<String> seen = details.find(found.id()).map(stored -> stored.raw().headSha()).filter(head -> head != null && !head.isBlank());
         Read pr = open(found);
         String head = pr.detail().headSha();
-        checkState(head != null && seen.map(head::equals).orElse(true), "New commits arrived since you last saw it; open the pull request to check them");
+        if (head == null || !seen.map(head::equals).orElse(true)) {
+            throw new AssistantWork.Refused("New commits arrived since you last saw it; open the pull request to check them", Optional.of(found.target()));
+        }
         return pr;
     }
 
