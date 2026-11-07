@@ -299,6 +299,29 @@ class AssistantActions
      */
     AssistantItem reply(String conversationId, TaskId taskId, String words, String key)
     {
+        AgentTask task = openTask(taskId);
+        TaskInput.Accepted sent = send(task, words, key);
+        boolean queued = sent.queuedInputId().isPresent();
+        AssistantReceipt receipt = new AssistantReceipt(Operation.REPLY_TO_TASK, Outcome.DONE, queued ? Optional.of("After its current turn") : Optional.empty(),
+                target(task.id()), Optional.empty(), sent.turnId().map(TurnId::toString), Optional.empty(), Optional.of(words));
+        return AssistantItem.receipt(conversationId, clock.instant(), (queued ? "Queued your words for " : "Sent your words to ") + clip(task.title(), 80), receipt, key);
+    }
+
+    /**
+     * The user's own words to a task from a result card's button or reply box, which keeps its own receipt: a new turn, or the queue
+     * behind the turn at work. Sent again under the same key, it is the same input.
+     *
+     * @return whether the words wait in the queue behind the turn at work
+     * @throws IllegalArgumentException when the task is gone
+     * @throws AgentConflictException when the task has ended, or is a review's, which its page answers
+     */
+    boolean send(TaskId taskId, String words, String key)
+    {
+        return send(openTask(taskId), words, key).queuedInputId().isPresent();
+    }
+
+    private AgentTask openTask(TaskId taskId)
+    {
         AgentTask task = tasks.find(taskId).orElseThrow(() -> new IllegalArgumentException("That task is gone"));
         if (task.state() != TaskState.OPEN) {
             throw new AgentConflictException("That task has ended");
@@ -306,13 +329,14 @@ class AssistantActions
         if (!task.interactive()) {
             throw new AgentConflictException("Reply to a review from its page");
         }
+        return task;
+    }
+
+    private TaskInput.Accepted send(AgentTask task, String words, String key)
+    {
         String input = "assistant-reply:" + key;
-        TaskInput.Accepted sent = TaskInput.accepted(turns, task.id(), input)
+        return TaskInput.accepted(turns, task.id(), input)
                 .orElseGet(() -> TaskInput.send(turns, task.id(), task.version(), words, input, task.worktreeMutationClaim().isPresent(), Optional.empty()));
-        boolean queued = sent.queuedInputId().isPresent();
-        AssistantReceipt receipt = new AssistantReceipt(Operation.REPLY_TO_TASK, Outcome.DONE, queued ? Optional.of("After its current turn") : Optional.empty(),
-                target(task.id()), Optional.empty(), sent.turnId().map(TurnId::toString), Optional.empty(), Optional.of(words));
-        return AssistantItem.receipt(conversationId, clock.instant(), (queued ? "Queued your words for " : "Sent your words to ") + clip(task.title(), 80), receipt, key);
     }
 
     /** Whether the message starts with a task command, which the app starts itself instead of a model reading it. */

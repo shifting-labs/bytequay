@@ -124,6 +124,17 @@ public class AssistantController
         return new Accepted(assistant.reply(request.conversationId(), request.itemId(), request.text(), request.key()));
     }
 
+    /** The user's own words to the task a result card names, from its button or reply box; the card keeps the receipt. */
+    @PostMapping("/assistant/task-words")
+    public TaskWordsSent sendToTask(@RequestBody TaskWordsRequest request)
+    {
+        checkArgument(request != null, "words are required");
+        checkText(request.taskId(), "taskId", REF);
+        checkText(request.text(), "text", AssistantService.MAXIMUM_TEXT);
+        checkText(request.key(), "key", REF);
+        return new TaskWordsSent(assistant.sendToTask(request.taskId(), request.text(), request.key()));
+    }
+
     /** A draft the user created with its own button in the panel; the conversation keeps its receipt. */
     @PostMapping("/assistant/drafts")
     @ResponseStatus(HttpStatus.NO_CONTENT)
@@ -211,4 +222,8 @@ public class AssistantController
      * @param key the sender's own key for this reply, so sending it twice sends it once
      */
     public record ReplyRequest(String conversationId, String itemId, String text, String key) {}
+
+    public record TaskWordsRequest(String taskId, String text, String key) {}
+
+    public record TaskWordsSent(boolean queued) {}
 }

@@ -575,6 +575,24 @@ class TestAssistantActions
     }
 
     @Test
+    void sendsAResultCardsWordsStraightToItsTaskOnceWithoutAReceipt()
+    {
+        doReturn(Optional.empty()).when(turns).findTurnByIdempotencyKey(any(), any());
+        assertThat(actions.send(task.id(), "Try again.", "card-1")).isFalse();
+        ArgumentCaptor<StartAgentTurnCommand> started = ArgumentCaptor.forClass(StartAgentTurnCommand.class);
+        verify(turns).start(started.capture());
+        assertThat(started.getValue().message()).isEqualTo("Try again.");
+        assertThat(started.getValue().idempotencyKey()).isEqualTo("assistant-reply:card-1");
+
+        doReturn(Optional.of(turn(task.id()))).when(turns).findTurnByIdempotencyKey(task.id(), "assistant-reply:card-1");
+        actions.send(task.id(), "Try again.", "card-1");
+        verify(turns, times(1)).start(any());
+
+        when(tasks.find(task.id())).thenReturn(Optional.of(task.fail("Boom", NOW, NOW.plusSeconds(60))));
+        assertThatThrownBy(() -> actions.send(task.id(), "Try again.", "card-2")).isInstanceOf(AgentConflictException.class).hasMessage("That task has ended");
+    }
+
+    @Test
     void startsATaskFromTheUsersWordsWithTheSavedAutomation()
     {
         AssistantItem message = message("start one in repository: add a metadata table for snapshot ids", ImmutableList.of());

@@ -389,6 +389,20 @@ public class AssistantService
         return receipt.id();
     }
 
+    /**
+     * Sends the user's own words to the task a result card names, from the card's button or reply box, with no model between them; the
+     * card keeps the receipt, so the conversation does not.
+     *
+     * @param key the card's key for this send; sent again, it is the same input
+     * @return whether the words wait behind the task's current turn
+     * @throws IllegalArgumentException when the task is gone
+     */
+    public boolean sendToTask(String taskId, String text, String key)
+    {
+        TaskId task = AssistantRows.taskId(taskId).orElseThrow(() -> new IllegalArgumentException("That is not a task"));
+        return actions.send(task, text, key);
+    }
+
     private void checkEnabled()
     {
         if (!setup.preferences().assistantEnabled()) {
