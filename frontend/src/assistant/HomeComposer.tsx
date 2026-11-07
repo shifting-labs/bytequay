@@ -42,8 +42,9 @@ export default function HomeComposer({ work }: { work: WorkItem[] }) {
   };
   return (
     <div className="assistant-home">
+      {/* Home unmounts when left, so this takes focus on every return to Home. */}
       <Composer {...suggestions.inputProps} inputRef={input} aria-label="Message the Assistant" placeholder={SUGGESTION} value={draft} maxLength={16 * 1024}
-        onSubmit={submit} submitEnabled={draft.trim() !== ''} header={suggestions.list}
+        autoFocus onSubmit={submit} submitEnabled={draft.trim() !== ''} header={suggestions.list}
         onKeyDown={event => {
           suggestions.inputProps.onKeyDown?.(event);
           if (event.defaultPrevented || !takesSuggestion(event, draft)) return;
