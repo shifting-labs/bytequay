@@ -57,8 +57,9 @@ export function useFindingActions({
       await action();
     }
     catch (failure) {
-      setError(errorMessage(failure));
+      // A propagated failure is the caller's to show where the user acted; showing it here too would repeat it.
       if (propagate) throw failure;
+      setError(errorMessage(failure));
     }
     finally {
       setBusy(false);
