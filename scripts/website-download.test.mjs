@@ -4,8 +4,8 @@ import { runInNewContext } from 'node:vm';
 import test from 'node:test';
 
 const source = readFileSync(new URL('../website/dist/download.js', import.meta.url), 'utf8');
-const fallback = 'https://github.com/bytequay/bytequay/releases/latest';
-const url = 'https://github.com/bytequay/bytequay/releases/download/v1.2.3/ByteQuay-1.2.3-arm64.dmg';
+const fallback = 'https://github.com/shifting-labs/bytequay/releases/latest';
+const url = 'https://github.com/shifting-labs/bytequay/releases/download/v1.2.3/ByteQuay-1.2.3-arm64.dmg';
 const asset = { name: 'ByteQuay-1.2.3-arm64.dmg', state: 'uploaded', browser_download_url: url };
 const release = { draft: false, prerelease: false, assets: [asset] };
 
@@ -17,7 +17,7 @@ async function resolve(fetch) {
 
 test('both buttons download the uploaded Apple silicon DMG from the latest stable release', async () => {
   const links = await resolve(async endpoint => {
-    assert.equal(endpoint, 'https://api.github.com/repos/bytequay/bytequay/releases/latest');
+    assert.equal(endpoint, 'https://api.github.com/repos/shifting-labs/bytequay/releases/latest');
     return { ok: true, json: async () => ({ ...release, assets: [
       { ...asset, name: 'ByteQuay-1.2.3-x64.dmg' },
       { ...asset, name: 'ByteQuay-darwin-arm64-1.2.3.zip' }, asset,

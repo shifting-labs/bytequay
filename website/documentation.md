@@ -29,7 +29,7 @@ release notes.
 ## Get started
 
 1. Download ByteQuay from
-   [GitHub Releases](https://github.com/bytequay/bytequay/releases) and drag it
+   [GitHub Releases](https://github.com/shifting-labs/bytequay/releases) and drag it
    to Applications. It needs macOS 14+ and includes Java.
 2. Follow the setup guide to connect GitHub or GitLab and, if you like, an agent.
 3. For GitHub, choose **Home → Repos you watch → + Watch** and pick a repository.

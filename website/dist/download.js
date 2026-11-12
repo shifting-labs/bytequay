@@ -1,7 +1,7 @@
 // Resolve the current installer once; the release page remains the fallback.
 (async () => {
   try {
-    const response = await fetch("https://api.github.com/repos/bytequay/bytequay/releases/latest", {
+    const response = await fetch("https://api.github.com/repos/shifting-labs/bytequay/releases/latest", {
       credentials: "omit",
       signal: AbortSignal.timeout(5000),
     });
@@ -12,7 +12,7 @@
       asset.state === "uploaded"
       && /^ByteQuay-[\d.]+-arm64\.dmg$/.test(asset.name)
       && typeof asset.browser_download_url === "string"
-      && asset.browser_download_url.startsWith("https://github.com/bytequay/bytequay/releases/download/"),
+      && asset.browser_download_url.startsWith("https://github.com/shifting-labs/bytequay/releases/download/"),
     );
     if (!installer) return;
     for (const link of document.querySelectorAll("[data-macos-download]")) {
