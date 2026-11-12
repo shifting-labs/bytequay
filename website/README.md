@@ -32,7 +32,7 @@ sentence case.
 
 ## Publish with GitHub Pages
 
-The public address is [bytequay.github.io/bytequay](https://bytequay.github.io/bytequay/).
+The public address is [shifting-labs.github.io/bytequay](https://shifting-labs.github.io/bytequay/).
 Enable it once in the repository's **Settings → Pages → Build and deployment**
 by selecting **GitHub Actions** as the source.
 
